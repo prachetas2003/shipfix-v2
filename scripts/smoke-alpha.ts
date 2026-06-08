@@ -3,7 +3,7 @@
  * never fakes deployment success.
  *
  * Usage:
- *   SHIPFIX_ALPHA_USER_TOKEN=... SHIPFIX_ADMIN_TOKEN=... pnpm smoke:alpha -- --api http://localhost:4000 --repo owner/repo --mode deploy
+ *   CLERK_SESSION_TOKEN=... SHIPFIX_ADMIN_TOKEN=... pnpm smoke:alpha -- --api http://localhost:4000 --repo owner/repo --mode deploy
  */
 
 type Args = {
@@ -50,12 +50,12 @@ async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
 }
 
 const args = parseArgs();
-const userToken = process.env.SHIPFIX_ALPHA_USER_TOKEN;
+const userToken = process.env.CLERK_SESSION_TOKEN;
 const adminToken = process.env.SHIPFIX_ADMIN_TOKEN;
-if (!userToken) throw new Error("SHIPFIX_ALPHA_USER_TOKEN is required for smoke:alpha.");
+if (!userToken) throw new Error("CLERK_SESSION_TOKEN is required for smoke:alpha.");
 if (!adminToken) throw new Error("SHIPFIX_ADMIN_TOKEN is required for smoke:alpha.");
 
-const userHeaders = { "X-ShipFix-Alpha-User": userToken };
+const userHeaders = { Authorization: `Bearer ${userToken}` };
 const adminHeaders = { "X-ShipFix-Admin-Token": adminToken };
 
 const config = await requestJson<Record<string, unknown>>(`${args.api}/admin/config-check`, {
@@ -92,4 +92,3 @@ if (args.expect === "full-stack" && !snapshot.layers?.fullStack?.live) {
 }
 
 console.log("[smoke] passed", JSON.stringify({ runId: started.runId, status: snapshot.run.status }));
-

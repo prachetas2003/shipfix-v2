@@ -17,7 +17,7 @@ import { createPostgresSink, createRunLogger } from "@shipfix/observability";
 import { reconcileStuckRuns } from "@shipfix/workflow";
 import { createSecretVaultFromEnv } from "@shipfix/secrets";
 import { env } from "./env";
-import { requireAdmin, requireAlphaUser, type AlphaUser } from "./auth";
+import { requireAdmin, requireUser, type AuthenticatedUser } from "./auth";
 import {
   deriveLayers,
   toSnapshotResources,
@@ -147,7 +147,9 @@ function backendConfigCheck() {
           : null;
   return {
     databaseUrl: Boolean(env.DATABASE_URL),
-    alphaUsersConfigured: Boolean(env.ALPHA_USER_TOKENS),
+    authMode: env.AUTH_MODE,
+    clerkSecretConfigured: Boolean(env.CLERK_SECRET_KEY),
+    clerkPublishableConfigured: Boolean(env.CLERK_PUBLISHABLE_KEY),
     adminTokenConfigured: Boolean(env.SHIPFIX_ADMIN_TOKEN),
     masterKeyConfigured: Boolean(env.SHIPFIX_MASTER_KEY),
     llmProvider: provider || null,
@@ -362,7 +364,7 @@ async function checkRunLimits(
  */
 async function startRun(
   mode: RunMode,
-  user: AlphaUser,
+  user: AuthenticatedUser,
   input: { repoFullName: string; branch: string; commitSha: string },
 ): Promise<StartResult> {
   const project = await getOrCreateProject(user.id, input.repoFullName, input.branch);
@@ -418,7 +420,7 @@ async function startRun(
 /** Build a Fastify handler that launches a run in the given mode. */
 function runRouteHandler(mode: RunMode) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
-    const user = await requireAlphaUser(request, reply, db, env);
+    const user = await requireUser(request, reply, db, env);
     if (!user) return;
 
     const parsed = RunBody.safeParse(request.body);
@@ -441,10 +443,7 @@ function runRouteHandler(mode: RunMode) {
     }
 
     try {
-      const result = await startRun(mode, {
-        id: user.id,
-        login: user.login,
-      }, {
+      const result = await startRun(mode, user, {
         repoFullName,
         branch: parsed.data.branch ?? "main",
         commitSha: parsed.data.commitSha ?? "HEAD",
@@ -501,7 +500,7 @@ const ConnectBody = z.object({
 });
 
 app.post("/provider-accounts", async (request, reply) => {
-  const user = await requireAlphaUser(request, reply, db, env);
+  const user = await requireUser(request, reply, db, env);
   if (!user) return;
 
   const parsed = ConnectBody.safeParse(request.body);
@@ -555,7 +554,7 @@ app.post("/provider-accounts", async (request, reply) => {
 
 // What ShipFix can actually do right now, plus what this user has connected.
 app.get("/providers", async (request, reply) => {
-  const user = await requireAlphaUser(request, reply, db, env);
+  const user = await requireUser(request, reply, db, env);
   if (!user) return;
 
   const accounts = await db
@@ -622,7 +621,7 @@ app.post("/admin/reconcile-stuck-runs", async (request, reply) => {
  * run reaches a terminal status.
  */
 app.get("/runs/:runId/events", async (request, reply) => {
-  const user = await requireAlphaUser(request, reply, db, env);
+  const user = await requireUser(request, reply, db, env);
   if (!user) return;
 
   const { runId } = request.params as { runId: string };
@@ -698,7 +697,7 @@ app.get("/runs/:runId/events", async (request, reply) => {
  * runs (links, per-layer status, verification) without replaying the SSE stream.
  */
 app.get("/runs/:runId", async (request, reply) => {
-  const user = await requireAlphaUser(request, reply, db, env);
+  const user = await requireUser(request, reply, db, env);
   if (!user) return;
 
   const { runId } = request.params as { runId: string };
@@ -718,7 +717,7 @@ app.get("/runs/:runId", async (request, reply) => {
  * and live links. Powers the dashboard.
  */
 app.get("/apps", async (request, reply) => {
-  const user = await requireAlphaUser(request, reply, db, env);
+  const user = await requireUser(request, reply, db, env);
   if (!user) return;
 
   const projectRows = await db
@@ -796,7 +795,7 @@ app.get("/apps", async (request, reply) => {
 
 /** Per-app detail: current live resources plus full run history. */
 app.get("/apps/:projectId", async (request, reply) => {
-  const user = await requireAlphaUser(request, reply, db, env);
+  const user = await requireUser(request, reply, db, env);
   if (!user) return;
 
   const { projectId } = request.params as { projectId: string };

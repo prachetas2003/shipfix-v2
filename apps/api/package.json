@@ -11,12 +11,13 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@clerk/backend": "^3.5.0",
     "@fastify/cors": "^10.0.1",
     "@shipfix/contracts": "workspace:*",
     "@shipfix/db": "workspace:*",
     "@shipfix/observability": "workspace:*",
-    "@shipfix/workflow": "workspace:*",
     "@shipfix/secrets": "workspace:*",
+    "@shipfix/workflow": "workspace:*",
     "@temporalio/client": "^1.11.7",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.38.2",

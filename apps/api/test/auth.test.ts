@@ -1,18 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import {
-  alphaUserNumericId,
-  parseAlphaUserTokens,
-  requireAdmin,
-  resolveAlphaToken,
-} from "../src/auth";
+import { bearerToken, requireAdmin, requireUser, stableNumericId } from "../src/auth";
+
+vi.mock("@clerk/backend", () => ({
+  verifyToken: vi.fn(async (token: string) => {
+    if (token !== "valid-clerk-token") throw new Error("invalid");
+    return { sub: "user_clerk_123", email: "user@example.com" };
+  }),
+}));
 
 function request(overrides: Partial<FastifyRequest>): FastifyRequest {
   return {
     headers: {},
     query: {},
+    log: { error: vi.fn() },
     ...overrides,
-  } as FastifyRequest;
+  } as unknown as FastifyRequest;
 }
 
 function reply() {
@@ -30,27 +33,70 @@ function reply() {
   return { reply: r, state };
 }
 
-describe("alpha auth helpers", () => {
-  it("parses configured alpha users and ignores weak entries", () => {
-    expect(parseAlphaUserTokens("alice:1234567890123456, broken, bob:abcdefghijklmnopqrstuvwxyz")).toEqual([
-      { login: "alice", token: "1234567890123456" },
-      { login: "bob", token: "abcdefghijklmnopqrstuvwxyz" },
-    ]);
+function db(existing: unknown[] = []) {
+  return {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: async () => existing,
+        }),
+      }),
+    }),
+    insert: () => ({
+      values: (value: { clerkId: string; login: string }) => ({
+        returning: async () => [{
+          id: "00000000-0000-0000-0000-000000000001",
+          clerkId: value.clerkId,
+          login: value.login,
+        }],
+      }),
+    }),
+  } as never;
+}
+
+describe("Clerk auth helpers", () => {
+  it("extracts bearer tokens only from Authorization", () => {
+    expect(bearerToken(request({ headers: { authorization: "Bearer session-token" } }))).toBe("session-token");
+    expect(bearerToken(request({ headers: { "x-shipfix-alpha-user": "old-token" } }))).toBeNull();
   });
 
-  it("derives a stable numeric user id from the token without exposing the token", () => {
-    const one = alphaUserNumericId("token-for-alice-123456");
-    const two = alphaUserNumericId("token-for-alice-123456");
-    const other = alphaUserNumericId("token-for-bob-123456");
+  it("derives stable numeric ids from Clerk subjects", () => {
+    const one = stableNumericId("clerk", "user_123");
+    const two = stableNumericId("clerk", "user_123");
+    const other = stableNumericId("clerk", "user_456");
     expect(one).toBe(two);
     expect(one).not.toBe(other);
     expect(Number.isSafeInteger(one)).toBe(true);
   });
 
-  it("resolves alpha tokens from header, bearer auth, or SSE query", () => {
-    expect(resolveAlphaToken(request({ headers: { "x-shipfix-alpha-user": "from-header" } }))).toBe("from-header");
-    expect(resolveAlphaToken(request({ headers: { authorization: "Bearer from-bearer" } }))).toBe("from-bearer");
-    expect(resolveAlphaToken(request({ query: { alpha_token: "from-query" } }))).toBe("from-query");
+  it("rejects unauthenticated Clerk requests", async () => {
+    const { reply: res, state } = reply();
+    const user = await requireUser(request({ headers: {} }), res, db(), {
+      AUTH_MODE: "clerk",
+      CLERK_SECRET_KEY: "sk_test_123",
+    });
+    expect(user).toBeNull();
+    expect(state.statusCode).toBe(401);
+    expect(state.body).toMatchObject({ error: "auth_required" });
+  });
+
+  it("accepts valid Clerk bearer tokens and upserts a scoped user", async () => {
+    const { reply: res, state } = reply();
+    const user = await requireUser(request({ headers: { authorization: "Bearer valid-clerk-token" } }), res, db(), {
+      AUTH_MODE: "clerk",
+      CLERK_SECRET_KEY: "sk_test_123",
+    });
+    expect(state.statusCode).toBe(200);
+    expect(user).toMatchObject({ id: "00000000-0000-0000-0000-000000000001", clerkId: "user_clerk_123" });
+  });
+
+  it("supports explicit dev auth outside production", async () => {
+    const { reply: res } = reply();
+    const user = await requireUser(request({ headers: { "x-shipfix-dev-user": "local-alice" } }), res, db(), {
+      AUTH_MODE: "dev",
+      CLERK_SECRET_KEY: undefined,
+    });
+    expect(user).toMatchObject({ clerkId: "dev:local-alice", login: "local-alice" });
   });
 
   it("disables admin routes when no admin token is configured", () => {
@@ -81,4 +127,3 @@ describe("alpha auth helpers", () => {
     expect(right.state.statusCode).toBe(200);
   });
 });
-

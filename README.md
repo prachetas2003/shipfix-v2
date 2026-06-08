@@ -92,18 +92,23 @@ pnpm --filter @shipfix/db db:migrate   # applies checked-in migrations to DATABA
 pnpm --filter @shipfix/db db:push
 ```
 
-### 2b. Alpha access tokens
+### 2b. Authentication
 
-API user actions require an alpha access token. Configure the backend with:
+Normal product auth uses Clerk. Configure the web app with the public key and
+the API with the secret key:
 
 ```bash
-ALPHA_USER_TOKENS=alice:replace-with-long-random-token
+AUTH_MODE=clerk
+NEXT_PUBLIC_AUTH_MODE=clerk
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+CLERK_SECRET_KEY=sk_test_...
 SHIPFIX_ADMIN_TOKEN=replace-with-different-long-random-token
 ```
 
-The browser asks each alpha user for their token and stores it locally. Do not
-put alpha tokens, provider tokens, LLM keys, `SHIPFIX_MASTER_KEY`, or database
-URLs in any `NEXT_PUBLIC_*` variable.
+For local development only, you may set `AUTH_MODE=dev` and
+`NEXT_PUBLIC_AUTH_MODE=dev`. The API rejects dev auth when `NODE_ENV=production`.
+Do not put provider tokens, LLM keys, `SHIPFIX_ADMIN_TOKEN`,
+`SHIPFIX_MASTER_KEY`, or database URLs in any `NEXT_PUBLIC_*` variable.
 
 ### 3. Start the four processes (separate terminals)
 
@@ -228,9 +233,9 @@ configured (`LLM_PROVIDER`, a provider-specific backend key such as
   pnpm smoke:alpha -- --api http://localhost:4000 --repo owner/vite-express-demo --mode deploy
   ```
 
-  The smoke script checks protected admin config, starts a real run with the
-  alpha access token, waits for a terminal state, and fails unless ShipFix proves
-  the expected deployment state through verification evidence.
+  The smoke script checks protected admin config, starts a real run with a Clerk
+  session token, waits for a terminal state, and fails unless ShipFix proves the
+  expected deployment state through verification evidence.
 
 ## Status
 

@@ -24,11 +24,9 @@ const Env = z.object({
    * it and fails with a clear error when absent.
    */
   SHIPFIX_MASTER_KEY: z.string().optional(),
-  /**
-   * Comma-separated alpha users as login:token. Tokens are never returned to the
-   * browser by the API; alpha clients send one as X-ShipFix-Alpha-User.
-   */
-  ALPHA_USER_TOKENS: z.string().optional(),
+  AUTH_MODE: z.enum(["clerk", "dev"]).default("clerk"),
+  CLERK_SECRET_KEY: z.string().optional(),
+  CLERK_PUBLISHABLE_KEY: z.string().optional(),
   /** Required for /admin/* routes. If absent, admin routes are disabled. */
   SHIPFIX_ADMIN_TOKEN: z.string().optional(),
   ALPHA_MAX_DEPLOY_RUNS_PER_USER_PER_DAY: z.coerce.number().int().positive().default(3),

@@ -32,6 +32,7 @@ const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   githubId: bigint("github_id", { mode: "number" }).notNull().unique(),
+  clerkId: text("clerk_id").unique(),
   login: text("login").notNull(),
   email: text("email"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

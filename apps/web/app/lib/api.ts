@@ -1,29 +1,27 @@
 /** Typed client for the ShipFix control-plane API. */
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+export const AUTH_MODE = process.env.NEXT_PUBLIC_AUTH_MODE ?? "clerk";
 
-export function getAlphaToken(): string | null {
-  if (typeof window !== "undefined") {
-    const existing = window.localStorage.getItem("shipfix_alpha_token");
-    if (existing) return existing;
-    const entered = window.prompt("Enter your ShipFix alpha access token");
-    if (!entered?.trim()) return null;
-    window.localStorage.setItem("shipfix_alpha_token", entered.trim());
-    return entered.trim();
-  }
-  return null;
+type TokenProvider = () => Promise<string | null>;
+let tokenProvider: TokenProvider = async () => null;
+
+export function setAuthTokenProvider(provider: TokenProvider): void {
+  tokenProvider = provider;
 }
 
-function authHeaders(): Record<string, string> {
-  const token = getAlphaToken();
-  return token ? { "X-ShipFix-Alpha-User": token } : {};
+async function authHeaders(): Promise<Record<string, string>> {
+  if (AUTH_MODE === "dev") return {};
+  const token = await tokenProvider();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export function withAlphaTokenQuery(url: string): string {
-  const token = getAlphaToken();
+export async function withAuthQuery(url: string): Promise<string> {
+  if (AUTH_MODE === "dev") return url;
+  const token = await tokenProvider();
   if (!token) return url;
   const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}alpha_token=${encodeURIComponent(token)}`;
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
 }
 
 export type LayerRole = "database" | "backend" | "frontend" | "other";
@@ -174,8 +172,11 @@ export interface RunEventRow {
 export type RunMode = "analyze_only" | "plan" | "deploy";
 
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}${path}`, { headers: await authHeaders() });
   const body = await res.json().catch(() => null);
+  if (res.status === 401 && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+  }
   if (!res.ok) throw new Error(body?.message ?? body?.error ?? `HTTP ${res.status}`);
   return body as T;
 }
@@ -193,10 +194,13 @@ export const api = {
     const path = mode === "deploy" ? "/runs/deploy" : mode === "plan" ? "/runs/plan" : "/runs/analyze";
     const res = await fetch(`${API_BASE}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify(isUrl ? { repoUrl: value } : { repoFullName: value }),
     });
     const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
     if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
     return body.runId as string;
   },
@@ -204,7 +208,7 @@ export const api = {
   async connectProvider(provider: string, values: Record<string, string>): Promise<void> {
     const res = await fetch(`${API_BASE}/provider-accounts`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify({
         provider,
         values: Object.fromEntries(
@@ -215,6 +219,9 @@ export const api = {
       }),
     });
     const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
     if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
   },
 };

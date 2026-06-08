@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { ClerkProvider } from "@clerk/nextjs";
+import { AuthGate } from "./components/AuthGate";
 
 export const metadata = {
   title: "ShipFix",
@@ -6,7 +8,7 @@ export const metadata = {
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
-  return (
+  const body = (
     <html lang="en">
       <body
         style={{
@@ -16,8 +18,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           color: "#ededed",
         }}
       >
-        {children}
+        <AuthGate>{children}</AuthGate>
       </body>
     </html>
   );
+  if (process.env.NEXT_PUBLIC_AUTH_MODE === "dev") return body;
+  return <ClerkProvider>{body}</ClerkProvider>;
 }

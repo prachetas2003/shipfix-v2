@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { API_BASE, api, withAlphaTokenQuery, type PlanView, type RunEventRow, type RunSnapshot } from "./api";
+import { API_BASE, api, withAuthQuery, type PlanView, type RunEventRow, type RunSnapshot } from "./api";
 
 export type LiveStatus =
   | "loading"
@@ -70,7 +70,7 @@ export function useRun(runId: string | null): {
         return; // finished run: render from snapshot, no SSE needed
       }
 
-      const es = new EventSource(withAlphaTokenQuery(`${API_BASE}/runs/${runId}/events`));
+      const es = new EventSource(await withAuthQuery(`${API_BASE}/runs/${runId}/events`));
       esRef.current = es;
       setStatus("streaming");
 
