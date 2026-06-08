@@ -1,0 +1,6 @@
+{
+  "name": "vite-express-split",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": ["web", "server"]
+}

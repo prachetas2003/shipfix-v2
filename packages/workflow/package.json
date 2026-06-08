@@ -1,0 +1,41 @@
+{
+  "name": "@shipfix/workflow",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./workflows": "./src/workflows.ts",
+    "./activities": "./src/activities.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@shipfix/adapter-core": "workspace:*",
+    "@shipfix/adapter-render": "workspace:*",
+    "@shipfix/adapter-vercel": "workspace:*",
+    "@shipfix/analyzer": "workspace:*",
+    "@shipfix/contracts": "workspace:*",
+    "@shipfix/db": "workspace:*",
+    "@shipfix/llm": "workspace:*",
+    "@shipfix/observability": "workspace:*",
+    "@shipfix/planner": "workspace:*",
+    "@shipfix/provisioner": "workspace:*",
+    "@shipfix/sandbox": "workspace:*",
+    "@shipfix/secrets": "workspace:*",
+    "@shipfix/validator": "workspace:*",
+    "@shipfix/verifier": "workspace:*",
+    "@temporalio/workflow": "^1.11.7",
+    "@temporalio/activity": "^1.11.7",
+    "drizzle-orm": "^0.38.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

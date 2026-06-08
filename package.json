@@ -1,0 +1,30 @@
+{
+  "name": "shipfix",
+  "private": true,
+  "version": "0.0.0",
+  "description": "ShipFix v2 — autonomous deployment engineer. Repo in, proven-working live app (or precise diagnosis) out.",
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint",
+    "build:turbo": "turbo run build",
+    "dev:web": "pnpm --filter @shipfix/web dev",
+    "dev:api": "pnpm --filter @shipfix/api dev",
+    "dev:worker": "pnpm --filter @shipfix/worker dev",
+    "db:push": "pnpm --filter @shipfix/db db:push",
+    "smoke": "node scripts/smoke-analyze.mjs",
+    "smoke:alpha": "tsx scripts/smoke-alpha.ts",
+    "reconcile-stuck-runs": "tsx scripts/reconcile-stuck-runs.ts"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.6.3",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2"
+  }
+}

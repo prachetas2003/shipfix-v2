@@ -1,0 +1,17 @@
+{
+  "name": "prisma-postgres",
+  "private": true,
+  "version": "0.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "migrate": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "@prisma/client": "^5.22.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "pnpm-workspace-root",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "build": "pnpm -r run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

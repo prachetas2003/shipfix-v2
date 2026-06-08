@@ -1,0 +1,24 @@
+{
+  "name": "@shipfix/observability",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shipfix/contracts": "workspace:*",
+    "@shipfix/db": "workspace:*",
+    "@shipfix/secrets": "workspace:*",
+    "drizzle-orm": "^0.38.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.9"
+  }
+}
