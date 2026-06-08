@@ -9,3 +9,5 @@ out/
 !.env.example
 coverage/
 .DS_Store
+
+SHipfixV2/
