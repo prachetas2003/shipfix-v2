@@ -13,8 +13,23 @@ import { PlanPanel } from "../components/PlanPanel";
 import { ProviderRequirements } from "../components/ProviderRequirements";
 import { Stepper } from "../components/Stepper";
 import { Timeline } from "../components/Timeline";
+import type { RunEventRow } from "../lib/api";
 
 const STEPS = ["Repository", "Plan", "Connect", "Deploy", "Result"];
+
+function planFailureMessage(events: RunEventRow[]): string {
+  const lastFailure = [...events].reverse().find((ev) => {
+    const event = typeof ev.data?.event === "string" ? ev.data.event : "";
+    return ["usage_limit_reached", "llm_config_missing", "planning_failed", "run_failed"].includes(event);
+  });
+  const event = typeof lastFailure?.data?.event === "string" ? lastFailure.data.event : "";
+  const message = typeof lastFailure?.data?.message === "string" ? lastFailure.data.message : "";
+  if (event === "usage_limit_reached") return message || "Usage limit reached. Try again later, or raise the local alpha limits while testing.";
+  if (event === "llm_config_missing") {
+    return message || "Planner setup is missing. Add backend-only LLM env vars to the worker environment, restart the worker, then try again.";
+  }
+  return message || "ShipFix couldn't produce a plan for this repo. Check the timeline details and try again.";
+}
 
 export default function NewDeploymentPage(): React.ReactElement {
   const router = useRouter();
@@ -156,7 +171,7 @@ export default function NewDeploymentPage(): React.ReactElement {
           <Timeline events={run.events} />
           {run.status === "failed" && !capturedPlan && (
             <p style={{ color: colors.error, marginTop: "1rem" }}>
-              ShipFix couldn't produce a plan for this repo. Check the repo name and try again.
+              {planFailureMessage(run.events)}
               <button onClick={() => setStep(0)} style={{ ...buttonStyle("ghost"), marginLeft: 12 }}>
                 Back
               </button>

@@ -61,7 +61,7 @@ describe("createLLMGateway env handling", () => {
     process.env = OLD_ENV;
   });
 
-  it("requires provider-specific backend key env vars, not LLM_API_KEY", () => {
+  it("accepts legacy LLM_API_KEY as a backward-compatible fallback", () => {
     process.env = {
       ...OLD_ENV,
       LLM_PROVIDER: "anthropic",
@@ -69,7 +69,18 @@ describe("createLLMGateway env handling", () => {
       LLM_API_KEY: "legacy-user-style-key",
       ANTHROPIC_API_KEY: "",
     };
-    expect(() => createLLMGateway()).toThrow(/ANTHROPIC_API_KEY/);
+    expect(createLLMGateway().model).toBe("claude-test");
+  });
+
+  it("names the exact missing provider key when neither preferred nor legacy key is set", () => {
+    process.env = {
+      ...OLD_ENV,
+      LLM_PROVIDER: "gemini",
+      LLM_MODEL: "gemini-test",
+      GEMINI_API_KEY: "",
+      LLM_API_KEY: "",
+    };
+    expect(() => createLLMGateway()).toThrow(/GEMINI_API_KEY.*LLM_API_KEY/);
   });
 
   it("constructs OpenAI gateway from OPENAI_API_KEY", () => {

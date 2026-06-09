@@ -35,6 +35,32 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
   const provider = str(d.provider);
 
   switch (event) {
+    case "usage_limit_reached":
+      return {
+        title: "Usage limit reached",
+        detail: str(d.message) ??
+          "You've reached the alpha usage limit. Try again later, or raise the local alpha limits while testing.",
+        tone: "warn",
+      };
+    case "llm_config_missing":
+      return {
+        title: "Planner setup is missing",
+        detail: str(d.message) ??
+          "ShipFix needs backend-only LLM settings in the API/worker environment before it can generate plans.",
+        tone: "error",
+      };
+    case "planning_failed":
+      return {
+        title: "Planning failed",
+        detail: str(d.message) ?? "ShipFix could not generate a deployment plan. Check the technical details below.",
+        tone: "error",
+      };
+    case "run_failed":
+      return {
+        title: "Run failed",
+        detail: str(d.message) ?? "The run stopped before it could finish.",
+        tone: "error",
+      };
     case "analysis_completed":
       return { title: "Repository analyzed", detail: "ShipFix read your repo and detected its structure.", tone: "success" };
     case "plan_validated":

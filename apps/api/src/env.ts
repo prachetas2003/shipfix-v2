@@ -1,16 +1,18 @@
 import { fileURLToPath } from "node:url";
 import { config as loadEnvFile } from "dotenv";
 import { z } from "zod";
+import { alphaDefault } from "./alphaLimits";
 
-// Load the repo-root .env for local dev (no-op if the file is absent, so real
-// shell-exported env still works). Must run before parsing below.
+// Load the repo-root .env for local dev, then allow API-local overrides. Real
+// shell-exported env still wins unless the API-local file explicitly overrides.
 loadEnvFile({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
+loadEnvFile({ path: fileURLToPath(new URL("../.env.local", import.meta.url)), override: true });
 
 /**
  * Validated control-plane environment. Fails fast at boot if misconfigured so a
  * half-configured API never half-works. Never logs values.
  */
-const Env = z.object({
+export const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   API_PORT: z.coerce.number().int().positive().default(4000),
   TEMPORAL_ADDRESS: z.string().default("localhost:7233"),
@@ -26,15 +28,16 @@ const Env = z.object({
   SHIPFIX_MASTER_KEY: z.string().optional(),
   AUTH_MODE: z.enum(["clerk", "dev"]).default("clerk"),
   CLERK_SECRET_KEY: z.string().optional(),
-  CLERK_PUBLISHABLE_KEY: z.string().optional(),
   /** Required for /admin/* routes. If absent, admin routes are disabled. */
   SHIPFIX_ADMIN_TOKEN: z.string().optional(),
-  ALPHA_MAX_DEPLOY_RUNS_PER_USER_PER_DAY: z.coerce.number().int().positive().default(3),
-  ALPHA_MAX_PLAN_ANALYZE_RUNS_PER_USER_PER_DAY: z.coerce.number().int().positive().default(10),
-  ALPHA_MAX_ACTIVE_DEPLOY_RUNS_PER_USER: z.coerce.number().int().positive().default(1),
-  ALPHA_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
-  ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW: z.coerce.number().int().positive().default(20),
+  ALPHA_MAX_DEPLOY_RUNS_PER_USER_PER_DAY: z.coerce.number().int().positive().default(alphaDefault("ALPHA_MAX_DEPLOY_RUNS_PER_USER_PER_DAY")),
+  ALPHA_MAX_PLAN_ANALYZE_RUNS_PER_USER_PER_DAY: z.coerce.number().int().positive().default(alphaDefault("ALPHA_MAX_PLAN_ANALYZE_RUNS_PER_USER_PER_DAY")),
+  ALPHA_MAX_ACTIVE_DEPLOY_RUNS_PER_USER: z.coerce.number().int().positive().default(alphaDefault("ALPHA_MAX_ACTIVE_DEPLOY_RUNS_PER_USER")),
+  ALPHA_MAX_LLM_CALLS_PER_RUN: z.coerce.number().int().positive().default(alphaDefault("ALPHA_MAX_LLM_CALLS_PER_RUN")),
+  ALPHA_MAX_LLM_CALLS_PER_USER_PER_DAY: z.coerce.number().int().positive().default(alphaDefault("ALPHA_MAX_LLM_CALLS_PER_USER_PER_DAY")),
+  ALPHA_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(alphaDefault("ALPHA_RATE_LIMIT_WINDOW_MS")),
+  ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW: z.coerce.number().int().positive().default(alphaDefault("ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW")),
 });
 
-export const env = Env.parse(process.env);
-export type Env = z.infer<typeof Env>;
+export const env = EnvSchema.parse(process.env);
+export type Env = z.infer<typeof EnvSchema>;

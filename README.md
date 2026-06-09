@@ -81,8 +81,9 @@ live web timeline. No AI planning, no deployment yet.
 - **Postgres** reachable at `DATABASE_URL`.
 - **Temporal dev server** (`temporal` CLI installed).
 - **git** on PATH (the dev sandbox shells out to it).
-- A `.env` at the repo root (copy from `.env.example`). The API and worker load
-  it automatically; real shell-exported env also works.
+- A `.env` at the repo root (copy from `.env.example`). The API, worker, and
+  Next.js web dev server load it automatically; real shell-exported env also
+  works.
 
 ### 2. Create the schema (first run only)
 
@@ -91,6 +92,10 @@ pnpm --filter @shipfix/db db:migrate   # applies checked-in migrations to DATABA
 # or for local throwaway databases:
 pnpm --filter @shipfix/db db:push
 ```
+
+If you see a database column error after pulling schema/auth changes, your local
+database may be behind the current schema. Run `pnpm --filter @shipfix/db
+db:push` for a local dev database, then restart `pnpm dev:api`.
 
 ### 2b. Authentication
 
@@ -104,6 +109,41 @@ NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
 SHIPFIX_ADMIN_TOKEN=replace-with-different-long-random-token
 ```
+
+Recommended local file layout:
+
+| File | Read by | Put here |
+| --- | --- | --- |
+| Repo-root `.env` | API, worker, web dev server | Shared local config: `DATABASE_URL`, `AUTH_MODE`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, provider/LLM keys |
+| `apps/api/.env.local` | API only | Optional API-only overrides |
+| `apps/worker/.env.local` | Worker only | Optional worker-only overrides for Temporal, provider, and LLM settings |
+| `apps/web/.env.local` | Web only | Optional web-only overrides; only use `NEXT_PUBLIC_*` values |
+
+After changing Clerk env vars, restart both `pnpm dev:api` and `pnpm dev:web`.
+After changing LLM/provider env vars, restart `pnpm dev:worker`; plan/deploy
+activities run in the worker, not the API process.
+
+### 2c. Local alpha usage limits
+
+ShipFix keeps rate limits enabled in every environment. Local/dev defaults are
+higher so repeated alpha testing does not get blocked immediately:
+
+```bash
+ALPHA_MAX_DEPLOY_RUNS_PER_USER_PER_DAY=50
+ALPHA_MAX_PLAN_ANALYZE_RUNS_PER_USER_PER_DAY=100
+ALPHA_MAX_ACTIVE_DEPLOY_RUNS_PER_USER=3
+ALPHA_MAX_LLM_CALLS_PER_RUN=10
+ALPHA_MAX_LLM_CALLS_PER_USER_PER_DAY=200
+ALPHA_RATE_LIMIT_WINDOW_MS=60000
+ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW=100
+LLM_MAX_PROMPT_CHARS=120000
+```
+
+Production keeps conservative built-in defaults unless explicit env vars are
+set. Rate-limit errors include the specific limit code, such as
+`daily_run_limit`, `active_deploy_limit`, `ip_run_start_limit`,
+`llm_run_limit`, or `llm_daily_user_limit`. In local dev, increase the
+`ALPHA_*` limits in `.env` and restart the API/worker.
 
 For local development only, you may set `AUTH_MODE=dev` and
 `NEXT_PUBLIC_AUTH_MODE=dev`. The API rejects dev auth when `NODE_ENV=production`.
@@ -174,7 +214,12 @@ pnpm --filter @shipfix/analyzer test
 
 Two more flows build on the same spine. Both need the worker's LLM gateway
 configured (`LLM_PROVIDER`, a provider-specific backend key such as
-`OPENAI_API_KEY`, and `LLM_MODEL` in `.env`) — there is no mock planner.
+`OPENAI_API_KEY`, and `LLM_MODEL` in the repo-root `.env` or
+`apps/worker/.env.local`) — there is no mock planner. If planning fails with
+“Planner setup is missing,” restart `pnpm dev:worker` after setting those vars.
+Older local env files that use `LLM_API_KEY` still work as a fallback, but the
+preferred names are `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`
+because ShipFix can diagnose missing provider config more clearly.
 
 - **Generate plan** (`POST /runs/plan`): repo → RepoContext → AI-proposed
   `DeploymentPlan` → **deterministic validation** → persisted plan + run events →
@@ -193,9 +238,14 @@ configured (`LLM_PROVIDER`, a provider-specific backend key such as
 
   | Provider | Credential | Used for |
   | --- | --- | --- |
-  | **Neon** | API key | Provisioning managed Postgres; connection string sealed in `deployed_resources` |
+  | **Neon** | API key + backend `NEON_ORG_ID` | Provisioning managed Postgres; connection string sealed in `deployed_resources` |
   | **Render** | API key (+ optional `ownerId`) | Deploying `node_api` web services from the repo |
   | **Vercel** | API token (+ optional `teamId`) | Deploying `frontend_static` from the repo with build-time env wired from backend URL |
+
+  Set `NEON_ORG_ID` in the repo-root `.env` (or the worker runtime
+  environment) and restart the API/worker before deploying apps that provision
+  Postgres. ShipFix treats Neon as not ready if the API key is connected but the
+  organization id is missing.
 
   Requires `SHIPFIX_MASTER_KEY` (base64 32-byte key; `openssl rand -base64 32`)
   for the envelope-encryption vault. Provider API keys and database connection

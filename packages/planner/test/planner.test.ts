@@ -178,9 +178,9 @@ describe("buildUserPrompt alpha safety", () => {
   });
 
   it("caps prompt size with an explicit alpha truncation marker", () => {
-    const manyFiles = Array.from({ length: 5000 }, (_, i) => `apps/web/src/${"nested/".repeat(50)}file-${i}.tsx`);
+    const manyFiles = Array.from({ length: 5000 }, (_, i) => `apps/web/src/${"nested/".repeat(200)}file-${i}.tsx`);
     const prompt = buildUserPrompt({ ...ctx, fileTree: manyFiles });
-    expect(prompt.length).toBeLessThanOrEqual(61_000);
+    expect(prompt.length).toBeLessThanOrEqual(121_000);
     expect(prompt).toContain("TRUNCATED_FOR_ALPHA_PROMPT_LIMIT");
   });
 });

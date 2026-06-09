@@ -228,7 +228,7 @@ describe("createRenderAdapter", () => {
     expect(result.logs).toContain("dpl_empty");
   });
 
-  it("includes install and build in Render buildCommand", async () => {
+  it("includes dev dependencies while building npm Node APIs on Render", async () => {
     let createBody: Record<string, unknown> | null = null;
     const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
@@ -260,9 +260,45 @@ describe("createRenderAdapter", () => {
       credentials: { provider: "render", values: { apiKey: "k" } },
     });
 
+    const details = (createBody as { serviceDetails?: { envSpecificDetails?: { buildCommand?: string; startCommand?: string } } } | null)
+      ?.serviceDetails?.envSpecificDetails;
+    const envVars = (createBody as { envVars?: Array<{ key: string; value: string }> } | null)?.envVars ?? [];
+    expect(details?.buildCommand).toBe("npm install --include=dev && npm run build");
+    expect(details?.startCommand).toBe("npm run start");
+    expect(envVars).toContainEqual({ key: "NPM_CONFIG_PRODUCTION", value: "false" });
+  });
+
+  it("prefers npm ci with dev dependencies when the plan detected a package lock", async () => {
+    let createBody: Record<string, unknown> | null = null;
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      if (u.includes("/owners")) return jsonResponse([{ owner: { id: "own_1" } }]);
+      if (u.endsWith("/services") && method === "POST") {
+        createBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse({ service: { id: "srv_1" } });
+      }
+      if (u.includes("/deploys") && method === "POST") return jsonResponse({ deploy: { id: "dpl_1" } });
+      if (u.includes("/deploys/dpl_1")) return jsonResponse({ deploy: { id: "dpl_1", status: "live" } });
+      if (u.includes("/services/srv_1") && !u.includes("/deploys")) {
+        return jsonResponse({ service: { id: "srv_1", serviceDetails: { url: "https://x.onrender.com" } } });
+      }
+      if (u.includes("/services") && method === "GET") return jsonResponse([]);
+      return new Response("", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const render = createRenderAdapter({ fetchImpl: fakeFetch, apiBase: "https://render.test/v1", pollIntervalMs: 1 });
+    await render.deploy({
+      service: { ...service, install: "npm ci" },
+      repo: { fullName: "acme/app", branch: "main" },
+      rootDir: "apps/api",
+      env: {},
+      credentials: { provider: "render", values: { apiKey: "k" } },
+    });
+
     const details = (createBody as { serviceDetails?: { envSpecificDetails?: { buildCommand?: string } } } | null)
       ?.serviceDetails?.envSpecificDetails;
-    expect(details?.buildCommand).toBe("npm install && npm run build");
+    expect(details?.buildCommand).toBe("npm ci --include=dev && npm run build");
   });
 
   it("updates an existing service by name instead of creating duplicate", async () => {

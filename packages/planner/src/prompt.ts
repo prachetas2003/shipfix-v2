@@ -2,7 +2,8 @@ import type { RepoContext } from "@shipfix/contracts";
 
 /** Keep the prompt bounded: a huge file tree shouldn't blow the token budget. */
 const MAX_TREE_IN_PROMPT = 250;
-const MAX_PROMPT_CHARS = Number(process.env.LLM_MAX_PROMPT_CHARS ?? 60_000);
+const DEFAULT_MAX_PROMPT_CHARS = process.env.NODE_ENV === "production" ? 60_000 : 120_000;
+const MAX_PROMPT_CHARS = Number(process.env.LLM_MAX_PROMPT_CHARS ?? DEFAULT_MAX_PROMPT_CHARS);
 const SENSITIVE_FILE_RE = /(^|\/)(\.env($|\.)|.*\.pem$|.*\.key$|id_rsa$|id_ed25519$|.*secret.*|.*credential.*)/i;
 const LOW_SIGNAL_FILE_RE = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb)$/i;
 
@@ -73,7 +74,9 @@ ENV WIRING:
 - "provider_injected": platform-provided (e.g. PORT).
 - "user_secret": the user must supply it — also add a matching question.
 - "literal": only for known NON-secret defaults (never a credential).
-- Add a wiring edge for each generated env var.
+- Add a wiring edge for each generated env var, including managed secrets like
+  db.connectionUrl -> api.DATABASE_URL and service URLs like api.publicUrl ->
+  web.VITE_API_URL.
 
 OUTPUT FORMAT:
 Return ONLY a single JSON object — no markdown, no code fences, no commentary —

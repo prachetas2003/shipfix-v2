@@ -86,8 +86,28 @@ async function failBody(res: Response, action: string): Promise<never> {
 
 /** Render build command: install then build (plan fields), for rootDir sub-apps. */
 function renderBuildCommand(service: PlanService): string {
-  const parts = [service.install, service.build].filter(Boolean) as string[];
-  return parts.length > 0 ? parts.join(" && ") : "npm install && npm run build";
+  const build = service.build?.trim();
+  const install = service.install?.trim();
+  if (build) {
+    return `${install ? npmInstallWithDevDeps(install) : "npm install --include=dev"} && ${build}`;
+  }
+  return install ? npmInstallWithDevDeps(install) : "npm install --include=dev && npm run build";
+}
+
+function npmInstallWithDevDeps(command: string): string {
+  if (/^npm\s+ci(?:\s|$)/.test(command)) {
+    return /\s--include=dev(?:\s|$)/.test(command) ? command : command.replace(/^npm\s+ci/, "npm ci --include=dev");
+  }
+  if (/^npm\s+install(?:\s|$)/.test(command)) {
+    return /\s--include=dev(?:\s|$)/.test(command)
+      ? command
+      : command.replace(/^npm\s+install/, "npm install --include=dev");
+  }
+  return command;
+}
+
+function renderStartCommand(service: PlanService): string {
+  return service.start?.trim() || "npm run start";
 }
 
 /** Resolve workspace owner id (required by Render create). Uses stored ownerId or GET /owners. */
@@ -139,9 +159,22 @@ function envVarPayload(env: Record<string, string>): Array<{ key: string; value:
   return Object.entries(env).map(([key, value]) => ({ key, value }));
 }
 
+function renderEnv(input: DeployInput): Record<string, string> {
+  if (input.service.type !== "node_api" || !input.service.build) return input.env;
+  return {
+    ...input.env,
+    NPM_CONFIG_PRODUCTION: "false",
+  };
+}
+
+function envSpecificDetails(input: DeployInput): { buildCommand: string; startCommand: string } {
+  return {
+    buildCommand: renderBuildCommand(input.service),
+    startCommand: renderStartCommand(input.service),
+  };
+}
+
 function buildCreateBody(input: DeployInput, ownerId: string, name: string): Record<string, unknown> {
-  const build = renderBuildCommand(input.service);
-  const start = input.service.start ?? undefined;
   return {
     type: "web_service",
     name,
@@ -150,30 +183,22 @@ function buildCreateBody(input: DeployInput, ownerId: string, name: string): Rec
     branch: input.repo.branch,
     rootDir: input.rootDir || undefined,
     autoDeploy: "yes",
-    envVars: envVarPayload(input.env),
+    envVars: envVarPayload(renderEnv(input)),
     serviceDetails: {
       runtime: "node",
       plan: "free",
       region: "oregon",
-      envSpecificDetails: {
-        buildCommand: build,
-        startCommand: start || "npm start",
-      },
+      envSpecificDetails: envSpecificDetails(input),
     },
   };
 }
 
 function buildUpdateBody(input: DeployInput): Record<string, unknown> {
-  const build = renderBuildCommand(input.service);
-  const start = input.service.start ?? undefined;
   return {
     rootDir: input.rootDir || undefined,
-    envVars: envVarPayload(input.env),
+    envVars: envVarPayload(renderEnv(input)),
     serviceDetails: {
-      envSpecificDetails: {
-        buildCommand: build,
-        startCommand: start || "npm start",
-      },
+      envSpecificDetails: envSpecificDetails(input),
     },
   };
 }

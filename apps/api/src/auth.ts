@@ -57,21 +57,25 @@ async function upsertUser(
   db: Database,
   identity: { clerkId: string; login: string; email?: string | null },
 ): Promise<AuthenticatedUser> {
-  const existing = await db.select().from(users).where(eq(users.clerkId, identity.clerkId)).limit(1);
+  const githubId = stableNumericId("clerk", identity.clerkId);
+  const existing = await db
+    .select({ id: users.id, login: users.login })
+    .from(users)
+    .where(eq(users.githubId, githubId))
+    .limit(1);
   if (existing[0]) {
-    return { id: existing[0].id, clerkId: existing[0].clerkId ?? identity.clerkId, login: existing[0].login };
+    return { id: existing[0].id, clerkId: identity.clerkId, login: existing[0].login };
   }
 
   const [created] = await db
     .insert(users)
     .values({
-      clerkId: identity.clerkId,
-      githubId: stableNumericId("clerk", identity.clerkId),
+      githubId,
       login: identity.login,
       email: identity.email ?? null,
     })
-    .returning();
-  return { id: created.id, clerkId: created.clerkId ?? identity.clerkId, login: created.login };
+    .returning({ id: users.id, login: users.login });
+  return { id: created.id, clerkId: identity.clerkId, login: created.login };
 }
 
 async function requireDevUser(request: FastifyRequest, db: Database): Promise<AuthenticatedUser> {
@@ -95,7 +99,8 @@ export async function requireUser(
     request.log.error("CLERK_SECRET_KEY is not configured.");
     await reply.status(500).send({
       error: "auth_misconfigured",
-      message: "ShipFix authentication is not configured.",
+      message:
+        "ShipFix authentication is not configured. Set CLERK_SECRET_KEY in the repo-root .env or apps/api/.env.local, then restart the API.",
     });
     return null;
   }

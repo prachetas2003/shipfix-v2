@@ -36,6 +36,16 @@ function fail(externalId: string | null, logs: string): ProvisionResult {
   return { ok: false, externalId, host: null, exposed: null, status: "failed", logs };
 }
 
+function neonOrgId(values: Record<string, string>): string | null {
+  return (
+    values.orgId?.trim() ||
+    values.org_id?.trim() ||
+    values.organizationId?.trim() ||
+    values.organization_id?.trim() ||
+    null
+  );
+}
+
 async function neonFetch(
   fetchImpl: typeof fetch,
   url: string,
@@ -79,6 +89,11 @@ export function createNeonProvisioner(opts: NeonOptions = {}): ManagedProvisione
       }
       const apiKey = credentials.values.apiKey;
       if (!apiKey) return fail(null, "Missing Neon credential: apiKey.");
+      const orgId = neonOrgId(credentials.values);
+      onLog?.(`Neon organization ID available: ${Boolean(orgId)}`);
+      if (!orgId) {
+        return fail(null, "Neon organization ID is missing. Add NEON_ORG_ID and restart API/worker.");
+      }
 
       onLog?.(`Creating Neon project "${resourceName}"`);
       let res: Response;
@@ -90,7 +105,7 @@ export function createNeonProvisioner(opts: NeonOptions = {}): ManagedProvisione
             accept: "application/json",
             authorization: `Bearer ${apiKey}`,
           },
-          body: JSON.stringify({ project: { name: resourceName } }),
+          body: JSON.stringify({ project: { name: resourceName, org_id: orgId } }),
         });
       } catch (e) {
         return fail(null, `Neon API request failed: ${e instanceof Error ? e.message : String(e)}`);

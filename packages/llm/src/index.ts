@@ -28,34 +28,63 @@ export function redactingGateway(inner: LLMGateway): LLMGateway {
   };
 }
 
+type Provider = "openai" | "anthropic" | "gemini";
+
+const PROVIDER_KEY_ENV: Record<Provider, "OPENAI_API_KEY" | "ANTHROPIC_API_KEY" | "GEMINI_API_KEY"> = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  gemini: "GEMINI_API_KEY",
+};
+
+function normalizeProvider(value: string | undefined): Provider | null {
+  const provider = value?.trim().toLowerCase();
+  return provider === "openai" || provider === "anthropic" || provider === "gemini" ? provider : null;
+}
+
+function resolveProviderApiKey(provider: Provider): { apiKey: string | undefined; expectedEnv: string; usedLegacy: boolean } {
+  const expectedEnv = PROVIDER_KEY_ENV[provider];
+  const providerKey = process.env[expectedEnv]?.trim();
+  if (providerKey) return { apiKey: providerKey, expectedEnv, usedLegacy: false };
+
+  // Backward-compatible local/dev fallback for older ShipFix env files. New
+  // installs should prefer provider-specific names so config checks are clear.
+  const legacyKey = process.env.LLM_API_KEY?.trim();
+  if (legacyKey) return { apiKey: legacyKey, expectedEnv, usedLegacy: true };
+
+  return { apiKey: undefined, expectedEnv, usedLegacy: false };
+}
+
 /**
  * Build the real, env-configured gateway. Throws (does NOT silently fall back to
  * a mock) when unconfigured — the planner brain must be a real model.
  */
 export function createLLMGateway(): LLMGateway {
-  const provider = process.env.LLM_PROVIDER;
-  const model = process.env.LLM_MODEL;
+  const providerRaw = process.env.LLM_PROVIDER;
+  const provider = normalizeProvider(providerRaw);
+  const model = process.env.LLM_MODEL?.trim();
 
-  if (!provider || !model) {
+  if (!providerRaw?.trim() || !model) {
     throw new Error(
       "LLM gateway not configured. Set LLM_PROVIDER (openai|anthropic|gemini), provider API key env, and LLM_MODEL.",
     );
   }
+  if (!provider) {
+    throw new Error(`Unknown LLM_PROVIDER "${providerRaw}" (expected "openai", "anthropic" or "gemini").`);
+  }
+
+  const { apiKey, expectedEnv } = resolveProviderApiKey(provider);
+  if (!apiKey) {
+    throw new Error(`LLM gateway not configured for ${provider}. Set ${expectedEnv} (preferred) or LLM_API_KEY.`);
+  }
 
   let inner: LLMGateway;
   if (provider === "openai") {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OpenAI LLM gateway not configured. Set OPENAI_API_KEY.");
     inner = createOpenAIGateway({ apiKey, model });
   } else if (provider === "anthropic") {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("Anthropic LLM gateway not configured. Set ANTHROPIC_API_KEY.");
     inner = createAnthropicGateway({ apiKey, model });
-  } else if (provider === "gemini") {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("Gemini LLM gateway not configured. Set GEMINI_API_KEY.");
+  } else {
     inner = createGeminiGateway({ apiKey, model });
-  } else throw new Error(`Unknown LLM_PROVIDER "${provider}" (expected "openai", "anthropic" or "gemini").`);
+  }
 
   return redactingGateway(inner);
 }

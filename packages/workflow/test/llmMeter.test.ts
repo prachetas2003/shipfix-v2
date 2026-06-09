@@ -77,7 +77,7 @@ describe("meteredGateway", () => {
       operation: "plan",
     });
 
-    await expect(metered.complete({ system: "s", user: "u" })).rejects.toThrow(/alpha usage limit/i);
-    expect(inserted[0]).toMatchObject({ success: false, error: "alpha_llm_limit" });
+    await expect(metered.complete({ system: "s", user: "u" })).rejects.toThrow(/llm_run_limit/i);
+    expect(inserted[0]).toMatchObject({ success: false, error: "llm_run_limit" });
   });
 });

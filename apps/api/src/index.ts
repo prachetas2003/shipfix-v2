@@ -18,6 +18,7 @@ import { reconcileStuckRuns } from "@shipfix/workflow";
 import { createSecretVaultFromEnv } from "@shipfix/secrets";
 import { env } from "./env";
 import { requireAdmin, requireUser, type AuthenticatedUser } from "./auth";
+import { alphaDefaultsProfile, usageLimitMessage } from "./alphaLimits";
 import {
   deriveLayers,
   toSnapshotResources,
@@ -37,6 +38,17 @@ import {
 
 const app = Fastify({ logger: true });
 const db = createDb(env.DATABASE_URL);
+
+app.setErrorHandler((err, _request, reply) => {
+  if ((err as { code?: string }).code === "FST_ERR_CTP_EMPTY_JSON_BODY") {
+    void reply.status(400).send({
+      error: "empty_json_body",
+      message: "Could not start deploy from plan. Please retry.",
+    });
+    return;
+  }
+  void reply.send(err);
+});
 
 // Browser app talks cross-origin in dev; SSE + JSON POST need CORS.
 await app.register(cors, { origin: env.WEB_ORIGIN });
@@ -84,7 +96,38 @@ async function loadPlanDoc(runId: string): Promise<PlanLite | null> {
     .where(eq(plans.runId, runId))
     .orderBy(desc(plans.version))
     .limit(1);
-  return (row?.doc as PlanLite | null) ?? null;
+  return normalizePlanForResponse(row?.doc) as PlanLite | null;
+}
+
+function normalizePlanForResponse(doc: unknown): unknown {
+  if (!doc || typeof doc !== "object") return null;
+  const plan = structuredClone(doc) as {
+    services?: Array<{ id: string; env?: Array<{ name: string; source: string; ref?: string }> }>;
+    wiring?: Array<{ fromServiceId: string; fromField: string; toServiceId: string; toEnvName: string }>;
+    blockers?: Array<{ title?: string; explanation?: string }>;
+  };
+  plan.wiring ??= [];
+  const key = (w: { fromServiceId: string; fromField: string; toServiceId: string; toEnvName: string }) =>
+    `${w.fromServiceId}.${w.fromField}->${w.toServiceId}.${w.toEnvName}`;
+  const existing = new Set(plan.wiring.map(key));
+  for (const service of plan.services ?? []) {
+    for (const envVar of service.env ?? []) {
+      if (envVar.source !== "generated_from_service" && envVar.source !== "generated_from_managed") continue;
+      const [fromServiceId, fromField] = (envVar.ref ?? "").split(".");
+      if (!fromServiceId || !fromField) continue;
+      if (envVar.source === "generated_from_service" && fromField !== "publicUrl" && fromField !== "origin") continue;
+      if (envVar.source === "generated_from_managed" && fromField !== "connectionUrl") continue;
+      const edge = { fromServiceId, fromField, toServiceId: service.id, toEnvName: envVar.name };
+      if (!existing.has(key(edge))) {
+        plan.wiring.push(edge);
+        existing.add(key(edge));
+      }
+    }
+  }
+  plan.blockers = (plan.blockers ?? []).filter(
+    (b) => b.title !== "Generated env var has no wiring edge" && !/has no matching wiring edge/i.test(b.explanation ?? ""),
+  );
+  return plan;
 }
 
 /** Non-secret deployed resource rows for a run (never selects enc_* columns). */
@@ -138,30 +181,46 @@ async function userCanAccessRun(userId: string, runId: string): Promise<boolean>
 function backendConfigCheck() {
   const provider = process.env.LLM_PROVIDER ?? "";
   const providerKey =
-    provider === "openai"
+    provider.trim().toLowerCase() === "openai"
       ? "OPENAI_API_KEY"
-      : provider === "anthropic"
+      : provider.trim().toLowerCase() === "anthropic"
         ? "ANTHROPIC_API_KEY"
-        : provider === "gemini"
+        : provider.trim().toLowerCase() === "gemini"
           ? "GEMINI_API_KEY"
           : null;
+  const providerKeyConfigured = providerKey ? Boolean(process.env[providerKey]?.trim()) : false;
+  const legacyLlmKeyConfigured = Boolean(process.env.LLM_API_KEY?.trim());
   return {
     databaseUrl: Boolean(env.DATABASE_URL),
     authMode: env.AUTH_MODE,
     clerkSecretConfigured: Boolean(env.CLERK_SECRET_KEY),
-    clerkPublishableConfigured: Boolean(env.CLERK_PUBLISHABLE_KEY),
     adminTokenConfigured: Boolean(env.SHIPFIX_ADMIN_TOKEN),
     masterKeyConfigured: Boolean(env.SHIPFIX_MASTER_KEY),
     llmProvider: provider || null,
-    llmModelConfigured: Boolean(process.env.LLM_MODEL),
-    llmProviderKeyConfigured: providerKey ? Boolean(process.env[providerKey]) : false,
+    llmProviderAccepted: ["openai", "anthropic", "gemini"].includes(provider.trim().toLowerCase()),
+    llmModelConfigured: Boolean(process.env.LLM_MODEL?.trim()),
+    llmProviderKeyConfigured: providerKeyConfigured,
+    llmLegacyApiKeyConfigured: legacyLlmKeyConfigured,
+    llmProviderKeyOrLegacyConfigured: providerKeyConfigured || legacyLlmKeyConfigured,
     llmExpectedKeyEnv: providerKey,
+    llmMaxPromptChars: Number(process.env.LLM_MAX_PROMPT_CHARS || (process.env.NODE_ENV === "production" ? 60_000 : 120_000)),
+    neonOrgIdConfigured: neonOrgIdConfigured(),
+    neonOrgIdEnvConfigured: Boolean(process.env.NEON_ORG_ID?.trim()),
+    neonOrganizationIdEnvConfigured: Boolean(process.env.NEON_ORGANIZATION_ID?.trim()),
     limits: {
+      defaultsProfile: alphaDefaultsProfile(),
       deployRunsPerUserPerDay: env.ALPHA_MAX_DEPLOY_RUNS_PER_USER_PER_DAY,
       planAnalyzeRunsPerUserPerDay: env.ALPHA_MAX_PLAN_ANALYZE_RUNS_PER_USER_PER_DAY,
       activeDeployRunsPerUser: env.ALPHA_MAX_ACTIVE_DEPLOY_RUNS_PER_USER,
+      llmCallsPerRun: env.ALPHA_MAX_LLM_CALLS_PER_RUN,
+      llmCallsPerUserPerDay: env.ALPHA_MAX_LLM_CALLS_PER_USER_PER_DAY,
       ipWindowMs: env.ALPHA_RATE_LIMIT_WINDOW_MS,
       maxRunStartsPerIpWindow: env.ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW,
+    },
+    localWorkerEnv: {
+      note: "Plan/deploy work runs in the worker. Restart pnpm dev:worker after changing root .env or apps/worker/.env.local.",
+      readsRootEnv: true,
+      readsWorkerEnvLocal: true,
     },
   };
 }
@@ -247,6 +306,15 @@ const DEPLOYABLE_SERVICE_TYPES: Record<string, string[]> = {
   vercel: ["frontend_static"],
 };
 
+function neonOrgIdConfigured(): boolean {
+  return Boolean(process.env.NEON_ORG_ID?.trim() || process.env.NEON_ORGANIZATION_ID?.trim());
+}
+
+function providerReadyForRuntime(provider: string): boolean {
+  if (provider === "neon") return neonOrgIdConfigured();
+  return true;
+}
+
 type StartResult =
   | { ok: true; runId: string }
   | { ok: false; runId: string; code: string; message: string };
@@ -323,10 +391,11 @@ async function checkRunLimits(
   );
   if (today >= dailyLimit) {
     await recordRateLimitRejection({ userId, projectId, operation: mode, code: "daily_run_limit" });
+    const unit = mode === "deploy" ? "deploy runs per user per day" : "plan/analyze runs per user per day";
     return {
       ok: false,
-      code: "alpha_usage_limit",
-      message: "You've reached the alpha usage limit. Try again later.",
+      code: "daily_run_limit",
+      message: usageLimitMessage({ code: "daily_run_limit", limit: dailyLimit, unit, nodeEnv: process.env.NODE_ENV }),
     };
   }
 
@@ -348,8 +417,13 @@ async function checkRunLimits(
       await recordRateLimitRejection({ userId, projectId, operation: mode, code: "active_deploy_limit" });
       return {
         ok: false,
-        code: "alpha_usage_limit",
-        message: "You've reached the alpha usage limit. Try again later.",
+        code: "active_deploy_limit",
+        message: usageLimitMessage({
+          code: "active_deploy_limit",
+          limit: env.ALPHA_MAX_ACTIVE_DEPLOY_RUNS_PER_USER,
+          unit: "active deploy runs per user",
+          nodeEnv: process.env.NODE_ENV,
+        }),
       };
     }
   }
@@ -417,6 +491,107 @@ async function startRun(
   }
 }
 
+async function startDeployFromExistingRun(
+  user: AuthenticatedUser,
+  sourceRunId: string,
+): Promise<StartResult> {
+  const [source] = await db
+    .select({
+      id: runs.id,
+      projectId: runs.projectId,
+      commitSha: runs.commitSha,
+      mode: runs.mode,
+      status: runs.status,
+      repoFullName: projects.repoFullName,
+      defaultBranch: projects.defaultBranch,
+    })
+    .from(runs)
+    .innerJoin(projects, eq(runs.projectId, projects.id))
+    .where(and(eq(runs.id, sourceRunId), eq(projects.userId, user.id)))
+    .limit(1);
+  if (!source) {
+    return { ok: false, runId: "", code: "run_not_found", message: "Run not found." };
+  }
+
+  const [sourcePlan] = await db
+    .select()
+    .from(plans)
+    .where(eq(plans.runId, sourceRunId))
+    .orderBy(desc(plans.version))
+    .limit(1);
+  if (!sourcePlan) {
+    return {
+      ok: false,
+      runId: "",
+      code: "plan_not_found",
+      message: "No validated plan was found for this run. Re-check the plan before deploying.",
+    };
+  }
+
+  const limits = await checkRunLimits(user.id, source.projectId, "deploy");
+  if (!limits.ok) {
+    return { ok: false, runId: "", code: limits.code, message: limits.message };
+  }
+
+  const [run] = await db
+    .insert(runs)
+    .values({
+      projectId: source.projectId,
+      commitSha: source.commitSha,
+      trigger: "retry",
+      mode: "deploy",
+      status: "queued",
+    })
+    .returning();
+
+  const [copiedPlan] = await db
+    .insert(plans)
+    .values({
+      runId: run.id,
+      version: 1,
+      doc: normalizePlanForResponse(sourcePlan.doc),
+      planner: sourcePlan.planner,
+      confidence: sourcePlan.confidence,
+    })
+    .returning();
+  await db.update(runs).set({ planId: copiedPlan.id }).where(eq(runs.id, run.id));
+
+  const logger = createRunLogger(run.id, createPostgresSink(db));
+  await logger.stage("queued", `Deploy queued for ${source.repoFullName}`);
+  await logger.log("Deploy will use the selected validated plan", {
+    event: "deploy_from_plan",
+    sourceRunId,
+    sourcePlanId: sourcePlan.id,
+  });
+
+  const workflowId = `run-${run.id}`;
+  try {
+    const client = await temporal();
+    await client.workflow.start("deploymentWorkflow", {
+      taskQueue: env.TEMPORAL_TASK_QUEUE,
+      workflowId,
+      args: [{ runId: run.id, mode: "deploy" }],
+    });
+    await db.update(runs).set({ temporalId: workflowId }).where(eq(runs.id, run.id));
+    return { ok: true, runId: run.id };
+  } catch (startErr) {
+    await db
+      .update(runs)
+      .set({ status: "failed", finishedAt: new Date() })
+      .where(eq(runs.id, run.id));
+    await logger.error(
+      "Could not start the deployment workflow. Is the Temporal dev server running? (temporal server start-dev)",
+      { error: startErr instanceof Error ? startErr.message : String(startErr) },
+    );
+    return {
+      ok: false,
+      runId: run.id,
+      code: "workflow_start_failed",
+      message: "Could not start the Temporal workflow. Is the Temporal dev server running?",
+    };
+  }
+}
+
 /** Build a Fastify handler that launches a run in the given mode. */
 function runRouteHandler(mode: RunMode) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
@@ -437,8 +612,13 @@ function runRouteHandler(mode: RunMode) {
     if (!checkIpRateLimit(request.ip)) {
       await recordRateLimitRejection({ userId: user.id, operation: mode, code: "ip_run_start_limit" });
       return reply.status(429).send({
-        error: "alpha_usage_limit",
-        message: "You've reached the alpha usage limit. Try again later.",
+        error: "ip_run_start_limit",
+        message: usageLimitMessage({
+          code: "ip_run_start_limit",
+          limit: env.ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW,
+          unit: `run starts per ${env.ALPHA_RATE_LIMIT_WINDOW_MS}ms IP window`,
+          nodeEnv: process.env.NODE_ENV,
+        }),
       });
     }
 
@@ -488,6 +668,42 @@ app.post("/runs/plan", runRouteHandler("plan"));
 // deploy: plan + REAL managed-service provisioning (e.g. Neon Postgres). No
 // service deployment yet, so this ends as a diagnosis with provisioned infra.
 app.post("/runs/deploy", runRouteHandler("deploy"));
+
+app.post("/runs/:runId/deploy", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+
+  const { runId } = request.params as { runId: string };
+  if (!z.string().uuid().safeParse(runId).success) {
+    return reply.status(400).send({ error: "invalid_run_id" });
+  }
+  if (!checkIpRateLimit(request.ip)) {
+    await recordRateLimitRejection({ userId: user.id, operation: "deploy", code: "ip_run_start_limit" });
+    return reply.status(429).send({
+      error: "ip_run_start_limit",
+      message: usageLimitMessage({
+        code: "ip_run_start_limit",
+        limit: env.ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW,
+        unit: `run starts per ${env.ALPHA_RATE_LIMIT_WINDOW_MS}ms IP window`,
+        nodeEnv: process.env.NODE_ENV,
+      }),
+    });
+  }
+
+  const result = await startDeployFromExistingRun(user, runId);
+  if (!result.ok) {
+    const status =
+      result.code === "run_not_found"
+        ? 404
+        : result.code === "plan_not_found"
+          ? 400
+          : result.runId
+            ? 503
+            : 429;
+    return reply.status(status).send({ runId: result.runId || undefined, error: result.code, message: result.message });
+  }
+  return reply.status(202).send({ runId: result.runId, mode: "deploy" });
+});
 
 // ── Provider credentials ───────────────────────────────────────────────────
 // The control plane is trusted and may receive a plaintext credential here; it
@@ -562,7 +778,7 @@ app.get("/providers", async (request, reply) => {
     .from(providerAccounts)
     .where(eq(providerAccounts.userId, user.id));
   return {
-    connected: accounts.map((a) => a.provider),
+    connected: accounts.map((a) => a.provider).filter(providerReadyForRuntime),
     provisionable: PROVISIONABLE_PROVIDERS,
     deployable: DEPLOYABLE_PROVIDERS,
     deployableServiceTypes: DEPLOYABLE_SERVICE_TYPES,
@@ -824,6 +1040,7 @@ app.get("/apps/:projectId", async (request, reply) => {
 
   let current = null;
   let latestLiveDeployment = null;
+  let deployAction = null;
   if (history[0]) {
     const latest = await buildResourceSnapshotForRun(history[0].id);
     current = {
@@ -849,6 +1066,27 @@ app.get("/apps/:projectId", async (request, reply) => {
         break;
       }
     }
+
+    const actionCandidates = [
+      ...history.filter((r) => r.mode === "deploy" && (r.status === "failed" || r.status === "diagnosed")),
+      ...history.filter((r) => r.mode === "plan" && r.status === "succeeded"),
+    ];
+    for (const actionSource of actionCandidates) {
+      const [actionPlan] = await db
+        .select({ doc: plans.doc })
+        .from(plans)
+        .where(eq(plans.runId, actionSource.id))
+        .orderBy(desc(plans.version))
+        .limit(1);
+      if (actionPlan) {
+        deployAction = {
+          sourceRunId: actionSource.id,
+          label: actionSource.mode === "plan" ? "Deploy from latest plan" : "Retry deploy",
+          plan: normalizePlanForResponse(actionPlan.doc),
+        };
+        break;
+      }
+    }
   }
 
   return {
@@ -860,6 +1098,7 @@ app.get("/apps/:projectId", async (request, reply) => {
     },
     current,
     latestLiveDeployment,
+    deployAction,
     history,
   };
 });

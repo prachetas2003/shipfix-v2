@@ -26,15 +26,21 @@ export function OutcomeBanner({
   if (!display) return null;
 
   const allLive = display.fullStack.live;
+  const isPlanRun = snapshot.run.mode === "plan";
+  const hasAnyLiveResource = snapshot.resources.some((r) => r.status === "live");
   const headline = allLive
     ? "Your app is live."
-    : status === "failed"
-      ? "Deploy did not produce a live app."
-      : "Partly live — a few things still need attention.";
+    : isPlanRun && status === "succeeded"
+      ? "Plan generated. App not deployed yet."
+      : status === "failed"
+        ? deployFailureHeadline(snapshot)
+        : hasAnyLiveResource
+          ? "Partly live - a few things still need attention."
+          : "App not deployed yet.";
 
   const tone = allLive
     ? { border: colors.successDeep, bg: colors.successBg, text: colors.successText }
-    : status === "failed"
+    : status === "failed" && !hasAnyLiveResource
       ? { border: colors.errorBorder, bg: colors.errorBg, text: colors.errorText }
       : { border: colors.warnBorder, bg: colors.warnBg, text: colors.warnText };
 
@@ -77,8 +83,14 @@ function computeNextAction(
   status: string,
 ): string | null {
   if (display.fullStack.live) return null;
+  if (status === "succeeded") {
+    return "Connect providers and deploy this plan.";
+  }
   if (display.frontend && display.frontend.state !== "live") {
     return "Your frontend is not live. Make sure GitHub is connected to Vercel and the repo is accessible, then rerun Deploy.";
+  }
+  if (display.database && display.database.state === "failed") {
+    return "Database provisioning failed. Check the provider setup, then retry Deploy.";
   }
   if (display.backend && display.backend.state === "failed") {
     return "Your backend did not deploy. Open the timeline's technical details for the provider error, then rerun Deploy.";
@@ -87,4 +99,10 @@ function computeNextAction(
     return "No live result yet. Review the timeline, fix the flagged setup, and rerun Deploy.";
   }
   return "Review the timeline below for the remaining gap, then rerun Deploy.";
+}
+
+function deployFailureHeadline(snapshot: RunSnapshot): string {
+  const failedDb = snapshot.resources.some((r) => r.role === "database" && r.status === "failed");
+  if (failedDb) return "Deploy failed during database provisioning.";
+  return "Deploy did not produce a live app.";
 }

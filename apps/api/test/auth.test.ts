@@ -35,20 +35,65 @@ function reply() {
 
 function db(existing: unknown[] = []) {
   return {
-    select: () => ({
+    select: (shape: Record<string, unknown>) => {
+      if ("clerkId" in shape) throw new Error("auth upsert should not select clerk_id");
+      return {
       from: () => ({
         where: () => ({
           limit: async () => existing,
         }),
       }),
-    }),
+      };
+    },
     insert: () => ({
-      values: (value: { clerkId: string; login: string }) => ({
-        returning: async () => [{
-          id: "00000000-0000-0000-0000-000000000001",
-          clerkId: value.clerkId,
-          login: value.login,
-        }],
+      values: (value: { clerkId?: string; login: string }) => ({
+        returning: async () => {
+          if ("clerkId" in value) throw new Error("auth upsert should not insert clerk_id");
+          return [{
+            id: "00000000-0000-0000-0000-000000000001",
+            login: value.login,
+          }];
+        },
+      }),
+    }),
+    update: () => {
+      throw new Error("auth upsert should not update clerk_id");
+    },
+  } as never;
+}
+
+function dbThatFailsOnClerkIdAccess() {
+  return {
+    select: (shape: Record<string, unknown>) => {
+      if ("clerkId" in shape) {
+        const err = new Error('column "clerk_id" of relation "users" does not exist') as Error & { code: string };
+        err.code = "42703";
+        throw err;
+      }
+      return {
+      from: () => ({
+        where: () => ({
+          limit: async () => [],
+        }),
+      }),
+      };
+    },
+    update: () => {
+      throw new Error("auth upsert should not update clerk_id");
+    },
+    insert: () => ({
+      values: (value: { clerkId?: string; login: string }) => ({
+        returning: async () => {
+          if ("clerkId" in value) {
+            const err = new Error('column "clerk_id" of relation "users" does not exist') as Error & { code: string };
+            err.code = "42703";
+            throw err;
+          }
+          return [{
+            id: "00000000-0000-0000-0000-000000000002",
+            login: value.login,
+          }];
+        },
       }),
     }),
   } as never;
@@ -88,6 +133,21 @@ describe("Clerk auth helpers", () => {
     });
     expect(state.statusCode).toBe(200);
     expect(user).toMatchObject({ id: "00000000-0000-0000-0000-000000000001", clerkId: "user_clerk_123" });
+  });
+
+  it("does not touch clerk_id during auth upsert for older local databases", async () => {
+    const { reply: res, state } = reply();
+    const user = await requireUser(
+      request({ headers: { authorization: "Bearer valid-clerk-token" } }),
+      res,
+      dbThatFailsOnClerkIdAccess(),
+      {
+        AUTH_MODE: "clerk",
+        CLERK_SECRET_KEY: "sk_test_123",
+      },
+    );
+    expect(state.statusCode).toBe(200);
+    expect(user).toMatchObject({ id: "00000000-0000-0000-0000-000000000002", clerkId: "user_clerk_123" });
   });
 
   it("supports explicit dev auth outside production", async () => {

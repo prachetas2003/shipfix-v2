@@ -170,6 +170,20 @@ describe("validatePlan — deployOrder", () => {
 });
 
 describe("validatePlan — wiring", () => {
+  it("adds a missing managed env wiring edge without warning when the env ref is valid", () => {
+    const plan = makePlan();
+    plan.wiring = plan.wiring.filter((w) => w.toEnvName !== "DATABASE_URL");
+    const res = validatePlan(plan, makeCtx(), fullCaps);
+    expect(codes(res)).not.toContain("generated_env_no_wiring");
+    expect(res.plan.wiring).toContainEqual({
+      fromServiceId: "db",
+      fromField: "connectionUrl",
+      toServiceId: "api",
+      toEnvName: "DATABASE_URL",
+    });
+    expect(res.plan.classification).toBe("deployable");
+  });
+
   it("flags wiring to an unknown service", () => {
     const plan = makePlan();
     plan.wiring[0].toServiceId = "nope";

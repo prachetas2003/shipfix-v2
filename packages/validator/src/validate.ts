@@ -4,6 +4,7 @@ import type {
   PlanClassification,
   PlanService,
   RepoContext,
+  WiringEdge,
 } from "@shipfix/contracts";
 import { redact } from "@shipfix/secrets";
 import type { Capabilities } from "./capabilities";
@@ -109,6 +110,24 @@ function checkEnvVar(
       });
     }
   }
+}
+
+function generatedEnvWiringEdge(service: PlanService, env: EnvVar): WiringEdge | null {
+  if (env.source !== "generated_from_service" && env.source !== "generated_from_managed") return null;
+  const [refId, field] = (env.ref ?? "").split(".");
+  if (!refId || !field) return null;
+  if (env.source === "generated_from_service" && field !== "publicUrl" && field !== "origin") return null;
+  if (env.source === "generated_from_managed" && field !== "connectionUrl") return null;
+  return {
+    fromServiceId: refId,
+    fromField: field as WiringEdge["fromField"],
+    toServiceId: service.id,
+    toEnvName: env.name,
+  };
+}
+
+function wiringKey(edge: WiringEdge): string {
+  return `${edge.fromServiceId}.${edge.fromField}->${edge.toServiceId}.${edge.toEnvName}`;
 }
 
 /**
@@ -229,6 +248,20 @@ export function validatePlan(
         message: `Required environment variable "${ref.name}" was detected in the repo but is not provided by the plan. The app may not run until it is supplied.`,
         path: `services`,
       });
+    }
+  }
+
+  // Normalize first-class wiring edges for valid generated env refs. The deploy
+  // resolver uses env.ref as source of truth; this keeps the plan graph and UI
+  // equally explicit.
+  const existingWiring = new Set(plan.wiring.map(wiringKey));
+  for (const s of plan.services) {
+    for (const e of s.env) {
+      const edge = generatedEnvWiringEdge(s, e);
+      if (edge && !existingWiring.has(wiringKey(edge))) {
+        plan.wiring.push(edge);
+        existingWiring.add(wiringKey(edge));
+      }
     }
   }
 

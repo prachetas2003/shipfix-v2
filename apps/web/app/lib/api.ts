@@ -119,6 +119,11 @@ export interface AppDetail {
     layers: RunLayers;
     verification: VerificationEntry[];
   } | null;
+  deployAction: {
+    sourceRunId: string;
+    label: string;
+    plan: PlanView;
+  } | null;
   history: Array<{
     id: string;
     mode: string;
@@ -196,6 +201,20 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify(isUrl ? { repoUrl: value } : { repoFullName: value }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return body.runId as string;
+  },
+
+  async startDeployFromRun(runId: string): Promise<string> {
+    const res = await fetch(`${API_BASE}/runs/${runId}/deploy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({}),
     });
     const body = await res.json().catch(() => ({}));
     if (res.status === 401 && typeof window !== "undefined") {

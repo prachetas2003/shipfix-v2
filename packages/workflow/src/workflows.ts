@@ -1,5 +1,6 @@
 import { proxyActivities } from "@temporalio/workflow";
 import type * as activities from "./activities";
+import { unwrapFailureMessage } from "./errorMessages";
 
 /**
  * The deployment WORKFLOW — the deterministic state machine.
@@ -92,10 +93,7 @@ export async function deploymentWorkflow(
     await acts.finalizeDeployRun(input.runId, { provision, backendDeploy, frontendDeploy, verify });
   } catch (err) {
     // Mark the run failed (best-effort) and let Temporal record the failure.
-    await acts.failRun(
-      input.runId,
-      err instanceof Error ? err.message : String(err),
-    );
+    await acts.failRun(input.runId, unwrapFailureMessage(err));
     throw err;
   }
 }

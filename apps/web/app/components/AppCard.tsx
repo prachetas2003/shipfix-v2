@@ -3,7 +3,8 @@
 import Link from "next/link";
 import type { AppSummary, VerificationEntry } from "../lib/api";
 import { buildAppResourceDisplay } from "../lib/resourceDisplay";
-import { card, colors, mono, STATE_COLOR } from "../lib/theme";
+import { runStatusLabel } from "../lib/runLabels";
+import { card, colors, mono } from "../lib/theme";
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: colors.success,
@@ -47,7 +48,7 @@ export function AppCard({
               borderRadius: 999,
             }}
           >
-            {run.status}
+            {runStatusLabel(run.mode, run.status)}
           </span>
         )}
       </div>
@@ -113,7 +114,7 @@ export function AppCard({
             View app details
           </Link>
           {" · "}
-          last deploy {new Date(run.startedAt).toLocaleString()}
+          latest run {new Date(run.startedAt).toLocaleString()}
         </p>
       )}
     </div>

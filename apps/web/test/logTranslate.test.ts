@@ -44,4 +44,18 @@ describe("translateEvent — failure kinds", () => {
     expect(f.title.toLowerCase()).toContain("fix");
     expect(f.tone).toBe("warn");
   });
+
+  it("surfaces alpha usage limits clearly", () => {
+    const f = translateEvent(ev({ event: "usage_limit_reached", message: "You've reached the alpha usage limit. Try again later." }));
+    expect(f.title).toBe("Usage limit reached");
+    expect(f.detail.toLowerCase()).toContain("alpha usage limit");
+    expect(f.tone).toBe("warn");
+  });
+
+  it("surfaces missing backend LLM setup clearly", () => {
+    const f = translateEvent(ev({ event: "llm_config_missing", message: "Set GEMINI_API_KEY (preferred) or LLM_API_KEY." }));
+    expect(f.title).toBe("Planner setup is missing");
+    expect(f.detail).toContain("GEMINI_API_KEY");
+    expect(f.tone).toBe("error");
+  });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { ManagedService } from "@shipfix/contracts";
 import { ProvisionerRegistry, createNeonProvisioner } from "../src/index";
 
@@ -46,7 +46,7 @@ describe("createNeonProvisioner", () => {
     const result = await neon.provision({
       resourceName: "shipfix-run-1-db",
       managed: pgManaged,
-      credentials: { provider: "neon", values: { apiKey: "neon_key" } },
+      credentials: { provider: "neon", values: { apiKey: "neon_key", orgId: "org_123" } },
     });
 
     expect(result.ok).toBe(true);
@@ -62,6 +62,9 @@ describe("createNeonProvisioner", () => {
     expect(calls[0].init?.method).toBe("POST");
     const headers = calls[0].init?.headers as Record<string, string>;
     expect(headers.authorization).toBe("Bearer neon_key");
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      project: { name: "shipfix-run-1-db", org_id: "org_123" },
+    });
   });
 
   it("fails cleanly on a non-2xx response", async () => {
@@ -70,7 +73,7 @@ describe("createNeonProvisioner", () => {
     const result = await neon.provision({
       resourceName: "x",
       managed: pgManaged,
-      credentials: { provider: "neon", values: { apiKey: "bad" } },
+      credentials: { provider: "neon", values: { apiKey: "bad", orgId: "org_123" } },
     });
     expect(result.ok).toBe(false);
     expect(result.status).toBe("failed");
@@ -82,7 +85,7 @@ describe("createNeonProvisioner", () => {
     const result = await neon.provision({
       resourceName: "x",
       managed: { ...pgManaged, kind: "redis" },
-      credentials: { provider: "neon", values: { apiKey: "k" } },
+      credentials: { provider: "neon", values: { apiKey: "k", orgId: "org_123" } },
     });
     expect(result.ok).toBe(false);
     expect(result.logs).toContain("Postgres");
@@ -99,6 +102,22 @@ describe("createNeonProvisioner", () => {
     expect(result.logs).toContain("apiKey");
   });
 
+  it("fails before calling Neon when the organization id is missing", async () => {
+    const fakeFetch = vi.fn(async () => jsonResponse({})) as unknown as typeof fetch;
+    const neon = createNeonProvisioner({ fetchImpl: fakeFetch });
+    const logs: string[] = [];
+    const result = await neon.provision({
+      resourceName: "x",
+      managed: pgManaged,
+      credentials: { provider: "neon", values: { apiKey: "k" } },
+      onLog: (line) => logs.push(line),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.logs).toContain("NEON_ORG_ID");
+    expect(logs).toContain("Neon organization ID available: false");
+    expect(fakeFetch).not.toHaveBeenCalled();
+  });
+
   it("fails cleanly when the Neon API request times out", async () => {
     const fakeFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
       return new Promise((_resolve, reject) => {
@@ -109,7 +128,7 @@ describe("createNeonProvisioner", () => {
     const result = await neon.provision({
       resourceName: "x",
       managed: pgManaged,
-      credentials: { provider: "neon", values: { apiKey: "k" } },
+      credentials: { provider: "neon", values: { apiKey: "k", orgId: "org_123" } },
     });
     expect(result.ok).toBe(false);
     expect(result.logs).toMatch(/timed out/i);

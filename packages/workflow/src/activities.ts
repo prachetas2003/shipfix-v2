@@ -53,6 +53,8 @@ import {
 } from "@shipfix/db";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import type { LLMGateway, LLMRequest, LLMResult } from "@shipfix/llm";
+import { failureEventForMessage, unwrapFailureMessage } from "./errorMessages";
+import { llmUsageLimitMessage, workflowAlphaLimit } from "./alphaLimits";
 
 /**
  * Temporal ACTIVITIES — the only side-effecting units.
@@ -86,6 +88,7 @@ interface RunRow {
   projectId: string;
   userId: string;
   commitSha: string;
+  mode: string;
 }
 
 async function loadRun(
@@ -101,7 +104,7 @@ async function loadRun(
     .limit(1);
   if (!project) throw new Error(`Project ${run.projectId} for run ${runId} not found.`);
   return {
-    run: { id: run.id, projectId: run.projectId, userId: project.userId, commitSha: run.commitSha },
+    run: { id: run.id, projectId: run.projectId, userId: project.userId, commitSha: run.commitSha, mode: run.mode },
     repoFullName: project.repoFullName,
     defaultBranch: project.defaultBranch,
   };
@@ -119,12 +122,6 @@ let _vault: SecretVault | undefined;
 function getVault(): SecretVault {
   if (!_vault) _vault = createSecretVaultFromEnv();
   return _vault;
-}
-
-function llmLimit(name: string, fallback: number): number {
-  const raw = process.env[name];
-  const parsed = raw ? Number(raw) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function startOfUtcDay(): Date {
@@ -153,11 +150,18 @@ function estimateCostCents(provider: string, model: string, inputTokens: number,
   return (inputTokens / 1_000_000) * perMillion.input * 100 + (outputTokens / 1_000_000) * perMillion.output * 100;
 }
 
-async function countLlmRows(
+async function countLlmAttemptRows(
   db: Database,
   where: ReturnType<typeof and>,
 ): Promise<number> {
-  const rows = await db.select({ count: sql<number>`count(*)` }).from(llmUsage).where(where);
+  const rows = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(llmUsage)
+    .where(and(
+      where,
+      sql`${llmUsage.provider} <> 'shipfix'`,
+      sql`(${llmUsage.error} is null or ${llmUsage.error} not in ('alpha_llm_limit', 'llm_run_limit', 'llm_daily_user_limit'))`,
+    ));
   return Number(rows[0]?.count ?? 0);
 }
 
@@ -170,14 +174,16 @@ export function meteredGateway(
   return {
     model: inner.model,
     async complete(req: LLMRequest): Promise<LLMResult> {
-      const maxPerRun = llmLimit("ALPHA_MAX_LLM_CALLS_PER_RUN", 3);
-      const maxPerUserDay = llmLimit("ALPHA_MAX_LLM_CALLS_PER_USER_PER_DAY", 20);
-      const runCalls = await countLlmRows(db, and(eq(llmUsage.runId, meta.runId)));
-      const userCallsToday = await countLlmRows(
+      const maxPerRun = workflowAlphaLimit("ALPHA_MAX_LLM_CALLS_PER_RUN");
+      const maxPerUserDay = workflowAlphaLimit("ALPHA_MAX_LLM_CALLS_PER_USER_PER_DAY");
+      const runCalls = await countLlmAttemptRows(db, and(eq(llmUsage.runId, meta.runId)));
+      const userCallsToday = await countLlmAttemptRows(
         db,
         and(eq(llmUsage.userId, meta.userId), gte(llmUsage.createdAt, startOfUtcDay())),
       );
       if (runCalls >= maxPerRun || userCallsToday >= maxPerUserDay) {
+        const code = runCalls >= maxPerRun ? "llm_run_limit" : "llm_daily_user_limit";
+        const limit = runCalls >= maxPerRun ? maxPerRun : maxPerUserDay;
         await db.insert(llmUsage).values({
           userId: meta.userId,
           projectId: meta.projectId,
@@ -189,9 +195,9 @@ export function meteredGateway(
           outputTokens: 0,
           estimatedCostCents: 0,
           success: false,
-          error: "alpha_llm_limit",
+          error: code,
         });
-        throw new Error("You've reached the alpha usage limit. Try again later.");
+        throw new Error(llmUsageLimitMessage({ code, limit, nodeEnv: process.env.NODE_ENV }));
       }
 
       const inputEstimate = approximateTokens(req.system) + approximateTokens(req.user);
@@ -239,6 +245,25 @@ function resourceKind(kind: ManagedKind): string {
   return "managed_db";
 }
 
+function neonOrgIdFromEnv(): string | null {
+  return process.env.NEON_ORG_ID?.trim() || process.env.NEON_ORGANIZATION_ID?.trim() || null;
+}
+
+function neonOrgIdFromValues(values: Record<string, string>): string | null {
+  return (
+    values.orgId?.trim() ||
+    values.org_id?.trim() ||
+    values.organizationId?.trim() ||
+    values.organization_id?.trim() ||
+    neonOrgIdFromEnv()
+  );
+}
+
+function providerReadyForRuntime(provider: string): boolean {
+  if (provider === "neon") return Boolean(neonOrgIdFromEnv());
+  return true;
+}
+
 /**
  * Real system capabilities = registered providers ∩ the credentials this user
  * has actually connected. No adapters are registered, so deploy `providers`
@@ -250,7 +275,7 @@ async function loadCapabilities(db: Database, userId: string): Promise<Capabilit
     .select({ provider: providerAccounts.provider })
     .from(providerAccounts)
     .where(eq(providerAccounts.userId, userId));
-  const connected = new Set(accounts.map((a) => a.provider));
+  const connected = new Set(accounts.map((a) => a.provider).filter(providerReadyForRuntime));
 
   const managed = provisioners
     .ids()
@@ -445,7 +470,8 @@ export async function failRun(runId: string, message: string): Promise<void> {
   const db = getDb();
   await setStatus(db, runId, "failed", true);
   const logger = createRunLogger(runId, createSafePostgresSink(db));
-  await logger.error("Run failed", { message });
+  const failure = failureEventForMessage(message);
+  await logger.error(failure.title, { event: failure.event, message });
 }
 
 /**
@@ -460,17 +486,41 @@ export async function proposePlan(runId: string, ctx: RepoContext): Promise<Depl
   const { run } = await loadRun(db, runId);
 
   await setStatus(db, runId, "planning");
+  const existingPlan = run.mode === "deploy" ? await loadPlan(db, runId).catch(() => null) : null;
+  if (existingPlan) {
+    await logger.stage("planning", "Using the validated plan selected for this deploy");
+    await logger.log("Using existing deployment plan", {
+      event: "plan_reused",
+      classification: existingPlan.classification,
+      serviceCount: existingPlan.services.length,
+      managedCount: existingPlan.managed.length,
+    });
+    return existingPlan;
+  }
+
   await logger.stage("planning", "Generating a deployment plan from the analysis");
 
-  // Throws a clear, actionable error if backend-owned LLM env vars are
-  // unset. We never fall back to a mock planner.
-  const gateway = meteredGateway(createLLMGateway(), db, {
-    userId: run.userId,
-    projectId: run.projectId,
-    runId,
-    operation: "plan",
-  });
-  const result = await runPlanner(ctx, gateway);
+  let result: Awaited<ReturnType<typeof runPlanner>>;
+  try {
+    // Throws a clear, actionable error if backend-owned LLM env vars are
+    // unset. We never fall back to a mock planner.
+    const gateway = meteredGateway(createLLMGateway(), db, {
+      userId: run.userId,
+      projectId: run.projectId,
+      runId,
+      operation: "plan",
+    });
+    result = await runPlanner(ctx, gateway);
+  } catch (err) {
+    const message = unwrapFailureMessage(err);
+    const failure = failureEventForMessage(message);
+    await logger.error(failure.title, {
+      event: failure.event,
+      operation: "plan",
+      message,
+    });
+    throw new Error(message);
+  }
 
   await logger.log(
     `Proposed plan: ${result.plan.classification}, ${result.plan.services.length} service(s), ${result.plan.managed.length} managed`,
@@ -557,6 +607,19 @@ export async function gateDeploy(runId: string): Promise<{ allow: boolean }> {
   const logger = createRunLogger(runId, createSafePostgresSink(db));
   const plan = await loadPlan(db, runId);
   const gate = evaluateDeployGate(plan);
+  const needsNeonOrgId = plan.managed.some((m) => m.mode === "provision" && m.provider === "neon");
+  if (gate.allow && needsNeonOrgId && !neonOrgIdFromEnv()) {
+    const message = "Neon organization ID is missing. Add NEON_ORG_ID and restart API/worker.";
+    await logger.warn(message, {
+      event: "deploy_blocked",
+      provider: "neon",
+      code: "neon_org_id_missing",
+      orgIdAvailable: false,
+    });
+    await setStatus(db, runId, "diagnosed", true);
+    await logger.stage("diagnosed", message);
+    return { allow: false };
+  }
   if (gate.allow) return { allow: true };
 
   await logger.warn(gate.message, {
@@ -654,7 +717,17 @@ export async function provisionManagedServices(runId: string): Promise<Provision
     const credValues = JSON.parse(
       await vault.open({ encDek: account.encDek, encBlob: account.encBlob, encIv: account.encIv }),
     ) as Record<string, string>;
-    const credentials = { provider: m.provider as ManagedProviderId, values: credValues };
+    const values = { ...credValues };
+    if (m.provider === "neon") {
+      const orgId = neonOrgIdFromValues(values);
+      await logger.log(`Neon organization ID available: ${Boolean(orgId)}`, {
+        event: "neon_config_check",
+        managedId: m.id,
+        orgIdAvailable: Boolean(orgId),
+      });
+      if (orgId) values.orgId = orgId;
+    }
+    const credentials = { provider: m.provider as ManagedProviderId, values };
 
     await logger.log(`Provisioning ${m.kind} via ${m.provider} for "${m.id}"`, {
       event: "provision_started",
