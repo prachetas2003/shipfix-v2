@@ -1,16 +1,52 @@
 "use client";
 
 import Link from "next/link";
-import type { AppSummary, VerificationEntry } from "../lib/api";
+import type { AppSummary, LayerState, VerificationEntry } from "../lib/api";
 import { buildAppResourceDisplay } from "../lib/resourceDisplay";
 import { runStatusLabel } from "../lib/runLabels";
-import { card, colors, mono } from "../lib/theme";
+import { buttonStyle, card, colors, mono, STATE_COLOR } from "../lib/theme";
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: colors.success,
   diagnosed: colors.warn,
   failed: colors.error,
+  queued: colors.dim,
+  analyzing: colors.accentText,
+  planning: colors.accentText,
+  provisioning: colors.accentText,
+  deploying: colors.accentText,
+  verifying: colors.accentText,
 };
+
+const STATE_COPY: Record<LayerState, string> = {
+  live: "Live",
+  failed: "Failed",
+  provisioning: "In progress",
+  not_attempted: "Not deployed",
+};
+
+function MiniStatus({ label, state }: { label: string; state: LayerState }): React.ReactElement {
+  const color = STATE_COLOR[state] ?? colors.dim;
+  return (
+    <div
+      style={{
+        border: `1px solid ${colors.border}`,
+        background: colors.panelSoft,
+        borderRadius: 8,
+        padding: "0.65rem 0.75rem",
+        minWidth: 150,
+      }}
+    >
+      <div style={{ color: colors.dim, fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0 }}>
+        {label}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+        <span style={{ width: 8, height: 8, borderRadius: 999, background: color }} />
+        <strong style={{ fontSize: "0.86rem" }}>{STATE_COPY[state] ?? state}</strong>
+      </div>
+    </div>
+  );
+}
 
 export function AppCard({
   app,
@@ -26,26 +62,38 @@ export function AppCard({
     layers: app.layers,
     verification,
   });
+  const live = Boolean(display?.fullStack.live);
+  const lastDeployedAt = app.liveDeployment && run?.finishedAt ? run.finishedAt : run?.startedAt;
 
   return (
-    <div style={{ ...card, marginBottom: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <Link
-          href={`/apps/${app.projectId}`}
-          style={{ textDecoration: "none", color: "inherit", fontFamily: mono, fontWeight: 600, fontSize: "1rem" }}
-        >
-          {app.repoFullName}
-        </Link>
+    <article style={{ ...card, marginBottom: 14, padding: "1.1rem" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 420px", minWidth: 0 }}>
+          <Link
+            href={`/apps/${app.projectId}`}
+            style={{ textDecoration: "none", color: "inherit", fontFamily: mono, fontWeight: 700, fontSize: "1rem", wordBreak: "break-word" }}
+          >
+            {app.repoFullName}
+          </Link>
+          <p style={{ margin: "0.35rem 0 0", color: colors.dim, fontSize: "0.86rem", lineHeight: 1.5 }}>
+            {live
+              ? "Live deployment verified across frontend, backend, and database."
+              : app.liveDeployment
+                ? "A previous live deployment is preserved while the latest run needs attention."
+                : "No verified live deployment yet."}
+          </p>
+        </div>
+
         {run && (
           <span
             style={{
-              marginLeft: "auto",
-              fontSize: "0.72rem",
-              fontWeight: 700,
-              color: "#0b0b0b",
+              fontSize: "0.74rem",
+              fontWeight: 800,
+              color: "#061014",
               background: statusColor,
-              padding: "0.12rem 0.55rem",
+              padding: "0.22rem 0.65rem",
               borderRadius: 999,
+              whiteSpace: "nowrap",
             }}
           >
             {runStatusLabel(run.mode, run.status)}
@@ -53,70 +101,34 @@ export function AppCard({
         )}
       </div>
 
-      {display?.frontend?.openAppUrl ? (
-        <a
-          href={display.frontend.openAppUrl}
-          target="_blank"
-          rel="noreferrer"
-          style={{
-            display: "inline-block",
-            marginTop: "0.65rem",
-            padding: "0.45rem 1rem",
-            borderRadius: 8,
-            background: colors.success,
-            color: "#0b0b0b",
-            fontWeight: 700,
-            fontSize: "0.88rem",
-            textDecoration: "none",
-          }}
-        >
-          Open app →
-        </a>
-      ) : display ? (
-        <p style={{ margin: "0.5rem 0 0", opacity: 0.55, fontSize: "0.82rem" }}>No live frontend URL yet.</p>
-      ) : (
-        <p style={{ margin: "0.5rem 0 0", opacity: 0.55, fontSize: "0.82rem" }}>No deployments yet.</p>
-      )}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: "1rem" }}>
+        <MiniStatus label="Frontend" state={display?.frontend?.state ?? "not_attempted"} />
+        <MiniStatus label="Backend API" state={display?.backend?.state ?? "not_attempted"} />
+        <MiniStatus label="Database" state={display?.database?.state ?? "not_attempted"} />
+      </div>
 
-      {display && (
-        <div style={{ marginTop: "0.6rem", fontSize: "0.78rem", opacity: 0.65, lineHeight: 1.6 }}>
-          {display.backend?.healthCheckUrl && display.backend.healthCheckPassed && (
-            <div>
-              Backend health:{" "}
-              <a
-                href={display.backend.healthCheckUrl}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                style={{ color: colors.accentText, fontFamily: mono }}
-              >
-                verified
-              </a>
-            </div>
-          )}
-          {display.database?.host && (
-            <div>
-              Database: <code style={{ fontFamily: mono }}>{display.database.host}</code>
-              <span style={{ opacity: 0.7 }}> (reachable)</span>
-            </div>
-          )}
-          {display.fullStack.live && (
-            <div style={{ color: colors.success, fontWeight: 600, marginTop: 2 }}>
-              Full-stack live
-            </div>
-          )}
-        </div>
-      )}
-
-      {run && (
-        <p style={{ margin: "0.5rem 0 0", fontSize: "0.75rem", opacity: 0.45 }}>
-          <Link href={`/apps/${app.projectId}`} style={{ color: colors.dim }}>
-            View app details
-          </Link>
-          {" · "}
-          latest run {new Date(run.startedAt).toLocaleString()}
-        </p>
-      )}
-    </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: "1rem" }}>
+        {display?.frontend?.openAppUrl ? (
+          <a
+            href={display.frontend.openAppUrl}
+            target="_blank"
+            rel="noreferrer"
+            style={{ ...buttonStyle("success"), textDecoration: "none", display: "inline-block" }}
+          >
+            Open app
+          </a>
+        ) : (
+          <span style={{ color: colors.dim, fontSize: "0.85rem" }}>Frontend link appears after a verified deploy.</span>
+        )}
+        <Link href={`/apps/${app.projectId}`} style={{ textDecoration: "none" }}>
+          <button style={buttonStyle("ghost")}>View deployment details</button>
+        </Link>
+        {lastDeployedAt && (
+          <span style={{ marginLeft: "auto", color: colors.dim, fontSize: "0.78rem" }}>
+            Last activity {new Date(lastDeployedAt).toLocaleString()}
+          </span>
+        )}
+      </div>
+    </article>
   );
 }

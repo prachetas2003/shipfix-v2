@@ -7,7 +7,7 @@ import { api } from "../../lib/api";
 import { deriveRequiredProviders, missingProviders } from "../../lib/planRequirements";
 import { runModeLabel, runStatusLabel } from "../../lib/runLabels";
 import { useRun } from "../../lib/useRun";
-import { buttonStyle, colors, mono } from "../../lib/theme";
+import { buttonStyle, card, colors, mono } from "../../lib/theme";
 import { FixGuidance } from "../../components/FixGuidance";
 import { OutcomeBanner } from "../../components/OutcomeBanner";
 import { PlanPanel } from "../../components/PlanPanel";
@@ -49,6 +49,7 @@ export default function RunPage({
   const canRetryDeploy = snap?.run.mode === "deploy" && ["failed", "diagnosed"].includes(snap.run.status);
   const hasLiveDeployment = Boolean(snap?.layers.fullStack.live || snap?.resources.some((r) => r.status === "live"));
   const primaryLabel = isPlanReady && !hasLiveDeployment ? "Deploy this plan" : canRetryDeploy ? "Retry deploy" : null;
+  const pageTitle = runPageTitle(snap?.run.mode, snap?.run.status ?? run.status, Boolean(snap?.layers.fullStack.live));
 
   const startDeployFromThisRun = async () => {
     if (!snap) return;
@@ -71,30 +72,30 @@ export default function RunPage({
   };
 
   return (
-    <main style={{ maxWidth: 920, margin: "0 auto", padding: "2.5rem 1.5rem 6rem" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "1rem", flexWrap: "wrap" }}>
-        <Link href="/" style={{ color: colors.dim, textDecoration: "none", fontSize: "0.85rem" }}>
-          Back to My Apps
-        </Link>
-        <h1 style={{ fontSize: "1.4rem", margin: 0 }}>
-          {snap?.run.mode === "plan" ? "Deployment plan" : "Deployment run"}
-        </h1>
+    <main style={{ maxWidth: 980, margin: "0 auto", padding: "2.5rem 1.5rem 6rem" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: "1rem", flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 520px" }}>
+          <Link href="/" style={{ color: colors.dim, textDecoration: "none", fontSize: "0.84rem" }}>
+            Back to My Apps
+          </Link>
+          <h1 style={{ fontSize: "1.75rem", margin: "0.75rem 0 0", letterSpacing: 0 }}>{pageTitle}</h1>
+          {snap?.run.repoFullName && (
+            <p style={{ color: colors.dim, fontFamily: mono, fontSize: "0.88rem", margin: "0.4rem 0 0" }}>
+              {snap.run.repoFullName} / {runModeLabel(snap.run.mode)} /{" "}
+              <strong style={{ color: colors.text }}>{runStatusLabel(snap.run.mode, snap.run.status)}</strong>
+            </p>
+          )}
+        </div>
         <Link href="/new" style={{ marginLeft: "auto", textDecoration: "none" }}>
-          <button style={buttonStyle("ghost")}>Start new deployment</button>
+          <button style={buttonStyle("ghost")}>Start different deployment</button>
         </Link>
       </div>
 
-      {snap?.run.repoFullName && (
-        <p style={{ opacity: 0.7, fontFamily: mono, fontSize: "0.9rem" }}>
-          {snap.run.repoFullName} | {runModeLabel(snap.run.mode)} |{" "}
-          <strong>{runStatusLabel(snap.run.mode, snap.run.status)}</strong>
-        </p>
-      )}
-      {run.status === "loading" && <p style={{ opacity: 0.6 }}>Loading run...</p>}
+      {run.status === "loading" && <p style={{ color: colors.dim }}>Loading run...</p>}
       {run.error && <p style={{ color: colors.error }}>{run.error}</p>}
       {actionError && (
-        <div style={{ color: colors.error, marginBottom: "1rem" }}>
-          <p style={{ margin: 0 }}>Could not start deploy from plan. Please retry.</p>
+        <div style={{ ...card, borderColor: colors.errorBorder, background: colors.errorBg, color: colors.errorText, marginBottom: "1rem" }}>
+          <p style={{ margin: 0 }}>Could not start deploy from this plan. Please retry.</p>
           <button
             onClick={() => setShowTechnicalError((v) => !v)}
             style={{ ...buttonStyle("ghost"), marginTop: 8 }}
@@ -102,13 +103,21 @@ export default function RunPage({
             {showTechnicalError ? "Hide technical details" : "Show technical details"}
           </button>
           {showTechnicalError && (
-            <pre style={{ whiteSpace: "pre-wrap", opacity: 0.75, fontSize: "0.8rem" }}>{actionError}</pre>
+            <pre style={{ whiteSpace: "pre-wrap", color: colors.errorText, fontSize: "0.8rem" }}>{actionError}</pre>
           )}
         </div>
       )}
 
       {primaryLabel && (
-        <section style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "1rem 0" }}>
+        <section style={{ ...card, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", margin: "1rem 0" }}>
+          <div style={{ flex: "1 1 360px" }}>
+            <strong>{isPlanReady ? "This plan is ready to deploy." : "This deploy can be retried."}</strong>
+            <p style={{ margin: "0.35rem 0 0", color: colors.dim, fontSize: "0.86rem" }}>
+              {missing.length > 0
+                ? "Connect the missing providers first, then ShipFix can continue from this plan."
+                : "ShipFix will reuse the selected plan and run the provider checks again."}
+            </p>
+          </div>
           <button onClick={() => void startDeployFromThisRun()} disabled={starting} style={buttonStyle("primary", starting)}>
             {starting ? "Starting deployment from this plan..." : primaryLabel}
           </button>
@@ -146,4 +155,16 @@ export default function RunPage({
       )}
     </main>
   );
+}
+
+function runPageTitle(mode: string | undefined, status: string, fullStackLive: boolean): string {
+  if (fullStackLive) return "Your app is live";
+  if (mode === "plan" && status === "succeeded") return "Plan ready";
+  if (mode === "plan" && status === "failed") return "Plan failed";
+  if (mode === "deploy" && status === "failed") return "Deploy failed";
+  if (mode === "deploy" && status === "diagnosed") return "Deploy needs attention";
+  if (["queued", "cloning", "analyzing", "planning", "provisioning", "deploying", "verifying"].includes(status)) {
+    return "Deployment in progress";
+  }
+  return mode === "plan" ? "Deployment plan" : "Deployment run";
 }

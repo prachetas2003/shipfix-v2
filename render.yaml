@@ -1,0 +1,79 @@
+services:
+  - type: web
+    name: shipfix-api
+    runtime: node
+    plan: starter
+    branch: main
+    buildCommand: corepack enable && corepack prepare pnpm@9.15.4 --activate && pnpm install --frozen-lockfile && pnpm --filter @shipfix/api build
+    startCommand: pnpm --filter @shipfix/api start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_MODE
+        value: clerk
+      - key: TEMPORAL_NAMESPACE
+        value: default
+      - key: TEMPORAL_TASK_QUEUE
+        value: shipfix
+      - key: ALPHA_MAX_DEPLOY_RUNS_PER_USER_PER_DAY
+        value: "3"
+      - key: ALPHA_MAX_PLAN_ANALYZE_RUNS_PER_USER_PER_DAY
+        value: "10"
+      - key: ALPHA_MAX_ACTIVE_DEPLOY_RUNS_PER_USER
+        value: "1"
+      - key: ALPHA_MAX_LLM_CALLS_PER_RUN
+        value: "3"
+      - key: ALPHA_MAX_LLM_CALLS_PER_USER_PER_DAY
+        value: "20"
+      - key: ALPHA_RATE_LIMIT_WINDOW_MS
+        value: "60000"
+      - key: ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW
+        value: "20"
+      - key: DATABASE_URL
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: SHIPFIX_MASTER_KEY
+        sync: false
+      - key: SHIPFIX_ADMIN_TOKEN
+        sync: false
+      - key: TEMPORAL_ADDRESS
+        sync: false
+
+  - type: worker
+    name: shipfix-worker
+    runtime: node
+    plan: starter
+    branch: main
+    buildCommand: corepack enable && corepack prepare pnpm@9.15.4 --activate && pnpm install --frozen-lockfile && pnpm --filter @shipfix/worker build
+    startCommand: pnpm --filter @shipfix/worker start
+    envVars:
+      # Alpha note: the current repo-analysis sandbox is still the local/dev sandbox.
+      # Keep this as development until the production E2B sandbox provider lands.
+      - key: NODE_ENV
+        value: development
+      - key: TEMPORAL_NAMESPACE
+        value: default
+      - key: TEMPORAL_TASK_QUEUE
+        value: shipfix
+      - key: DATABASE_URL
+        sync: false
+      - key: SHIPFIX_MASTER_KEY
+        sync: false
+      - key: TEMPORAL_ADDRESS
+        sync: false
+      - key: LLM_PROVIDER
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: NEON_ORG_ID
+        sync: false

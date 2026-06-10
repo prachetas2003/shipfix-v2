@@ -26,9 +26,9 @@ export function ProviderRequirements({
 
   return (
     <section style={{ marginTop: "1.5rem" }}>
-      <h2 style={h2}>What ShipFix needs</h2>
-      <p style={{ margin: "0.5rem 0 1rem", fontSize: "0.85rem", opacity: 0.75, lineHeight: 1.6 }}>
-        Based on your plan, ShipFix needs the connections below. {REUSE_NOTE}
+      <h2 style={h2}>Connect providers</h2>
+      <p style={{ margin: "0.5rem 0 1rem", fontSize: "0.86rem", color: colors.dim, lineHeight: 1.6 }}>
+        ShipFix only asks for providers this plan needs. {REUSE_NOTE}
       </p>
 
       {required.length === 0 && (
@@ -59,7 +59,7 @@ export function ProviderRequirements({
           {missing.length > 0
             ? `Still needed: ${missing.map((m) => m.provider).join(", ")}.`
             : isDeployable
-              ? "All required providers are connected. You're ready to deploy."
+              ? "All required providers are connected. You are ready to deploy."
               : "Providers are connected, but this plan still needs the setup items above resolved before it can deploy."}
         </p>
       )}

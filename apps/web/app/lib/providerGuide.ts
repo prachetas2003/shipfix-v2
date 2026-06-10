@@ -1,8 +1,8 @@
 /**
  * Beginner-facing knowledge about each provider ShipFix can use: what the key is
- * for, exactly where to create it, what scope it needs, and provider lifecycle
- * quirks. Account-level and reusable — connect once, deploy many apps; each app
- * still gets its own isolated provider resources.
+ * for, where to create it, what scope it needs, and provider lifecycle quirks.
+ * Provider connections are account-level and reusable; each deployed app still
+ * gets its own isolated provider resources.
  */
 
 export type ProviderId = "neon" | "render" | "vercel";
@@ -31,74 +31,74 @@ export interface ProviderGuide {
   scope: string;
   /** Provider behavior a beginner should know about. */
   lifecycle?: string;
-  /** Additional setup (e.g. Vercel needs GitHub connected). */
+  /** Additional setup, for example Vercel GitHub access. */
   extraSteps?: ProviderExtraStep[];
 }
 
 export const ENCRYPTION_NOTE =
-  "Your key is sent once over HTTPS and sealed with envelope encryption (AES-256-GCM) on the server. It is never logged, never shown again, and never sent to the AI planner.";
+  "ShipFix sends this key to the backend once, seals it with envelope encryption, and never sends it to the AI planner or the browser again.";
 
 export const REUSE_NOTE =
-  "Provider connections are account-level and reusable. Connect a provider once and deploy as many apps as you like — each app gets its own separate resources, so deploying a new app never touches an existing one.";
+  "These are account-level provider tokens, not per-app tokens. Connect each provider once, then ShipFix can create separate resources for each deployment.";
 
 export const PROVIDER_GUIDES: Record<ProviderId, ProviderGuide> = {
   neon: {
     id: "neon",
     name: "Neon",
-    blurb: "Serverless Postgres database",
+    blurb: "Postgres database",
     credentialField: "apiKey",
     credentialLabel: "API key",
     whatFor:
-      "ShipFix provisions a Postgres database for your app and wires its connection string (DATABASE_URL) into your backend automatically.",
+      "ShipFix uses Neon to create the Postgres database and injects the sealed DATABASE_URL into the backend before deploy.",
     tokenUrl: "https://console.neon.tech/app/settings/api-keys",
     tokenUrlLabel: "Neon API keys",
-    scope: "A personal/account API key with permission to create projects and databases.",
+    scope: "Use a personal or account API key that can create projects and databases.",
     lifecycle:
-      "Neon free databases may scale to zero when idle and wake on the next connection (first query can be slightly slower).",
+      "For local alpha testing, the ShipFix API/worker also needs NEON_ORG_ID in backend env. Free Neon databases may sleep when idle and wake on first query.",
   },
   render: {
     id: "render",
     name: "Render",
-    blurb: "Backend hosting (node_api)",
+    blurb: "Backend API hosting",
     credentialField: "apiKey",
     credentialLabel: "API key",
     whatFor:
-      "ShipFix creates a Render web service for your backend, sets its build/start commands and env vars, and deploys it.",
+      "ShipFix uses Render to create the backend web service, set build/start commands, add environment variables, and deploy the API.",
     tokenUrl: "https://dashboard.render.com/u/settings#api-keys",
     tokenUrlLabel: "Render API keys",
-    scope: "An account API key that can create and deploy services.",
+    scope: "Use an account API key that can create and deploy services.",
     optionalFields: [
       { field: "ownerId", label: "Owner ID", placeholder: "Optional: Render ownerId for team accounts" },
     ],
     lifecycle:
-      "Render free web services sleep after ~15 minutes of inactivity and wake on the next request — the first request after idling can take ~30 seconds. This is normal, not a crash.",
+      "Render free web services can sleep after inactivity. The first request after sleeping may take longer, which is normal.",
   },
   vercel: {
     id: "vercel",
     name: "Vercel",
-    blurb: "Frontend hosting (static / SPA)",
+    blurb: "Frontend hosting",
     credentialField: "apiToken",
     credentialLabel: "API token",
     whatFor:
-      "ShipFix creates a Vercel project for your frontend, sets build env vars (e.g. VITE_API_URL pointing at your backend), and deploys it from your GitHub repo.",
+      "ShipFix uses Vercel to create the frontend project, set build-time env like VITE_API_URL, and deploy the user-facing app.",
     tokenUrl: "https://vercel.com/account/tokens",
     tokenUrlLabel: "Vercel tokens",
-    scope: "A token with access to the team/account that will own the project.",
+    scope: "Use a token with access to the personal account or team that will own the project.",
     optionalFields: [
       { field: "teamId", label: "Team ID", placeholder: "Optional: team_xxx for Vercel teams" },
     ],
     extraSteps: [
       {
-        title: "Connect GitHub to Vercel (required)",
+        title: "Connect GitHub to Vercel",
         detail:
-          "Vercel deploys your frontend straight from GitHub, so your GitHub account must be connected to Vercel and the Vercel GitHub app must have access to this repo. Without this, the frontend deploy fails with a GitHub connection error.",
+          "Vercel deploys from GitHub, so your Vercel account must be connected to GitHub and allowed to access this repo.",
         url: "https://vercel.com/account/login-connections",
         urlLabel: "Vercel login connections",
       },
       {
-        title: "Install the Vercel GitHub app on the repo",
+        title: "Authorize the Vercel GitHub app",
         detail:
-          "If the repo still is not found, install/authorize the Vercel GitHub app for the repository owner.",
+          "If Vercel cannot find the repo, install or authorize the Vercel GitHub app for the repository owner.",
         url: "https://github.com/apps/vercel",
         urlLabel: "Vercel GitHub app",
       },

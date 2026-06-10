@@ -3,17 +3,17 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { api, type PlanView } from "../lib/api";
+import { api, type PlanView, type RunEventRow } from "../lib/api";
 import { deriveRequiredProviders, missingProviders } from "../lib/planRequirements";
 import { useRun } from "../lib/useRun";
 import { buttonStyle, card, colors, inputStyle, mono } from "../lib/theme";
+import { BrandMark } from "../components/BrandMark";
 import { FixGuidance } from "../components/FixGuidance";
 import { OutcomeBanner } from "../components/OutcomeBanner";
 import { PlanPanel } from "../components/PlanPanel";
 import { ProviderRequirements } from "../components/ProviderRequirements";
 import { Stepper } from "../components/Stepper";
 import { Timeline } from "../components/Timeline";
-import type { RunEventRow } from "../lib/api";
 
 const STEPS = ["Repository", "Plan", "Connect", "Deploy", "Result"];
 
@@ -24,11 +24,11 @@ function planFailureMessage(events: RunEventRow[]): string {
   });
   const event = typeof lastFailure?.data?.event === "string" ? lastFailure.data.event : "";
   const message = typeof lastFailure?.data?.message === "string" ? lastFailure.data.message : "";
-  if (event === "usage_limit_reached") return message || "Usage limit reached. Try again later, or raise the local alpha limits while testing.";
+  if (event === "usage_limit_reached") return message || "Usage limit reached. Try again later, or raise local alpha limits while testing.";
   if (event === "llm_config_missing") {
-    return message || "Planner setup is missing. Add backend-only LLM env vars to the worker environment, restart the worker, then try again.";
+    return message || "Planner setup is missing. Add backend-only LLM env vars to the worker, restart the worker, then try again.";
   }
-  return message || "ShipFix couldn't produce a plan for this repo. Check the timeline details and try again.";
+  return message || "ShipFix could not produce a plan for this repo. Check the timeline details and try again.";
 }
 
 export default function NewDeploymentPage(): React.ReactElement {
@@ -61,12 +61,10 @@ export default function NewDeploymentPage(): React.ReactElement {
     void refreshProviders();
   }, [refreshProviders]);
 
-  // Advance Plan -> Connect once a plan is available.
   useEffect(() => {
     if (step === 1 && capturedPlan) setStep(2);
   }, [step, capturedPlan]);
 
-  // Advance Deploy -> Result when the deploy run reaches a terminal state.
   useEffect(() => {
     if (step === 3 && deployRunId && ["succeeded", "diagnosed", "failed"].includes(run.status)) {
       setStep(4);
@@ -108,46 +106,49 @@ export default function NewDeploymentPage(): React.ReactElement {
   const missing = missingProviders(required, connected);
   const classification = capturedPlan?.classification;
   const allConnected = missing.length === 0;
-  // Deploy needs the required providers connected. Classification is re-validated
-  // server-side at deploy time (the workflow `gateDeploy` is authoritative and
-  // never calls a provider for a non-green plan), so the button enables on
-  // connection; non-green plans get an honest heads-up below and a re-check.
   const canDeploy = allConnected;
-  // When everything is connected but the (possibly stale) plan still isn't green,
-  // re-analyzing with the new connections often flips it to deployable.
   const showRecheck = allConnected && classification !== "deployable";
 
   return (
-    <main style={{ maxWidth: 920, margin: "0 auto", padding: "2.5rem 1.5rem 6rem" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "1.5rem" }}>
-        <Link href="/" style={{ color: colors.dim, textDecoration: "none", fontSize: "0.85rem" }}>
-          ← My Apps
-        </Link>
-        <h1 style={{ fontSize: "1.6rem", margin: 0 }}>New deployment</h1>
+    <main style={{ maxWidth: 980, margin: "0 auto", padding: "2.5rem 1.5rem 6rem" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: "1.5rem", flexWrap: "wrap" }}>
+        <div>
+          <Link href="/" style={{ color: colors.dim, textDecoration: "none", fontSize: "0.84rem" }}>
+            Back to My Apps
+          </Link>
+          <div style={{ marginTop: "0.75rem" }}>
+            <BrandMark size={32} />
+          </div>
+          <h1 style={{ fontSize: "1.9rem", margin: "0.9rem 0 0", letterSpacing: 0 }}>New deployment</h1>
+          <p style={{ margin: "0.45rem 0 0", color: colors.dim, maxWidth: 680, lineHeight: 1.6 }}>
+            Start with a GitHub repo. ShipFix will plan first, ask for only the needed providers, then deploy and verify the live app.
+          </p>
+        </div>
       </div>
 
       <Stepper steps={STEPS} current={step} />
 
-      {err && <p style={{ color: colors.error, fontSize: "0.9rem" }}>{err}</p>}
+      {err && (
+        <div style={{ ...card, borderColor: colors.errorBorder, background: colors.errorBg, color: colors.errorText, marginBottom: "1rem" }}>
+          {err}
+        </div>
+      )}
 
-      {/* Step 1: Repository */}
       {step === 0 && (
-        <section style={card}>
-          <h2 style={{ marginTop: 0, fontSize: "1.05rem" }}>Which repository do you want to deploy?</h2>
-          <p style={{ opacity: 0.7, fontSize: "0.9rem", lineHeight: 1.6 }}>
-            Paste a GitHub repo. ShipFix will read it, detect your database/backend/frontend, and
-            build a deployment plan. You only connect provider keys once the plan tells you what's
-            needed. ShipFix auto-deploys Vite frontends, Node APIs, and Postgres; other stacks get a
-            diagnosis with next steps instead of a broken deploy.
+        <section style={{ ...card, padding: "1.2rem" }}>
+          <h2 style={{ marginTop: 0, fontSize: "1.08rem" }}>Which repository do you want to deploy?</h2>
+          <p style={{ color: colors.dim, fontSize: "0.92rem", lineHeight: 1.65 }}>
+            Paste a GitHub repo. ShipFix supports Vite frontends on Vercel, Node APIs on Render, and Postgres on Neon.
+            Other stacks get an honest diagnosis instead of a fake green deploy.
           </p>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: "0.5rem" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: "0.75rem" }}>
             <input
               value={repo}
               onChange={(e) => setRepo(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && repo.trim() && !starting) void startPlan();
               }}
-              placeholder="owner/repo  or  https://github.com/owner/repo"
+              placeholder="owner/repo or https://github.com/owner/repo"
               spellCheck={false}
               style={{ ...inputStyle, flex: 1, minWidth: 280, fontFamily: mono }}
             />
@@ -156,31 +157,32 @@ export default function NewDeploymentPage(): React.ReactElement {
               disabled={starting || repo.trim().length === 0}
               style={buttonStyle("primary", starting || repo.trim().length === 0)}
             >
-              {starting ? "Analyzing…" : "Analyze repository"}
+              {starting ? "Analyzing..." : "Analyze repo"}
             </button>
           </div>
         </section>
       )}
 
-      {/* Step 2: Plan (live while analyzing) */}
       {step === 1 && (
         <section>
-          <p style={{ opacity: 0.75 }}>
-            Analyzing <code style={{ fontFamily: mono }}>{repo}</code> and building your plan…
-          </p>
+          <div style={{ ...card, background: colors.panelSoft }}>
+            <strong>Building your deployment plan</strong>
+            <p style={{ margin: "0.4rem 0 0", color: colors.dim, lineHeight: 1.55 }}>
+              ShipFix is reading <code style={{ fontFamily: mono }}>{repo}</code>, identifying services, and checking whether it can deploy them safely.
+            </p>
+          </div>
           <Timeline events={run.events} />
           {run.status === "failed" && !capturedPlan && (
-            <p style={{ color: colors.error, marginTop: "1rem" }}>
-              {planFailureMessage(run.events)}
-              <button onClick={() => setStep(0)} style={{ ...buttonStyle("ghost"), marginLeft: 12 }}>
-                Back
+            <div style={{ ...card, borderColor: colors.errorBorder, background: colors.errorBg, color: colors.errorText, marginTop: "1rem" }}>
+              <p style={{ margin: 0 }}>{planFailureMessage(run.events)}</p>
+              <button onClick={() => setStep(0)} style={{ ...buttonStyle("ghost"), marginTop: 12 }}>
+                Back to repository
               </button>
-            </p>
+            </div>
           )}
         </section>
       )}
 
-      {/* Step 3: Plan review + connect required providers */}
       {step === 2 && capturedPlan && (
         <section>
           <PlanPanel plan={capturedPlan} />
@@ -189,18 +191,14 @@ export default function NewDeploymentPage(): React.ReactElement {
             <button
               onClick={() => void startDeploy()}
               disabled={!canDeploy || starting}
-              title={
-                canDeploy
-                  ? "Provision + deploy + verify"
-                  : "Connect the required providers first"
-              }
+              title={canDeploy ? "Provision, deploy, and verify" : "Connect the required providers first"}
               style={buttonStyle("success", !canDeploy || starting)}
             >
-              {starting ? "Starting deploy…" : "Deploy"}
+              {starting ? "Starting deploy..." : "Deploy this plan"}
             </button>
             {showRecheck && (
               <button onClick={() => void startPlan()} disabled={starting} style={buttonStyle("ghost", starting)}>
-                {starting ? "Re-checking…" : "Re-check plan"}
+                {starting ? "Re-checking..." : "Re-check plan"}
               </button>
             )}
             <button onClick={() => void refreshProviders()} style={buttonStyle("ghost")}>
@@ -208,38 +206,33 @@ export default function NewDeploymentPage(): React.ReactElement {
             </button>
           </div>
           {!allConnected ? (
-            <p style={{ marginTop: "0.6rem", fontSize: "0.85rem", color: colors.warn }}>
-              Connect {missing.map((m) => m.provider).join(", ")} above to enable Deploy.
+            <p style={{ marginTop: "0.65rem", fontSize: "0.86rem", color: colors.warn }}>
+              Connect {missing.map((m) => m.provider).join(", ")} above to enable deploy.
             </p>
           ) : classification === "diagnose_only" ? (
-            <p style={{ marginTop: "0.6rem", fontSize: "0.85rem", color: colors.warn }}>
-              Heads up: this app is outside the auto-deployable slice. If you just connected providers,
-              click <strong>Re-check plan</strong>. If the blockers above are about your repo (unsupported
-              stack, migrations, secrets), deploying will produce a diagnosis — not a live app — until you
-              resolve them.
+            <p style={{ marginTop: "0.65rem", fontSize: "0.86rem", color: colors.warn, lineHeight: 1.55 }}>
+              This app is outside the auto-deployable alpha slice. Re-check if you just connected providers; otherwise use the diagnosis as the next step.
             </p>
           ) : classification === "needs_setup" ? (
-            <p style={{ marginTop: "0.6rem", fontSize: "0.85rem", color: colors.warn }}>
-              This plan still has setup items above. If you just connected providers, click{" "}
-              <strong>Re-check plan</strong>. Otherwise resolve the blockers (secrets, migrations) — ShipFix
-              re-validates at deploy time and won't call providers for a plan it can't ship.
+            <p style={{ marginTop: "0.65rem", fontSize: "0.86rem", color: colors.warn, lineHeight: 1.55 }}>
+              This plan still has setup items. Re-check after connecting providers or resolving repo blockers. ShipFix re-validates before provider calls.
             </p>
           ) : null}
         </section>
       )}
 
-      {/* Step 4: Deploy (live) */}
       {step === 3 && (
         <section>
-          <p style={{ opacity: 0.75 }}>
-            Deploying your app. This provisions the database, deploys backend and frontend, wires
-            them together, and verifies live checks.
-          </p>
+          <div style={{ ...card, background: colors.panelSoft }}>
+            <strong>Deploying and verifying</strong>
+            <p style={{ margin: "0.4rem 0 0", color: colors.dim, lineHeight: 1.55 }}>
+              ShipFix provisions the database, deploys backend and frontend services, wires env vars, and verifies the live system.
+            </p>
+          </div>
           <Timeline events={run.events} />
         </section>
       )}
 
-      {/* Step 5: Result */}
       {step === 4 && (
         <section>
           <OutcomeBanner status={run.status} snapshot={run.snapshot} />
@@ -248,12 +241,12 @@ export default function NewDeploymentPage(): React.ReactElement {
           <div style={{ display: "flex", gap: 10, marginTop: "1.5rem", flexWrap: "wrap" }}>
             {run.snapshot?.run.projectId && (
               <Link href={`/apps/${run.snapshot.run.projectId}`} style={{ textDecoration: "none" }}>
-                <button style={buttonStyle("primary")}>View this app</button>
+                <button style={buttonStyle("primary")}>View app details</button>
               </Link>
             )}
             {(run.status === "diagnosed" || run.status === "failed") && (
               <button onClick={() => void startDeploy()} disabled={starting} style={buttonStyle("ghost", starting)}>
-                {starting ? "Retrying…" : "Rerun deploy"}
+                {starting ? "Retrying..." : "Retry deploy"}
               </button>
             )}
             <Link href="/" style={{ textDecoration: "none" }}>

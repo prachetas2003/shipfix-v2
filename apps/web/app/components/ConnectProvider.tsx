@@ -7,8 +7,8 @@ import { buttonStyle, card, colors, inputStyle, mono } from "../lib/theme";
 
 /**
  * Guided credential card for a single provider: explains what the key is for,
- * links straight to the token page, lists required scope and lifecycle quirks,
- * surfaces extra setup (Vercel<->GitHub), and reassures about encryption.
+ * links to token setup, surfaces required provider-specific steps, and reassures
+ * the user that secrets stay backend-only.
  */
 export function ConnectProvider({
   providerId,
@@ -56,49 +56,51 @@ export function ConnectProvider({
         ...card,
         marginBottom: 12,
         borderColor: connected ? colors.successDeep : colors.borderStrong,
+        background: connected ? "rgba(5,46,31,0.38)" : colors.card,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <strong style={{ fontSize: "1rem" }}>{guide.name}</strong>
-        <span style={{ opacity: 0.6, fontSize: "0.82rem" }}>{guide.blurb}</span>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 420px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <strong style={{ fontSize: "1rem" }}>{guide.name}</strong>
+            <span style={{ color: colors.dim, fontSize: "0.82rem" }}>{guide.blurb}</span>
+          </div>
+          {reason && <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", color: colors.muted }}>{reason}</p>}
+          <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", color: colors.dim, lineHeight: 1.55 }}>{guide.whatFor}</p>
+        </div>
         <span
           style={{
-            marginLeft: "auto",
             fontSize: "0.72rem",
-            fontWeight: 700,
-            color: "#0b0b0b",
+            fontWeight: 800,
+            color: "#061014",
             background: connected ? colors.success : colors.warn,
-            padding: "0.12rem 0.55rem",
+            padding: "0.18rem 0.6rem",
             borderRadius: 999,
           }}
         >
-          {connected ? "Connected" : "Not connected"}
+          {connected ? "Ready" : "Setup needed"}
         </span>
       </div>
 
-      {reason && <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", opacity: 0.85 }}>{reason}</p>}
-      <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", opacity: 0.8 }}>{guide.whatFor}</p>
-
       {!connected && (
         <>
-          <ol style={{ margin: "0.7rem 0 0", paddingLeft: "1.2rem", fontSize: "0.85rem", opacity: 0.9, lineHeight: 1.7 }}>
-            <li>
-              Create a {guide.credentialLabel} at{" "}
-              <a href={guide.tokenUrl} target="_blank" rel="noreferrer" style={{ color: colors.accentText }}>
+          <div style={{ marginTop: "0.8rem", borderTop: `1px solid ${colors.border}`, paddingTop: "0.8rem" }}>
+            <p style={{ margin: 0, fontSize: "0.85rem", color: colors.muted, lineHeight: 1.6 }}>
+              Create an account-level {guide.credentialLabel.toLowerCase()} at{" "}
+              <a href={guide.tokenUrl} target="_blank" rel="noreferrer" style={{ color: colors.accentText, fontWeight: 700 }}>
                 {guide.tokenUrlLabel}
               </a>
-              . <span style={{ opacity: 0.7 }}>{guide.scope}</span>
-            </li>
-            <li>Paste it below and connect.</li>
-          </ol>
+              . {guide.scope}
+            </p>
+          </div>
 
           {guide.extraSteps?.map((step) => (
             <div
               key={step.title}
-              style={{ ...card, marginTop: 8, background: colors.warnBg, borderColor: colors.warnBorder }}
+              style={{ marginTop: 10, padding: "0.75rem", background: colors.warnBg, border: `1px solid ${colors.warnBorder}`, borderRadius: 8 }}
             >
               <strong style={{ fontSize: "0.85rem", color: colors.warnText }}>{step.title}</strong>
-              <p style={{ margin: "0.3rem 0 0", fontSize: "0.82rem", opacity: 0.9 }}>{step.detail}</p>
+              <p style={{ margin: "0.3rem 0 0", fontSize: "0.82rem", color: colors.warnText, opacity: 0.92, lineHeight: 1.5 }}>{step.detail}</p>
               {step.url && (
                 <a href={step.url} target="_blank" rel="noreferrer" style={{ color: colors.accentText, fontSize: "0.82rem" }}>
                   {step.urlLabel ?? step.url}
@@ -107,14 +109,14 @@ export function ConnectProvider({
             </div>
           ))}
 
-          <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <input
               value={value}
               onChange={(e) => setValue(e.target.value)}
               placeholder={`${guide.name} ${guide.credentialLabel}`}
               type="password"
               spellCheck={false}
-              style={{ ...inputStyle, flex: 1, minWidth: 220, fontFamily: mono, padding: "0.5rem 0.7rem" }}
+              style={{ ...inputStyle, flex: 1, minWidth: 220, fontFamily: mono, padding: "0.55rem 0.75rem" }}
             />
             {guide.optionalFields?.map((field) => (
               <input
@@ -125,28 +127,28 @@ export function ConnectProvider({
                 }
                 placeholder={field.placeholder}
                 spellCheck={false}
-                style={{ ...inputStyle, flex: 1, minWidth: 220, fontFamily: mono, padding: "0.5rem 0.7rem" }}
+                style={{ ...inputStyle, flex: 1, minWidth: 220, fontFamily: mono, padding: "0.55rem 0.75rem" }}
                 aria-label={`${guide.name} ${field.label}`}
               />
             ))}
             <button
               onClick={() => void connect()}
               disabled={saving || value.trim().length === 0}
-              style={buttonStyle("ghost", saving || value.trim().length === 0)}
+              style={buttonStyle("primary", saving || value.trim().length === 0)}
             >
-              {saving ? "Connecting…" : "Connect"}
+              {saving ? "Connecting..." : `Connect ${guide.name}`}
             </button>
           </div>
-          <p style={{ margin: "0.5rem 0 0", fontSize: "0.75rem", opacity: 0.55 }}>{ENCRYPTION_NOTE}</p>
+          <p style={{ margin: "0.55rem 0 0", fontSize: "0.76rem", color: colors.dim, lineHeight: 1.45 }}>{ENCRYPTION_NOTE}</p>
         </>
       )}
 
       {guide.lifecycle && (
-        <p style={{ margin: "0.6rem 0 0", fontSize: "0.78rem", opacity: 0.6 }}>Note: {guide.lifecycle}</p>
+        <p style={{ margin: "0.65rem 0 0", fontSize: "0.78rem", color: colors.dim, lineHeight: 1.45 }}>Note: {guide.lifecycle}</p>
       )}
 
-      {msg && <p style={{ margin: "0.5rem 0 0", color: colors.accentText, fontSize: "0.82rem" }}>{msg}</p>}
-      {err && <p style={{ margin: "0.5rem 0 0", color: colors.error, fontSize: "0.82rem" }}>{err}</p>}
+      {msg && <p style={{ margin: "0.55rem 0 0", color: colors.success, fontSize: "0.82rem" }}>{msg}</p>}
+      {err && <p style={{ margin: "0.55rem 0 0", color: colors.error, fontSize: "0.82rem" }}>{err}</p>}
     </div>
   );
 }

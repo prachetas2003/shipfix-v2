@@ -5,7 +5,7 @@ function ev(data: Record<string, unknown>, message = "", level = "info") {
   return { level, stage: null, type: "log", message, data };
 }
 
-describe("translateEvent — failure kinds", () => {
+describe("translateEvent - failure kinds", () => {
   it("distinguishes a build failure from a generic failure", () => {
     const f = translateEvent(ev({ event: "deploy_failed", serviceId: "api", failureKind: "build_failed" }));
     expect(f.title.toLowerCase()).toContain("build");
@@ -19,11 +19,11 @@ describe("translateEvent — failure kinds", () => {
 
   it("falls back to a generic deploy failure", () => {
     const f = translateEvent(ev({ event: "deploy_failed", serviceId: "web", failureKind: "deploy_failed" }));
-    expect(f.title.toLowerCase()).toContain("did not deploy");
+    expect(f.title.toLowerCase()).toContain("frontend");
   });
 
   it("explains a gated (blocked) deploy", () => {
-    const f = translateEvent(ev({ event: "deploy_blocked", classification: "needs_setup" }, "Deploy not started — setup is required first."));
+    const f = translateEvent(ev({ event: "deploy_blocked", classification: "needs_setup" }, "Deploy not started - setup is required first."));
     expect(f.title).toBe("Deploy not started");
     expect(f.tone).toBe("warn");
   });

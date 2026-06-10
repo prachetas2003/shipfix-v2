@@ -14,7 +14,10 @@ loadEnvFile({ path: fileURLToPath(new URL("../.env.local", import.meta.url)), ov
  */
 export const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
-  API_PORT: z.coerce.number().int().positive().default(4000),
+  API_PORT: z.preprocess(
+    (value) => value ?? process.env.PORT ?? 4000,
+    z.coerce.number().int().positive(),
+  ),
   TEMPORAL_ADDRESS: z.string().default("localhost:7233"),
   TEMPORAL_NAMESPACE: z.string().default("default"),
   TEMPORAL_TASK_QUEUE: z.string().default("shipfix"),

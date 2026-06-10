@@ -13,7 +13,6 @@ interface Guidance {
 }
 
 function extractGuidance(events: RunEventRow[]): Guidance | null {
-  // Surface the most recent repo-fix guidance, if any.
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
     if (ev.data?.event !== "deploy_fix_guidance") continue;
@@ -34,8 +33,8 @@ function extractGuidance(events: RunEventRow[]): Guidance | null {
 
 /**
  * When a deploy fails because of the repo's own code/config, ShipFix shows what
- * to fix — a manual checklist plus a copy-pasteable prompt for Cursor/ChatGPT.
- * ShipFix never edits the repo; the user fixes it and reruns Deploy.
+ * to fix: a manual checklist plus a copy-pasteable prompt for Cursor/ChatGPT.
+ * ShipFix never edits the repo; the user fixes it and reruns deploy.
  */
 export function FixGuidance({ events }: { events: RunEventRow[] }): React.ReactElement | null {
   const [copied, setCopied] = useState(false);
@@ -65,8 +64,8 @@ export function FixGuidance({ events }: { events: RunEventRow[] }): React.ReactE
         How to fix this repo
         {guidance.stage ? ` (${guidance.stage} stage)` : ""}
       </h3>
-      <p style={{ margin: "0 0 0.75rem", fontSize: "0.88rem", color: colors.warnText }}>
-        {guidance.summary} ShipFix does not edit your code — fix it below and rerun Deploy.
+      <p style={{ margin: "0 0 0.75rem", fontSize: "0.88rem", color: colors.warnText, lineHeight: 1.55 }}>
+        {guidance.summary} ShipFix does not edit your code. Fix it below and rerun deploy.
       </p>
 
       {guidance.checklist.length > 0 && (
@@ -77,7 +76,7 @@ export function FixGuidance({ events }: { events: RunEventRow[] }): React.ReactE
         </ol>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
         <strong style={{ fontSize: "0.82rem" }}>Copy this prompt into Cursor or ChatGPT:</strong>
         <button
           onClick={() => void copy()}

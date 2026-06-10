@@ -58,7 +58,7 @@ export function deriveRequiredProviders(plan: PlanLite | null): ProviderRequirem
   return order.filter((p) => reqs.has(p)).map((p) => ({ provider: p, reason: reqs.get(p)! }));
 }
 
-/** Providers required but not yet connected — these block Deploy. */
+/** Providers required but not yet connected; these block Deploy. */
 export function missingProviders(
   required: ProviderRequirement[],
   connected: string[],

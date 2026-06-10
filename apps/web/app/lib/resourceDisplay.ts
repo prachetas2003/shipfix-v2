@@ -3,8 +3,8 @@
  *
  * Mental model: the frontend is the user-facing app; backend and database are
  * supporting infrastructure. Only absolute http(s) URLs may be used as browser
- * links — bare hostnames must never become hrefs (they resolve as relative paths
- * like /apps/ep-winter-breeze...).
+ * links. Bare hostnames must never become hrefs because they resolve as relative
+ * paths like /apps/ep-winter-breeze...
  */
 
 import type {
@@ -29,7 +29,7 @@ export interface FrontendDisplay {
 
 export interface BackendDisplay {
   state: LayerState;
-  /** Render service URL — metadata; opening "/" may 404 on API-only backends. */
+  /** Render service URL; metadata. Opening "/" may 404 on API-only backends. */
   baseUrl: string | null;
   healthCheckUrl: string | null;
   healthCheckPassed: boolean;
@@ -38,7 +38,7 @@ export interface BackendDisplay {
 
 export interface DatabaseDisplay {
   state: LayerState;
-  /** Neon host — display metadata only, not a browser link. */
+  /** Neon host; display metadata only, not a browser link. */
   host: string | null;
   provider: string | null;
   exposesEnv: string | null;
@@ -73,7 +73,7 @@ function backendHealthCheck(
 
 /**
  * Build display models from snapshot resources, layers, and verification.
- * Uses verification URLs for backend health (not the bare service root).
+ * Uses verification URLs for backend health, not the bare service root.
  */
 export function buildAppResourceDisplay(input: {
   resources: SnapshotResource[];

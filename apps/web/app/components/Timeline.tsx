@@ -13,12 +13,12 @@ const TONE_COLOR: Record<FriendlyTone, string> = {
   progress: colors.accentText,
 };
 
-const TONE_DOT: Record<FriendlyTone, string> = {
-  info: "•",
-  success: "✓",
+const TONE_LABEL: Record<FriendlyTone, string> = {
+  info: "i",
+  success: "OK",
   warn: "!",
-  error: "✕",
-  progress: "…",
+  error: "X",
+  progress: "...",
 };
 
 /** Beginner-readable timeline: friendly summary per event, raw details on demand. */
@@ -28,24 +28,29 @@ export function Timeline({ events }: { events: RunEventRow[] }): React.ReactElem
 
   return (
     <section style={{ marginTop: "2rem" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
-        <h2 style={h2}>What's happening</h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: "0.85rem", flexWrap: "wrap" }}>
+        <div>
+          <h2 style={h2}>Timeline</h2>
+          <p style={{ margin: "0.35rem 0 0", color: colors.dim, fontSize: "0.84rem" }}>
+            Human-readable deployment events. Raw provider output stays under technical details.
+          </p>
+        </div>
         <button
           onClick={() => setShowTech((v) => !v)}
           style={{
-            background: "transparent",
-            color: colors.dim,
-            border: `1px solid ${colors.border}`,
-            borderRadius: 6,
-            padding: "0.25rem 0.6rem",
-            fontSize: "0.75rem",
+            background: colors.panel,
+            color: colors.text,
+            border: `1px solid ${colors.borderStrong}`,
+            borderRadius: 8,
+            padding: "0.4rem 0.7rem",
+            fontSize: "0.78rem",
             cursor: "pointer",
           }}
         >
           {showTech ? "Hide technical details" : "Show technical details"}
         </button>
       </div>
-      <ol style={{ listStyle: "none", padding: 0, margin: 0 }}>
+      <ol style={{ listStyle: "none", padding: 0, margin: 0, border: `1px solid ${colors.border}`, borderRadius: 8, overflow: "hidden" }}>
         {events.map((ev) => {
           const f = translateEvent(ev);
           const color = TONE_COLOR[f.tone];
@@ -55,24 +60,41 @@ export function Timeline({ events }: { events: RunEventRow[] }): React.ReactElem
               style={{
                 display: "flex",
                 gap: 12,
-                padding: "0.55rem 0",
+                padding: "0.85rem 1rem",
                 borderBottom: `1px solid ${colors.border}`,
+                background: f.tone === "error" ? colors.errorBg : f.tone === "warn" ? colors.warnBg : colors.card,
               }}
             >
-              <span style={{ color, minWidth: 16, textAlign: "center", fontWeight: 700 }}>
-                {TONE_DOT[f.tone]}
+              <span
+                style={{
+                  color,
+                  border: `1px solid ${color}`,
+                  minWidth: 28,
+                  height: 28,
+                  borderRadius: 999,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 800,
+                  fontSize: "0.68rem",
+                }}
+              >
+                {TONE_LABEL[f.tone]}
               </span>
-              <div style={{ flex: 1 }}>
-                <div style={{ color, fontWeight: 600, fontSize: "0.92rem" }}>{f.title}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ color, fontWeight: 800, fontSize: "0.94rem" }}>{f.title}</div>
+                  <span style={{ color: colors.dim, fontSize: "0.72rem" }}>{new Date(ev.createdAt).toLocaleTimeString()}</span>
+                </div>
                 {f.detail && f.detail !== f.title && (
-                  <div style={{ opacity: 0.75, fontSize: "0.85rem", marginTop: 2 }}>{f.detail}</div>
+                  <div style={{ color: colors.muted, fontSize: "0.85rem", marginTop: 3, lineHeight: 1.5 }}>{f.detail}</div>
                 )}
                 {f.url && (
                   <a
                     href={f.url.startsWith("http") ? f.url : `https://${f.url}`}
                     target="_blank"
                     rel="noreferrer"
-                    style={{ color: colors.accentText, fontFamily: mono, fontSize: "0.8rem" }}
+                    style={{ color: colors.accentText, fontFamily: mono, fontSize: "0.8rem", wordBreak: "break-all" }}
                   >
                     {f.url}
                   </a>
@@ -81,16 +103,17 @@ export function Timeline({ events }: { events: RunEventRow[] }): React.ReactElem
                   <pre
                     style={{
                       ...card,
-                      marginTop: 6,
-                      padding: "0.5rem 0.7rem",
+                      marginTop: 8,
+                      padding: "0.65rem 0.75rem",
                       fontSize: "0.72rem",
-                      opacity: 0.7,
+                      color: colors.dim,
                       overflowX: "auto",
                       whiteSpace: "pre-wrap",
+                      boxShadow: "none",
                     }}
                   >
                     [{ev.level}] {ev.stage ?? ev.type}
-                    {typeof ev.data?.event === "string" ? ` · ${ev.data.event}` : ""}
+                    {typeof ev.data?.event === "string" ? ` / ${ev.data.event}` : ""}
                     {"\n"}
                     {ev.message}
                   </pre>

@@ -4,6 +4,7 @@ import { ClerkLoaded, ClerkLoading, SignIn, SignInButton, SignUpButton, UserButt
 import { useEffect } from "react";
 import { AUTH_MODE, setAuthTokenProvider } from "../lib/api";
 import { buttonStyle, card, colors } from "../lib/theme";
+import { BrandMark } from "./BrandMark";
 
 function AuthTokenBridge(): null {
   const { getToken } = useAuth();
@@ -23,10 +24,13 @@ function AuthTokenBridge(): null {
 function LoginScreen(): React.ReactElement {
   return (
     <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "2rem" }}>
-      <section style={{ ...card, width: "min(440px, 100%)", padding: "2rem", textAlign: "center" }}>
-        <h1 style={{ margin: 0, fontSize: "1.75rem" }}>Sign in to deploy your apps with ShipFix</h1>
-        <p style={{ color: colors.dim, margin: "0.75rem 0 1.5rem" }}>
-          Use your account to plan deployments, connect providers, and track your apps safely.
+      <section style={{ ...card, width: "min(460px, 100%)", padding: "2rem", textAlign: "center" }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: "1.25rem" }}>
+          <BrandMark />
+        </div>
+        <h1 style={{ margin: 0, fontSize: "1.75rem", letterSpacing: 0 }}>Deploy with a verified trail</h1>
+        <p style={{ color: colors.dim, margin: "0.75rem 0 1.5rem", lineHeight: 1.6 }}>
+          Sign in to analyze repos, connect provider accounts, deploy services, and keep a record of what is live.
         </p>
         <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
           <SignInButton mode="modal">
@@ -52,7 +56,7 @@ export function AuthGate({ children }: { children: React.ReactNode }): React.Rea
     <>
       <ClerkLoading>
         <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", color: colors.dim }}>
-          Loading sign-in...
+          Loading ShipFix sign-in...
         </main>
       </ClerkLoading>
       <ClerkLoaded>
@@ -61,7 +65,7 @@ export function AuthGate({ children }: { children: React.ReactNode }): React.Rea
         ) : (
           <>
           <AuthTokenBridge />
-          <div style={{ position: "fixed", top: 16, right: 16, zIndex: 20 }}>
+          <div style={{ position: "fixed", top: 18, right: 18, zIndex: 20 }}>
             <UserButton />
           </div>
           {children}

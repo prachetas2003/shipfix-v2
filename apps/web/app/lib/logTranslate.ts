@@ -1,7 +1,7 @@
 /**
  * Translate raw run_events into beginner-friendly timeline entries: what
- * happened, whether anything is live, and what (if anything) the user must do.
- * The original technical message is preserved for an expandable details view.
+ * happened, whether anything is live, and what the user should do next.
+ * The original technical message is preserved for expandable details.
  */
 
 export type FriendlyTone = "info" | "success" | "warn" | "error" | "progress";
@@ -27,12 +27,20 @@ function str(v: unknown): string | null {
   return v == null ? null : String(v);
 }
 
+function serviceRole(serviceId: string | null, provider: string | null): "frontend" | "backend" | "database" | "service" {
+  if (provider === "vercel" || serviceId === "web" || serviceId === "frontend") return "frontend";
+  if (provider === "render" || serviceId === "api" || serviceId === "backend") return "backend";
+  if (provider === "neon" || serviceId === "db" || serviceId === "database") return "database";
+  return "service";
+}
+
 /** Map a single run_event to a friendly summary. Falls back to the raw message. */
 export function translateEvent(ev: RawEvent): FriendlyEvent {
   const d = ev.data ?? {};
   const event = typeof d.event === "string" ? d.event : null;
-  const serviceId = str(d.serviceId);
+  const serviceId = str(d.serviceId) ?? str(d.managedId);
   const provider = str(d.provider);
+  const role = serviceRole(serviceId, provider);
 
   switch (event) {
     case "usage_limit_reached":
@@ -46,13 +54,13 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
       return {
         title: "Planner setup is missing",
         detail: str(d.message) ??
-          "ShipFix needs backend-only LLM settings in the API/worker environment before it can generate plans.",
+          "ShipFix needs backend-only LLM settings in the API or worker environment before it can generate plans.",
         tone: "error",
       };
     case "planning_failed":
       return {
         title: "Planning failed",
-        detail: str(d.message) ?? "ShipFix could not generate a deployment plan. Check the technical details below.",
+        detail: str(d.message) ?? "ShipFix could not generate a deployment plan. Open technical details for the planner error.",
         tone: "error",
       };
     case "run_failed":
@@ -62,95 +70,139 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
         tone: "error",
       };
     case "analysis_completed":
-      return { title: "Repository analyzed", detail: "ShipFix read your repo and detected its structure.", tone: "success" };
+      return { title: "Repository analyzed", detail: "ShipFix detected the app structure and deployment signals.", tone: "success" };
+    case "plan_reused":
+      return { title: "Using selected plan", detail: "This deploy is continuing from the validated plan you chose.", tone: "info" };
     case "plan_validated":
-      return { title: "Deployment plan ready", detail: "ShipFix proposed and validated a plan for your app.", tone: "success" };
+      return { title: "Deployment plan ready", detail: "ShipFix validated what can be deployed and what setup is needed.", tone: "success" };
+    case "neon_config_check":
+      return {
+        title: "Checking Neon organization setup",
+        detail: Boolean(d.orgIdAvailable)
+          ? "Neon organization ID is available for database provisioning."
+          : "Neon organization ID is missing, so ShipFix will not call Neon.",
+        tone: Boolean(d.orgIdAvailable) ? "success" : "warn",
+      };
+    case "provision_started":
+      return {
+        title: provider === "neon" ? "Creating Neon database" : "Creating managed database",
+        detail: "ShipFix is provisioning the database before deploying the backend.",
+        tone: "progress",
+      };
+    case "provision_log":
+      return { title: "Database provider update", detail: ev.message, tone: "info" };
+    case "provision_failed":
+      return {
+        title: "Database was not created",
+        detail: "The backend needs the database URL, so ShipFix stopped before deploying dependent services.",
+        tone: "error",
+      };
     case "resource_provisioned":
       return {
-        title: `Database ready${provider ? ` (${provider})` : ""}`,
-        detail: "A managed database was provisioned and its connection string is sealed for wiring.",
+        title: "Database is ready",
+        detail: "Neon created the database and ShipFix sealed the connection string for backend wiring.",
         tone: "success",
         isLive: true,
         url: str(d.host),
       };
     case "deploy_started":
       return {
-        title: `Deploying ${serviceId ?? "service"}${provider ? ` to ${provider}` : ""}`,
-        detail: "Building and shipping this service to the provider.",
+        title:
+          role === "backend"
+            ? "Deploying backend to Render"
+            : role === "frontend"
+              ? "Deploying frontend to Vercel"
+              : `Deploying ${serviceId ?? "service"}`,
+        detail:
+          role === "backend"
+            ? "Render is installing dependencies, building the API, and starting the service."
+            : role === "frontend"
+              ? "Vercel is building the frontend with the backend URL wired in."
+              : "The provider is building and deploying this service.",
         tone: "progress",
       };
     case "deploy_log":
-      return { title: "Build log", detail: ev.message, tone: "info" };
+      return { title: "Provider build log", detail: ev.message, tone: "info" };
     case "service_deployed":
       return {
-        title: `${serviceId ?? "Service"} is live`,
-        detail: `Deployed to ${provider ?? "provider"} and reachable.`,
+        title:
+          role === "backend"
+            ? "Backend API is live"
+            : role === "frontend"
+              ? "Frontend app is live"
+              : "Service is live",
+        detail: provider ? `Deployed on ${providerName(provider)} and reachable.` : "Deployed and reachable.",
         tone: "success",
         isLive: true,
         url: str(d.publicUrl),
       };
     case "deploy_setup_blocker":
       return {
-        title: `${serviceId ?? "Service"} needs provider setup`,
+        title: role === "frontend" ? "Vercel needs GitHub access" : "Provider setup needs attention",
         detail:
-          "The deploy stopped because a provider account needs setup (often connecting GitHub to Vercel). Fix the connection and rerun Deploy.",
+          "The deploy stopped because a provider account needs setup. Fix the provider connection and retry deploy.",
         tone: "warn",
       };
     case "deploy_needs_credential":
       return {
-        title: "A provider key is missing",
-        detail: "Connect the required provider, then rerun Deploy.",
+        title: "Provider connection missing",
+        detail: "Connect the required provider account, then retry deploy.",
         tone: "warn",
       };
     case "deploy_env_blocked":
       return {
-        title: `Can't deploy ${serviceId ?? "service"} yet`,
-        detail: "A required value from another service isn't available yet (for example the backend URL).",
+        title:
+          role === "backend"
+            ? "The backend is waiting for the database URL"
+            : role === "frontend"
+              ? "The frontend is waiting for the backend URL"
+              : "A required environment value is not ready",
+        detail: "ShipFix did not deploy this service because a dependency was not available yet.",
         tone: "warn",
       };
     case "deploy_skipped":
-      return { title: "Step skipped", detail: ev.message, tone: "info" };
+      return { title: "Step skipped", detail: humanizeRawMessage(ev.message), tone: "info" };
     case "deploy_failed": {
       const kind = str(d.failureKind);
       if (kind === "build_failed") {
         return {
-          title: `${serviceId ?? "Service"} failed to build`,
+          title: role === "backend" ? "Render could not build the backend" : "Provider could not build the service",
           detail:
-            "The provider could not build this service from your repo (install/build/start failed). This is usually a code or config issue in the repo — see technical details and the suggested fix.",
+            "The provider build failed. This is usually a repo script, dependency, or TypeScript/config issue. Open technical details for the log tail.",
           tone: "error",
         };
       }
       if (kind === "timeout") {
         return {
-          title: `${serviceId ?? "Service"} timed out while deploying`,
+          title: "Deploy timed out",
           detail:
-            "The build ran longer than ShipFix waited. It may still finish at the provider — rerun Deploy to reconcile, or check the provider dashboard.",
+            "The provider took longer than ShipFix waited. Check the provider dashboard or retry deploy to reconcile the result.",
           tone: "error",
         };
       }
       return {
-        title: `${serviceId ?? "Service"} did not deploy`,
+        title: role === "frontend" ? "Vercel could not deploy the frontend" : "Service did not deploy",
         detail: "The deployment did not complete. Open technical details to see the provider error.",
         tone: "error",
       };
     }
     case "deploy_fix_guidance":
       return {
-        title: "Suggested fix for the repo",
+        title: "Suggested repo fix",
         detail: ev.message,
         tone: "warn",
       };
     case "deploy_blocked":
       return {
         title: "Deploy not started",
-        detail: ev.message,
+        detail: humanizeRawMessage(ev.message),
         tone: "warn",
       };
     case "deploy_timeout":
       return {
-        title: `${serviceId ?? "Frontend"} timed out on Vercel`,
+        title: "Frontend deploy timed out on Vercel",
         detail:
-          "The frontend did not finish deploying in time. Your backend and database may still be live — check Vercel or rerun Deploy.",
+          "The frontend did not finish deploying in time. Backend and database may still be live. Check Vercel or retry deploy.",
         tone: "error",
       };
     case "verification": {
@@ -162,23 +214,29 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
         return { title: `Check skipped: ${friendlyCheck(check)}`, detail: "Not enough was live to run this check.", tone: "info" };
       }
       return {
-        title: `${friendlyCheck(check)}: ${ok ? "passed" : "failed"}${code}`,
-        detail: ok ? "Live evidence confirmed." : "This check did not pass — see technical details.",
+        title: `${friendlyCheck(check)} ${ok ? "passed" : "failed"}${code}`,
+        detail: ok ? verificationSuccessDetail(check) : "ShipFix could not prove this part is live. Open technical details for the failed check.",
         tone: ok ? "success" : "error",
         url: str(d.url),
       };
     }
     case "verify_skipped":
-      return { title: "Verification skipped", detail: ev.message, tone: "info" };
+      return { title: "Verification skipped", detail: humanizeRawMessage(ev.message), tone: "info" };
     default:
       break;
   }
 
-  // Stage transitions and generic events.
   if (ev.stage) {
-    return { title: stageTitle(ev.stage), detail: ev.message, tone: stageTone(ev.level) };
+    return { title: stageTitle(ev.stage), detail: humanizeRawMessage(ev.message), tone: stageTone(ev.level, ev.stage) };
   }
-  return { title: ev.message, detail: "", tone: stageTone(ev.level) };
+  return { title: humanizeRawMessage(ev.message), detail: "", tone: stageTone(ev.level, ev.stage) };
+}
+
+function providerName(provider: string): string {
+  if (provider === "vercel") return "Vercel";
+  if (provider === "render") return "Render";
+  if (provider === "neon") return "Neon";
+  return provider;
 }
 
 function friendlyCheck(check: string): string {
@@ -187,14 +245,22 @@ function friendlyCheck(check: string): string {
     case "http_2xx":
       return "Backend health check";
     case "frontend_loads":
-      return "Frontend loads";
+      return "Frontend loaded";
     case "cors_from":
-      return "Frontend↔backend connection (CORS)";
+      return "Frontend to backend connection";
     case "db_connect":
-      return "Database connectivity";
+      return "Database connection check";
     default:
       return check;
   }
+}
+
+function verificationSuccessDetail(check: string): string {
+  if (check === "health_path" || check === "http_2xx") return "The backend responded successfully at its health endpoint.";
+  if (check === "frontend_loads") return "The frontend page loaded from the deployed URL.";
+  if (check === "cors_from") return "The frontend can reach the backend origin.";
+  if (check === "db_connect") return "ShipFix connected to the database and ran SELECT 1.";
+  return "Live evidence confirmed.";
 }
 
 function stageTitle(stage: string): string {
@@ -202,19 +268,29 @@ function stageTitle(stage: string): string {
     queued: "Queued",
     cloning: "Fetching repository",
     analyzing: "Analyzing repository",
-    planning: "Generating plan",
-    provisioning: "Provisioning database",
+    planning: "Generating deployment plan",
+    provisioning: "Creating database",
     deploying: "Deploying services",
     verifying: "Verifying live app",
-    succeeded: "App is live",
-    diagnosed: "Partly live — needs attention",
+    succeeded: "Your app is live",
+    diagnosed: "Deployment needs attention",
     failed: "Deploy failed",
   };
-  return map[stage] ?? stage;
+  return map[stage] ?? humanizeRawMessage(stage);
 }
 
-function stageTone(level: string): FriendlyTone {
-  if (level === "error") return "error";
-  if (level === "warn") return "warn";
+function stageTone(level: string, stage?: string | null): FriendlyTone {
+  if (level === "error" || stage === "failed") return "error";
+  if (level === "warn" || stage === "diagnosed") return "warn";
+  if (stage === "succeeded") return "success";
+  if (["cloning", "analyzing", "planning", "provisioning", "deploying", "verifying"].includes(stage ?? "")) return "progress";
   return "info";
+}
+
+function humanizeRawMessage(message: string): string {
+  return message
+    .replace(/\benv resolution blocked\b/gi, "a required environment value is not ready")
+    .replace(/\bworkflow activity failed\b/gi, "the deployment worker stopped this step")
+    .replace(/\bprovision_failed\b/gi, "database provisioning failed")
+    .replace(/\bdeploy_log\b/gi, "provider log");
 }

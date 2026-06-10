@@ -3,7 +3,7 @@
 import type { RunSnapshot } from "../lib/api";
 import { buildAppResourceDisplay } from "../lib/resourceDisplay";
 import { CurrentState } from "./CurrentState";
-import { card, colors } from "../lib/theme";
+import { buttonStyle, card, colors } from "../lib/theme";
 
 /**
  * Honest, per-layer outcome with resource-type-aware links (frontend primary,
@@ -29,13 +29,13 @@ export function OutcomeBanner({
   const isPlanRun = snapshot.run.mode === "plan";
   const hasAnyLiveResource = snapshot.resources.some((r) => r.status === "live");
   const headline = allLive
-    ? "Your app is live."
+    ? "Your app is live"
     : isPlanRun && status === "succeeded"
       ? "Plan generated. App not deployed yet."
       : status === "failed"
         ? deployFailureHeadline(snapshot)
         : hasAnyLiveResource
-          ? "Partly live - a few things still need attention."
+          ? "Part of the stack is live, but verification is not complete."
           : "App not deployed yet.";
 
   const tone = allLive
@@ -53,28 +53,57 @@ export function OutcomeBanner({
           ...card,
           borderColor: tone.border,
           background: tone.bg,
-          padding: "0.85rem 1rem",
-          marginBottom: "0.75rem",
+          padding: allLive ? "1.35rem" : "1rem",
+          marginBottom: "0.9rem",
         }}
       >
-        <span style={{ fontSize: "1.1rem", fontWeight: 700, color: tone.text }}>{headline}</span>
-        {display.frontend?.openAppUrl && (
-          <p style={{ margin: "0.5rem 0 0", fontSize: "0.88rem", color: tone.text }}>
-            Share and use your{" "}
-            <a href={display.frontend.openAppUrl} target="_blank" rel="noreferrer" style={{ color: colors.successText, fontWeight: 600 }}>
-              frontend app link
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 460px" }}>
+            <p style={{ margin: 0, color: tone.text, fontSize: "0.82rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0 }}>
+              {allLive ? "Verified deployment" : "Deployment outcome"}
+            </p>
+            <h2 style={{ margin: "0.35rem 0 0", color: tone.text, fontSize: allLive ? "1.65rem" : "1.15rem", letterSpacing: 0 }}>
+              {headline}
+            </h2>
+            <p style={{ margin: "0.55rem 0 0", color: tone.text, opacity: 0.9, lineHeight: 1.55 }}>
+              {allLive
+                ? "ShipFix created the database, deployed the backend and frontend, wired the environment variables, and verified the live app."
+                : nextAction}
+            </p>
+          </div>
+          {display.frontend?.openAppUrl && (
+            <a
+              href={display.frontend.openAppUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{ ...buttonStyle("success"), textDecoration: "none", display: "inline-block" }}
+            >
+              Open app
             </a>
-            . Backend and database power it behind the scenes.
-          </p>
-        )}
-        {nextAction && (
-          <p style={{ margin: "0.6rem 0 0", color: tone.text, fontSize: "0.9rem" }}>
-            <strong>Next:</strong> {nextAction}
-          </p>
+          )}
+        </div>
+
+        {allLive && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginTop: "1rem" }}>
+            <SummaryItem label="Frontend" value="Vercel app is live" />
+            <SummaryItem label="Backend" value={display.backend?.healthCheckPassed ? "Render health check passed" : "Render service deployed"} />
+            <SummaryItem label="Database" value="Neon Postgres verified" />
+          </div>
         )}
       </div>
       <CurrentState display={display} />
     </section>
+  );
+}
+
+function SummaryItem({ label, value }: { label: string; value: string }): React.ReactElement {
+  return (
+    <div style={{ border: `1px solid ${colors.successDeep}`, borderRadius: 8, background: "rgba(5,46,31,0.45)", padding: "0.75rem" }}>
+      <div style={{ color: colors.successText, opacity: 0.75, fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0 }}>
+        {label}
+      </div>
+      <div style={{ color: colors.successText, marginTop: 4, fontWeight: 700, fontSize: "0.88rem" }}>{value}</div>
+    </div>
   );
 }
 
@@ -84,25 +113,29 @@ function computeNextAction(
 ): string | null {
   if (display.fullStack.live) return null;
   if (status === "succeeded") {
-    return "Connect providers and deploy this plan.";
-  }
-  if (display.frontend && display.frontend.state !== "live") {
-    return "Your frontend is not live. Make sure GitHub is connected to Vercel and the repo is accessible, then rerun Deploy.";
+    return "Connect the required providers, then deploy this plan.";
   }
   if (display.database && display.database.state === "failed") {
-    return "Database provisioning failed. Check the provider setup, then retry Deploy.";
+    return "The database was not created, so ShipFix did not deploy the backend. Check Neon setup and retry deploy.";
   }
   if (display.backend && display.backend.state === "failed") {
-    return "Your backend did not deploy. Open the timeline's technical details for the provider error, then rerun Deploy.";
+    return "Render could not deploy the backend. Open technical details for the build or provider error, then retry deploy.";
+  }
+  if (display.frontend && display.frontend.state === "failed") {
+    return "Vercel could not deploy the frontend. Check GitHub access or build output, then retry deploy.";
   }
   if (status === "failed") {
-    return "No live result yet. Review the timeline, fix the flagged setup, and rerun Deploy.";
+    return "No live result yet. Review the timeline, fix the flagged setup or repo issue, and retry deploy.";
   }
-  return "Review the timeline below for the remaining gap, then rerun Deploy.";
+  return "The app was not marked live because verification did not pass. Review the failed check below.";
 }
 
 function deployFailureHeadline(snapshot: RunSnapshot): string {
   const failedDb = snapshot.resources.some((r) => r.role === "database" && r.status === "failed");
+  const failedBackend = snapshot.resources.some((r) => r.role === "backend" && r.status === "failed");
+  const failedFrontend = snapshot.resources.some((r) => r.role === "frontend" && r.status === "failed");
   if (failedDb) return "Deploy failed during database provisioning.";
+  if (failedBackend) return "Backend deploy failed.";
+  if (failedFrontend) return "Frontend deploy failed.";
   return "Deploy did not produce a live app.";
 }

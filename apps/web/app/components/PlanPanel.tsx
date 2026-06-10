@@ -1,28 +1,47 @@
 "use client";
 
-import { Fragment } from "react";
 import type { PlanView } from "../lib/api";
-import { card, colors, h2 } from "../lib/theme";
+import { card, colors, h2, mono } from "../lib/theme";
 
 const CLASS_META: Record<PlanView["classification"], { label: string; color: string; explanation: string }> = {
   deployable: {
-    label: "Green · Deployable",
+    label: "Green - ready to deploy",
     color: colors.success,
-    explanation: "ShipFix can auto-deploy this once the required providers are connected.",
+    explanation: "ShipFix found a supported deployment path. Connect the required providers, then deploy.",
   },
   needs_setup: {
-    label: "Yellow · Needs setup",
+    label: "Yellow - setup needed",
     color: colors.warn,
     explanation:
-      "Almost there — finish the setup items below (secrets, connections, migrations) and re-analyze, then deploy.",
+      "ShipFix found a path, but something still needs setup before provider calls are safe.",
   },
   diagnose_only: {
-    label: "Red · Diagnosis only",
+    label: "Red - diagnosis only",
     color: colors.error,
     explanation:
-      "ShipFix can't safely auto-deploy this app yet. It's outside the supported slice, so this is a diagnosis with next steps — not a deploy.",
+      "This repo is outside ShipFix alpha support. ShipFix will explain why instead of pretending it can deploy it.",
   },
 };
+
+function providerName(provider: string | undefined): string {
+  if (provider === "vercel") return "Vercel";
+  if (provider === "render") return "Render";
+  if (provider === "neon") return "Neon";
+  return provider ?? "provider";
+}
+
+function serviceType(type: string): string {
+  if (type === "frontend_static") return "Frontend app";
+  if (type === "node_api") return "Backend API";
+  if (type === "worker") return "Worker";
+  return type.replace(/_/g, " ");
+}
+
+function severityLabel(sev: string): string {
+  if (sev === "fatal") return "Blocked";
+  if (sev === "needs_input") return "Setup";
+  return "Note";
+}
 
 function severityColor(sev: string): string {
   if (sev === "fatal") return colors.error;
@@ -30,17 +49,12 @@ function severityColor(sev: string): string {
   return colors.dim;
 }
 
-function Dl({ rows }: { rows: Array<[string, string | null]> }) {
-  const present = rows.filter(([, v]) => v != null && v !== "");
-  if (present.length === 0) return null;
+function CommandRow({ label, value }: { label: string; value: string | null }): React.ReactElement | null {
+  if (!value) return null;
   return (
-    <div style={{ marginTop: 6, display: "grid", gridTemplateColumns: "max-content 1fr", gap: "2px 10px" }}>
-      {present.map(([k, v]) => (
-        <Fragment key={k}>
-          <span style={{ opacity: 0.5 }}>{k}</span>
-          <code>{v}</code>
-        </Fragment>
-      ))}
+    <div style={{ display: "grid", gridTemplateColumns: "92px 1fr", gap: 8, marginTop: 5 }}>
+      <span style={{ color: colors.dim }}>{label}</span>
+      <code style={{ fontFamily: mono, color: colors.muted, wordBreak: "break-all" }}>{value}</code>
     </div>
   );
 }
@@ -50,51 +64,40 @@ export function PlanPanel({ plan }: { plan: PlanView }): React.ReactElement {
 
   return (
     <section style={{ marginTop: "2rem" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "0.75rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "0.75rem", flexWrap: "wrap" }}>
         <h2 style={h2}>Deployment plan</h2>
         <span
           style={{
             fontSize: "0.72rem",
-            fontWeight: 700,
-            color: "#0b0b0b",
+            fontWeight: 800,
+            color: "#061014",
             background: meta.color,
-            padding: "0.15rem 0.55rem",
+            padding: "0.18rem 0.6rem",
             borderRadius: 999,
           }}
         >
           {meta.label}
         </span>
-        <span style={{ fontSize: "0.8rem", opacity: 0.6 }}>
+        <span style={{ fontSize: "0.8rem", color: colors.dim }}>
           confidence {(plan.confidence * 100).toFixed(0)}%
         </span>
       </div>
 
-      <p style={{ marginTop: 0, opacity: 0.85 }}>{plan.goal}</p>
-
-      <p
-        style={{
-          margin: "0 0 0.5rem",
-          fontSize: "0.84rem",
-          color: meta.color,
-          opacity: 0.95,
-        }}
-      >
-        {meta.explanation}
-      </p>
+      <div style={{ ...card, background: colors.panelSoft }}>
+        <p style={{ margin: 0, color: colors.text, fontWeight: 700 }}>{plan.goal}</p>
+        <p style={{ margin: "0.45rem 0 0", fontSize: "0.86rem", color: meta.color, lineHeight: 1.55 }}>
+          {meta.explanation}
+        </p>
+      </div>
 
       {plan.questions.length > 0 && (
         <div style={{ marginTop: "1rem" }}>
           <h3 style={{ ...h2, fontSize: "0.75rem" }}>Setup checklist</h3>
           {plan.questions.map((q) => (
-            <div key={q.id} style={{ ...card, marginBottom: 8, fontSize: "0.85rem" }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span style={{ color: colors.warn, fontWeight: 700, fontSize: "0.72rem" }}>
-                  {q.kind === "secret" ? "SECRET" : q.kind === "choice" ? "CHOICE" : "CONFIRM"}
-                </span>
-                <strong>{q.prompt}</strong>
-              </div>
+            <div key={q.id} style={{ ...card, marginTop: 8, fontSize: "0.86rem" }}>
+              <strong>{q.prompt}</strong>
               {q.options && q.options.length > 0 && (
-                <p style={{ margin: "0.35rem 0 0", opacity: 0.7 }}>
+                <p style={{ margin: "0.35rem 0 0", color: colors.dim }}>
                   Options: {q.options.join(", ")}
                 </p>
               )}
@@ -105,17 +108,17 @@ export function PlanPanel({ plan }: { plan: PlanView }): React.ReactElement {
 
       {plan.blockers.length > 0 && (
         <div style={{ marginTop: "1rem" }}>
-          <h3 style={{ ...h2, fontSize: "0.75rem" }}>Blockers</h3>
+          <h3 style={{ ...h2, fontSize: "0.75rem" }}>Needs attention</h3>
           {plan.blockers.map((b, i) => (
-            <div key={i} style={{ ...card, marginBottom: 8 }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span style={{ color: severityColor(b.severity), fontWeight: 700, fontSize: "0.72rem" }}>
-                  {b.severity.toUpperCase()}
+            <div key={i} style={{ ...card, marginTop: 8, borderLeft: `4px solid ${severityColor(b.severity)}` }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ color: severityColor(b.severity), fontWeight: 800, fontSize: "0.72rem" }}>
+                  {severityLabel(b.severity)}
                 </span>
-                <strong style={{ fontSize: "0.9rem" }}>{b.title}</strong>
+                <strong style={{ fontSize: "0.92rem" }}>{b.title}</strong>
               </div>
-              <p style={{ margin: "0.4rem 0 0.2rem", fontSize: "0.85rem", opacity: 0.85 }}>{b.explanation}</p>
-              <p style={{ margin: 0, fontSize: "0.82rem", opacity: 0.7 }}>→ {b.action}</p>
+              <p style={{ margin: "0.4rem 0 0.25rem", fontSize: "0.85rem", color: colors.muted, lineHeight: 1.5 }}>{b.explanation}</p>
+              <p style={{ margin: 0, fontSize: "0.82rem", color: colors.dim }}>Next: {b.action}</p>
             </div>
           ))}
         </div>
@@ -123,49 +126,43 @@ export function PlanPanel({ plan }: { plan: PlanView }): React.ReactElement {
 
       {plan.services.length > 0 && (
         <div style={{ marginTop: "1rem" }}>
-          <h3 style={{ ...h2, fontSize: "0.75rem" }}>Services</h3>
-          {plan.services.map((s) => (
-            <div key={s.id} style={{ ...card, marginBottom: 8, fontSize: "0.85rem" }}>
-              <div>
-                <strong>{s.id}</strong>{" "}
-                <span style={{ opacity: 0.6 }}>
-                  {s.type} · {s.provider} · <code>{s.rootDir || "/"}</code>
-                </span>
-              </div>
-              <Dl
-                rows={[
-                  ["install", s.install],
-                  ["build", s.build],
-                  ["start", s.start],
-                  ["outputDir", s.outputDir],
-                  ["healthCheck", s.healthCheckPath],
-                ]}
-              />
-              {s.env.length > 0 && (
-                <div style={{ marginTop: 6, opacity: 0.85 }}>
-                  env:{" "}
-                  {s.env.map((e) => (
-                    <code key={e.name} style={{ marginRight: 8 }}>
-                      {e.name}={e.source}
-                      {e.ref ? `(${e.ref})` : ""}
-                    </code>
-                  ))}
+          <h3 style={{ ...h2, fontSize: "0.75rem" }}>Services ShipFix will deploy</h3>
+          <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+            {plan.services.map((s) => (
+              <div key={s.id} style={{ ...card, fontSize: "0.85rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <strong>{serviceType(s.type)}</strong>
+                  <span style={{ color: colors.dim }}>to {providerName(s.provider)}</span>
+                  <code style={{ fontFamily: mono, color: colors.dim }}>{s.rootDir || "/"}</code>
                 </div>
-              )}
-            </div>
-          ))}
+                <CommandRow label="Install" value={s.install} />
+                <CommandRow label="Build" value={s.build} />
+                <CommandRow label="Start" value={s.start} />
+                <CommandRow label="Health" value={s.healthCheckPath} />
+                {s.env.length > 0 && (
+                  <p style={{ margin: "0.55rem 0 0", color: colors.dim, fontSize: "0.82rem", lineHeight: 1.5 }}>
+                    Env ShipFix will set:{" "}
+                    {s.env.map((e) => (
+                      <code key={e.name} style={{ marginRight: 8, fontFamily: mono, color: colors.muted }}>
+                        {e.name}
+                      </code>
+                    ))}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {plan.managed.length > 0 && (
         <div style={{ marginTop: "1rem" }}>
-          <h3 style={{ ...h2, fontSize: "0.75rem" }}>Managed services</h3>
+          <h3 style={{ ...h2, fontSize: "0.75rem" }}>Managed infrastructure</h3>
           {plan.managed.map((m) => (
-            <div key={m.id} style={{ ...card, marginBottom: 8, fontSize: "0.85rem" }}>
-              <strong>{m.id}</strong>{" "}
-              <span style={{ opacity: 0.6 }}>
-                {m.kind} · {m.mode}
-                {m.provider ? ` · ${m.provider}` : ""} · exposes <code>{m.exposesEnv}</code> · migration {m.migration}
+            <div key={m.id} style={{ ...card, marginTop: 8, fontSize: "0.85rem" }}>
+              <strong>{m.kind === "postgres" ? "Postgres database" : m.kind}</strong>{" "}
+              <span style={{ color: colors.dim }}>
+                on {providerName(m.provider)}. Exposes <code style={{ fontFamily: mono }}>{m.exposesEnv}</code> to the backend.
               </span>
             </div>
           ))}
@@ -174,15 +171,15 @@ export function PlanPanel({ plan }: { plan: PlanView }): React.ReactElement {
 
       {plan.wiring.length > 0 && (
         <div style={{ marginTop: "1rem" }}>
-          <h3 style={{ ...h2, fontSize: "0.75rem" }}>Wiring</h3>
+          <h3 style={{ ...h2, fontSize: "0.75rem" }}>Automatic wiring</h3>
           <div style={{ ...card, fontSize: "0.85rem" }}>
             {plan.wiring.map((w, i) => (
-              <div key={i}>
-                <code>
+              <div key={i} style={{ color: colors.muted, lineHeight: 1.7 }}>
+                <code style={{ fontFamily: mono }}>
                   {w.fromServiceId}.{w.fromField}
                 </code>{" "}
-                →{" "}
-                <code>
+                -&gt;{" "}
+                <code style={{ fontFamily: mono }}>
                   {w.toServiceId}.{w.toEnvName}
                 </code>
               </div>
@@ -192,10 +189,10 @@ export function PlanPanel({ plan }: { plan: PlanView }): React.ReactElement {
       )}
 
       {plan.deployOrder.length > 0 && (
-        <p style={{ marginTop: "1rem", fontSize: "0.85rem", opacity: 0.7 }}>
-          deploy order:{" "}
+        <p style={{ marginTop: "1rem", fontSize: "0.85rem", color: colors.dim }}>
+          Deploy order:{" "}
           {plan.deployOrder.map((id) => (
-            <code key={id} style={{ marginRight: 6 }}>
+            <code key={id} style={{ marginRight: 6, fontFamily: mono, color: colors.muted }}>
               {id}
             </code>
           ))}

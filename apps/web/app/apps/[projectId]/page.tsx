@@ -7,7 +7,7 @@ import { api, type AppDetail } from "../../lib/api";
 import { buildAppResourceDisplay } from "../../lib/resourceDisplay";
 import { deriveRequiredProviders, missingProviders } from "../../lib/planRequirements";
 import { runModeLabel, runStatusLabel } from "../../lib/runLabels";
-import { buttonStyle, colors, h2, mono } from "../../lib/theme";
+import { buttonStyle, card, colors, h2, mono } from "../../lib/theme";
 import { CurrentState } from "../../components/CurrentState";
 import { ProviderRequirements } from "../../components/ProviderRequirements";
 
@@ -15,6 +15,12 @@ const STATUS_COLOR: Record<string, string> = {
   succeeded: colors.success,
   diagnosed: colors.warn,
   failed: colors.error,
+  queued: colors.dim,
+  analyzing: colors.accentText,
+  planning: colors.accentText,
+  provisioning: colors.accentText,
+  deploying: colors.accentText,
+  verifying: colors.accentText,
 };
 
 export default function AppDetailPage({
@@ -54,10 +60,12 @@ export default function AppDetailPage({
 
   const noLiveDeployment = !detail?.latestLiveDeployment && !display?.fullStack.live;
   const action = detail?.deployAction ?? null;
+  const latestRun = detail?.history[0];
   const latestRunNeedsDeployAction =
-    detail?.history[0]?.mode === "deploy" &&
-    (detail.history[0].status === "failed" || detail.history[0].status === "diagnosed");
+    latestRun?.mode === "deploy" &&
+    (latestRun.status === "failed" || latestRun.status === "diagnosed");
   const showDeployAction = Boolean(action && (noLiveDeployment || latestRunNeedsDeployAction));
+
   const startDeploy = async () => {
     if (!action) return;
     setErr(null);
@@ -80,25 +88,62 @@ export default function AppDetailPage({
   };
 
   return (
-    <main style={{ maxWidth: 920, margin: "0 auto", padding: "2.5rem 1.5rem 6rem" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "1rem", flexWrap: "wrap" }}>
-        <Link href="/" style={{ color: colors.dim, textDecoration: "none", fontSize: "0.85rem" }}>
-          Back to My Apps
-        </Link>
-        <h1 style={{ fontSize: "1.5rem", margin: 0, fontFamily: mono }}>
-          {detail?.project.repoFullName ?? "App"}
-        </h1>
-        <Link href="/new" style={{ marginLeft: "auto", textDecoration: "none", color: colors.accentText, fontSize: "0.9rem" }}>
-          New deployment
+    <main style={{ maxWidth: 980, margin: "0 auto", padding: "2.5rem 1.5rem 6rem" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: "1rem", flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 560px" }}>
+          <Link href="/" style={{ color: colors.dim, textDecoration: "none", fontSize: "0.84rem" }}>
+            Back to My Apps
+          </Link>
+          <h1 style={{ fontSize: "1.65rem", margin: "0.75rem 0 0", fontFamily: mono, letterSpacing: 0, wordBreak: "break-word" }}>
+            {detail?.project.repoFullName ?? "App"}
+          </h1>
+          <p style={{ margin: "0.4rem 0 0", color: colors.dim, lineHeight: 1.55 }}>
+            {display?.fullStack.live
+              ? "Showing the latest verified live deployment."
+              : action
+                ? "Plan is ready, but the app is not verified live yet."
+                : "Deployment state and history for this repository."}
+          </p>
+        </div>
+        <Link href="/new" style={{ marginLeft: "auto", textDecoration: "none" }}>
+          <button style={buttonStyle("primary")}>New deployment</button>
         </Link>
       </div>
 
-      {err && <p style={{ color: colors.error }}>{err}</p>}
+      {err && <div style={{ ...card, borderColor: colors.errorBorder, background: colors.errorBg, color: colors.errorText }}>{err}</div>}
+
+      {latestRun && (
+        <section style={{ ...card, margin: "1rem 0", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 360px" }}>
+            <h2 style={h2}>Latest run</h2>
+            <p style={{ margin: "0.4rem 0 0", color: colors.muted }}>
+              {runStatusLabel(latestRun.mode, latestRun.status)} - {runModeLabel(latestRun.mode)}
+            </p>
+          </div>
+          <span
+            style={{
+              fontSize: "0.74rem",
+              fontWeight: 800,
+              color: "#061014",
+              background: STATUS_COLOR[latestRun.status] ?? colors.dim,
+              padding: "0.22rem 0.65rem",
+              borderRadius: 999,
+            }}
+          >
+            {runStatusLabel(latestRun.mode, latestRun.status)}
+          </span>
+        </section>
+      )}
 
       {showDeployAction && action && (
-        <section style={{ margin: "1rem 0 1.5rem" }}>
-          <p style={{ color: colors.warn, fontWeight: 600, marginBottom: "0.75rem" }}>
-            {latestRunNeedsDeployAction ? "Latest deploy did not finish. The previous live deployment is preserved below." : "Plan ready, but app is not deployed yet."}
+        <section style={{ ...card, margin: "1rem 0 1.5rem", borderColor: colors.warnBorder, background: colors.warnBg }}>
+          <p style={{ color: colors.warnText, fontWeight: 800, margin: 0 }}>
+            {latestRunNeedsDeployAction
+              ? "Latest deploy needs attention. Previous live links are preserved below."
+              : "Plan ready, but app is not deployed yet."}
+          </p>
+          <p style={{ color: colors.warnText, opacity: 0.92, margin: "0.45rem 0 0.9rem", lineHeight: 1.55 }}>
+            Continue from the existing plan. You do not need to paste the repo again.
           </p>
           <button onClick={() => void startDeploy()} disabled={starting} style={buttonStyle("primary", starting)}>
             {starting ? "Starting deploy..." : action.label}
@@ -112,8 +157,8 @@ export default function AppDetailPage({
       {display && (
         <div style={{ marginBottom: "2rem" }}>
           {detail?.latestLiveDeployment && detail.current?.runId !== detail.latestLiveDeployment.runId && (
-            <p style={{ color: colors.warn, fontSize: "0.88rem", marginTop: 0 }}>
-              Latest run is {runStatusLabel(detail.history[0]?.mode ?? "", detail.history[0]?.status ?? "")}. Showing the most recent live deployment links below.
+            <p style={{ color: colors.warn, fontSize: "0.88rem", marginTop: 0, lineHeight: 1.55 }}>
+              Latest run is {runStatusLabel(latestRun?.mode ?? "", latestRun?.status ?? "")}. Showing the most recent verified live deployment links below.
             </p>
           )}
           <CurrentState display={display} />
@@ -122,7 +167,7 @@ export default function AppDetailPage({
 
       <section>
         <h2 style={h2}>Deployment history</h2>
-        {detail?.history.length === 0 && <p style={{ opacity: 0.6 }}>No runs yet.</p>}
+        {detail?.history.length === 0 && <p style={{ color: colors.dim }}>No runs yet.</p>}
         <div style={{ marginTop: "0.75rem" }}>
           {detail?.history.map((r) => (
             <Link key={r.id} href={`/runs/${r.id}`} style={{ textDecoration: "none", color: "inherit" }}>
@@ -130,32 +175,33 @@ export default function AppDetailPage({
                 style={{
                   background: colors.card,
                   border: `1px solid ${colors.border}`,
-                  borderRadius: 10,
+                  borderRadius: 8,
                   padding: "1rem",
                   marginBottom: 8,
                   display: "flex",
                   alignItems: "center",
                   gap: 12,
                   cursor: "pointer",
+                  flexWrap: "wrap",
                 }}
               >
                 <span
                   style={{
-                    fontSize: "0.7rem",
-                    fontWeight: 700,
-                    color: "#0b0b0b",
+                    fontSize: "0.72rem",
+                    fontWeight: 800,
+                    color: "#061014",
                     background: STATUS_COLOR[r.status] ?? colors.dim,
-                    padding: "0.1rem 0.5rem",
+                    padding: "0.14rem 0.55rem",
                     borderRadius: 999,
-                    minWidth: 112,
+                    minWidth: 120,
                     textAlign: "center",
                   }}
                 >
                   {runStatusLabel(r.mode, r.status)}
                 </span>
-                <span style={{ opacity: 0.75, fontSize: "0.85rem" }}>{runModeLabel(r.mode)}</span>
-                <span style={{ opacity: 0.5, fontSize: "0.8rem", fontFamily: mono }}>{r.commitSha.slice(0, 8)}</span>
-                <span style={{ marginLeft: "auto", opacity: 0.5, fontSize: "0.8rem" }}>
+                <span style={{ color: colors.muted, fontSize: "0.85rem" }}>{runModeLabel(r.mode)}</span>
+                <span style={{ color: colors.dim, fontSize: "0.8rem", fontFamily: mono }}>{r.commitSha.slice(0, 8)}</span>
+                <span style={{ marginLeft: "auto", color: colors.dim, fontSize: "0.8rem" }}>
                   {new Date(r.startedAt).toLocaleString()}
                 </span>
               </div>

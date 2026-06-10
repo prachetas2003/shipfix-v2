@@ -4,7 +4,7 @@ import { AuthGate } from "./components/AuthGate";
 
 export const metadata = {
   title: "ShipFix",
-  description: "Autonomous deployment engineer.",
+  description: "AI-assisted deployment planning, provider setup, deployment, and live verification.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -14,7 +14,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         style={{
           fontFamily: "ui-sans-serif, system-ui, sans-serif",
           margin: 0,
-          background: "#0a0a0a",
+          background: "#08090b",
           color: "#ededed",
         }}
       >
