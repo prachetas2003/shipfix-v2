@@ -13,13 +13,44 @@ const TONE_COLOR: Record<FriendlyTone, string> = {
   progress: colors.accentText,
 };
 
-const TONE_LABEL: Record<FriendlyTone, string> = {
-  info: "i",
-  success: "OK",
-  warn: "!",
-  error: "X",
-  progress: "...",
-};
+function ToneIcon({ tone }: { tone: FriendlyTone }): React.ReactElement {
+  const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
+  if (tone === "success") {
+    return (
+      <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
+        <path d="M2.5 7.5 5.5 10.5 11.5 3.5" {...stroke} />
+      </svg>
+    );
+  }
+  if (tone === "error") {
+    return (
+      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+        <path d="M2.5 2.5 9.5 9.5 M9.5 2.5 2.5 9.5" {...stroke} />
+      </svg>
+    );
+  }
+  if (tone === "warn") {
+    return (
+      <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
+        <path d="M7 3v5" {...stroke} />
+        <circle cx="7" cy="10.8" r="1" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+  if (tone === "progress") {
+    return (
+      <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true" style={{ animation: "sf-spin 900ms linear infinite" }}>
+        <path d="M7 1.5a5.5 5.5 0 1 1-5.5 5.5" {...stroke} />
+      </svg>
+    );
+  }
+  return (
+    <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
+      <circle cx="7" cy="3.4" r="1" fill="currentColor" />
+      <path d="M7 6v4.5" {...stroke} />
+    </svg>
+  );
+}
 
 /** Beginner-readable timeline: friendly summary per event, raw details on demand. */
 export function Timeline({ events }: { events: RunEventRow[] }): React.ReactElement | null {
@@ -75,11 +106,9 @@ export function Timeline({ events }: { events: RunEventRow[] }): React.ReactElem
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontWeight: 800,
-                  fontSize: "0.68rem",
                 }}
               >
-                {TONE_LABEL[f.tone]}
+                <ToneIcon tone={f.tone} />
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>

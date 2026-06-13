@@ -29,11 +29,11 @@ export const colors = {
 };
 
 export const card: CSSProperties = {
-  background: colors.card,
+  background: `linear-gradient(180deg, ${colors.panel} 0%, ${colors.card} 100%)`,
   border: `1px solid ${colors.border}`,
-  borderRadius: 8,
+  borderRadius: 12,
   padding: "1rem",
-  boxShadow: "0 18px 48px rgba(0,0,0,0.18)",
+  boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset, 0 18px 48px rgba(0,0,0,0.22)",
 };
 
 export const h2: CSSProperties = {
@@ -48,9 +48,9 @@ export const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
 export const inputStyle: CSSProperties = {
   padding: "0.7rem 0.9rem",
-  borderRadius: 8,
+  borderRadius: 10,
   border: `1px solid ${colors.borderStrong}`,
-  background: colors.panel,
+  background: colors.panelSoft,
   color: colors.text,
   fontSize: "0.95rem",
   outline: "none",
@@ -59,21 +59,30 @@ export const inputStyle: CSSProperties = {
 export function buttonStyle(variant: "primary" | "ghost" | "success" = "primary", disabled = false): CSSProperties {
   const base: CSSProperties = {
     padding: "0.7rem 1.3rem",
-    borderRadius: 8,
+    borderRadius: 10,
     fontSize: "0.95rem",
     fontWeight: 600,
     cursor: disabled ? "not-allowed" : "pointer",
-    border: "none",
-    opacity: disabled ? 0.6 : 1,
-    transition: "background 120ms ease, border-color 120ms ease, opacity 120ms ease",
+    border: "1px solid transparent",
+    opacity: disabled ? 0.55 : 1,
   };
   if (variant === "ghost") {
     return { ...base, background: colors.panel, color: colors.text, border: `1px solid ${colors.borderStrong}` };
   }
   if (variant === "success") {
-    return { ...base, background: colors.success, color: "#04120c" };
+    return {
+      ...base,
+      background: `linear-gradient(180deg, #3ee0a4 0%, ${colors.success} 100%)`,
+      color: "#04120c",
+      boxShadow: "0 6px 18px rgba(52,211,153,0.25)",
+    };
   }
-  return { ...base, background: colors.accent, color: "#fff" };
+  return {
+    ...base,
+    background: `linear-gradient(180deg, #22b1f0 0%, ${colors.accent} 100%)`,
+    color: "#fff",
+    boxShadow: "0 6px 18px rgba(14,165,233,0.28)",
+  };
 }
 
 export const STATE_COLOR: Record<string, string> = {

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { ClerkProvider } from "@clerk/nextjs";
 import { AuthGate } from "./components/AuthGate";
+import "./globals.css";
 
 export const metadata = {
   title: "ShipFix",

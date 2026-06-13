@@ -1,3 +1,5 @@
+import { LLMProviderError, llmKindFromMessage } from "@shipfix/llm";
+
 const GENERIC_TEMPORAL_MESSAGES = new Set([
   "Activity task failed",
   "Workflow execution failed",
@@ -36,11 +38,43 @@ export function unwrapFailureMessage(err: unknown): string {
   return fallback ?? "Run failed unexpectedly.";
 }
 
-export function failureEventForMessage(message: string): {
-  event: "usage_limit_reached" | "llm_config_missing" | "planning_failed" | "run_failed";
+export type RunFailureEvent =
+  | "usage_limit_reached"
+  | "llm_unavailable"
+  | "llm_config_missing"
+  | "planning_failed"
+  | "run_failed";
+
+export interface ClassifiedFailure {
+  event: RunFailureEvent;
   title: string;
-} {
-  if (/alpha usage limit|usage limit|try again later/i.test(message)) {
+}
+
+const LLM_UNAVAILABLE: ClassifiedFailure = {
+  event: "llm_unavailable",
+  title: "AI planner temporarily unavailable",
+};
+
+/**
+ * Classify a failure that has been flattened to a message string (e.g. after
+ * crossing the Temporal boundary). Order matters:
+ *  1. Typed LLM provider phrases (stable markers from LLMProviderError) — a
+ *     provider 429/503 is "model temporarily unavailable", NEVER a ShipFix
+ *     usage limit, even if the provider body says "try again later".
+ *  2. ShipFix metering messages (exact "Usage limit reached:" prefix or alpha
+ *     wording) — the only source of usage_limit_reached.
+ *  3. Missing/invalid LLM configuration.
+ *  4. Other planning-flavored failures.
+ */
+export function failureEventForMessage(message: string): ClassifiedFailure {
+  const llmKind = llmKindFromMessage(message);
+  if (llmKind === "rate_limited" || llmKind === "unavailable" || llmKind === "timeout") {
+    return LLM_UNAVAILABLE;
+  }
+  if (llmKind === "auth") {
+    return { event: "llm_config_missing", title: "Planner setup is invalid" };
+  }
+  if (/usage limit reached:|alpha usage limit/i.test(message)) {
     return { event: "usage_limit_reached", title: "Usage limit reached" };
   }
   if (/LLM gateway not configured|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|LLM_API_KEY|LLM_PROVIDER|LLM_MODEL/i.test(message)) {
@@ -50,4 +84,14 @@ export function failureEventForMessage(message: string): {
     return { event: "planning_failed", title: "Planning failed" };
   }
   return { event: "run_failed", title: "Run failed" };
+}
+
+/** Classify from the typed error when available; fall back to the message. */
+export function failureEventForError(err: unknown): ClassifiedFailure {
+  if (err instanceof LLMProviderError) {
+    if (err.kind === "auth") return { event: "llm_config_missing", title: "Planner setup is invalid" };
+    if (err.kind === "bad_request") return { event: "planning_failed", title: "Planning failed" };
+    return LLM_UNAVAILABLE;
+  }
+  return failureEventForMessage(unwrapFailureMessage(err));
 }

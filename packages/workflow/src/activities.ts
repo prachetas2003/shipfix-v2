@@ -21,7 +21,7 @@ import {
   type Capabilities,
   type ManagedProvider,
 } from "@shipfix/validator";
-import { AdapterRegistry, type DeployFailureKind } from "@shipfix/adapter-core";
+import { AdapterRegistry, preflightProviderCredentials, type DeployFailureKind } from "@shipfix/adapter-core";
 import { createRenderAdapter } from "@shipfix/adapter-render";
 import { createVercelAdapter } from "@shipfix/adapter-vercel";
 import {
@@ -53,7 +53,7 @@ import {
 } from "@shipfix/db";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import type { LLMGateway, LLMRequest, LLMResult } from "@shipfix/llm";
-import { failureEventForMessage, unwrapFailureMessage } from "./errorMessages";
+import { failureEventForError, failureEventForMessage, unwrapFailureMessage } from "./errorMessages";
 import { llmUsageLimitMessage, workflowAlphaLimit } from "./alphaLimits";
 
 /**
@@ -163,6 +163,22 @@ async function countLlmAttemptRows(
       sql`(${llmUsage.error} is null or ${llmUsage.error} not in ('alpha_llm_limit', 'llm_run_limit', 'llm_daily_user_limit'))`,
     ));
   return Number(rows[0]?.count ?? 0);
+}
+
+/**
+ * Defer gateway construction until the first model call. Deterministic plan
+ * synthesis never touches the LLM, so a slice-matching repo can be planned even
+ * with no LLM configured (and consumes no LLM usage).
+ */
+export function lazyGateway(make: () => LLMGateway): LLMGateway {
+  let inner: LLMGateway | null = null;
+  const get = (): LLMGateway => (inner ??= make());
+  return {
+    get model() {
+      return get().model;
+    },
+    complete: (req) => get().complete(req),
+  };
 }
 
 export function meteredGateway(
@@ -502,18 +518,24 @@ export async function proposePlan(runId: string, ctx: RepoContext): Promise<Depl
 
   let result: Awaited<ReturnType<typeof runPlanner>>;
   try {
-    // Throws a clear, actionable error if backend-owned LLM env vars are
-    // unset. We never fall back to a mock planner.
-    const gateway = meteredGateway(createLLMGateway(), db, {
-      userId: run.userId,
-      projectId: run.projectId,
-      runId,
-      operation: "plan",
-    });
+    // Lazy: repos planned deterministically never touch the model, so they
+    // must not require LLM config or consume LLM usage. The LLM path still
+    // throws a clear, actionable error if backend-owned env vars are unset —
+    // we never fall back to a mock planner.
+    const gateway = lazyGateway(() =>
+      meteredGateway(createLLMGateway(), db, {
+        userId: run.userId,
+        projectId: run.projectId,
+        runId,
+        operation: "plan",
+      }),
+    );
     result = await runPlanner(ctx, gateway);
   } catch (err) {
     const message = unwrapFailureMessage(err);
-    const failure = failureEventForMessage(message);
+    // Classify from the typed error first: a provider 429/503 must surface as
+    // "AI planner temporarily unavailable", never as a ShipFix usage limit.
+    const failure = failureEventForError(err);
     await logger.error(failure.title, {
       event: failure.event,
       operation: "plan",
@@ -528,6 +550,7 @@ export async function proposePlan(runId: string, ctx: RepoContext): Promise<Depl
       event: "plan_generated",
       model: result.model,
       usedFallback: result.usedFallback,
+      planSource: result.planSource,
       proposedClassification: result.plan.classification,
       serviceCount: result.plan.services.length,
       managedCount: result.plan.managed.length,
@@ -620,7 +643,48 @@ export async function gateDeploy(runId: string): Promise<{ allow: boolean }> {
     await logger.stage("diagnosed", message);
     return { allow: false };
   }
-  if (gate.allow) return { allow: true };
+
+  // Credential preflight: prove every required provider token is still
+  // accepted BEFORE any resource is created. A revoked token fails here in
+  // seconds as a clear setup blocker, not after a ten-minute deploy attempt.
+  if (gate.allow) {
+    const { run } = await loadRun(db, runId);
+    const requiredProviders = new Set<string>([
+      ...plan.services.map((s) => s.provider),
+      ...plan.managed.filter((m) => m.mode === "provision" && m.provider).map((m) => m.provider!),
+    ]);
+    const accounts = await db
+      .select()
+      .from(providerAccounts)
+      .where(eq(providerAccounts.userId, run.userId));
+    const accountByProvider = new Map(accounts.map((a) => [a.provider, a]));
+    const vault = getVault();
+
+    for (const provider of requiredProviders) {
+      const account = accountByProvider.get(provider);
+      if (!account) continue; // missing connection is reported by the deploy steps
+      const values = await decryptProviderCredentials(vault, account);
+      const preflight = await preflightProviderCredentials(provider, values);
+      if (!preflight.ok) {
+        const message =
+          preflight.message ??
+          `The connected ${provider} credential was rejected. Reconnect the account and rerun deploy.`;
+        await logger.error(message, {
+          event: "deploy_setup_blocker",
+          provider,
+          failureKind: "setup_blocker",
+          code: "credential_rejected",
+        });
+        await setStatus(db, runId, "diagnosed", true);
+        await logger.stage(
+          "diagnosed",
+          `Deploy not started — the ${provider} credential was rejected. Reconnect the account and rerun deploy.`,
+        );
+        return { allow: false };
+      }
+    }
+    return { allow: true };
+  }
 
   await logger.warn(gate.message, {
     event: "deploy_blocked",
@@ -965,8 +1029,9 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
 }
 
 /**
- * Deploy frontend_static services to Vercel. Runs after backend deploy so
- * generated_from_service refs resolve from deployed_resources.url.
+ * Deploy frontend services (static and Next.js SSR) to Vercel. Runs after
+ * backend deploy so generated_from_service refs resolve from
+ * deployed_resources.url.
  */
 export async function deployFrontendServices(runId: string): Promise<DeploySummary> {
   const db = getDb();
@@ -978,10 +1043,10 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
 
   const summary: DeploySummary = { deployed: [], failed: [], skipped: [] };
   const frontendTargets = plan.services.filter(
-    (s) => s.type === "frontend_static" && s.provider === "vercel",
+    (s) => (s.type === "frontend_static" || s.type === "frontend_ssr") && s.provider === "vercel",
   );
   if (frontendTargets.length === 0) {
-    await logger.log("No Vercel frontend_static services in plan.", { event: "deploy_skipped" });
+    await logger.log("No Vercel frontend services in plan.", { event: "deploy_skipped" });
     return summary;
   }
 
@@ -1010,7 +1075,7 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
 
   for (const svc of frontendTargets) {
     const types = caps.providers.get("vercel");
-    if (!types?.has("frontend_static")) {
+    if (!types?.has(svc.type)) {
       summary.skipped.push({ id: svc.id, reason: "capability_missing" });
       continue;
     }
@@ -1174,16 +1239,21 @@ export async function verifyDeployedPlan(runId: string): Promise<PlanVerifySumma
       });
       continue;
     }
+    // On fallback substitution the passing probe is the last result, not the
+    // first — report the URL/status that actually proved (or disproved) health.
+    const decisive = o.results.find((r) => r.ok) ?? primary;
     await logger.log(
-      `"${o.serviceId}" ${o.check}: ${o.ok ? "passed" : "failed"} (${primary?.detail ?? "unknown"})`,
+      `"${o.serviceId}" ${o.check}: ${o.ok ? "passed" : "failed"} (${decisive?.detail ?? "unknown"})`,
       {
         event: "verification",
         check: o.check,
         serviceId: o.serviceId,
         ok: o.ok,
-        statusCode: primary?.statusCode ?? null,
-        url: primary?.url ?? null,
+        statusCode: decisive?.statusCode ?? null,
+        url: decisive?.url ?? null,
         assumedPath: o.assumedPath ?? false,
+        substitutedPath: o.substitutedPath ?? null,
+        probedPaths: o.results.length > 1 ? o.results.map((r) => r.url) : undefined,
       },
     );
     if (o.ok) summary.passed.push({ serviceId: o.serviceId, check: o.check });

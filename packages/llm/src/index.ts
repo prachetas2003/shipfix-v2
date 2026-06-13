@@ -11,10 +11,58 @@
 import { redact } from "@shipfix/secrets";
 import type { LLMGateway } from "./types";
 import { createAnthropicGateway, createGeminiGateway, createOpenAIGateway } from "./providers";
+import { isRetryableLLMError } from "./errors";
 
 export type { LLMGateway, LLMRequest, LLMResult, LLMUsage } from "./types";
 export { extractJsonBlock, parseStructured, type ParseResult } from "./json";
 export { createAnthropicGateway, createGeminiGateway, createOpenAIGateway } from "./providers";
+export {
+  LLMProviderError,
+  isRetryableLLMError,
+  llmKindFromMessage,
+  llmKindFromStatus,
+  type LLMErrorKind,
+} from "./errors";
+
+export interface RetryOptions {
+  /** Total attempts including the first (default 3). */
+  maxAttempts?: number;
+  /** Base backoff in ms; grows exponentially with jitter (default 500). */
+  baseDelayMs?: number;
+  /** Injectable sleep for tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Wrap a gateway with bounded retry on transient provider failures
+ * (rate limits, 5xx, timeouts). Auth/config/prompt errors fail immediately.
+ */
+export function retryingGateway(inner: LLMGateway, opts: RetryOptions = {}): LLMGateway {
+  const maxAttempts = opts.maxAttempts ?? 3;
+  const baseDelayMs = opts.baseDelayMs ?? 500;
+  const sleep = opts.sleep ?? defaultSleep;
+  return {
+    model: inner.model,
+    async complete(req) {
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (attempt > 0) {
+          const backoff = baseDelayMs * 2 ** (attempt - 1);
+          await sleep(backoff + Math.floor(Math.random() * backoff * 0.5));
+        }
+        try {
+          return await inner.complete(req);
+        } catch (err) {
+          lastErr = err;
+          if (!isRetryableLLMError(err)) throw err;
+        }
+      }
+      throw lastErr;
+    },
+  };
+}
 
 /**
  * Wrap any gateway so every outbound prompt is redacted. This is the wall that
@@ -86,5 +134,7 @@ export function createLLMGateway(): LLMGateway {
     inner = createGeminiGateway({ apiKey, model });
   }
 
-  return redactingGateway(inner);
+  // Transient model failures (429/5xx/timeouts) retry with backoff before
+  // surfacing; one flaky provider response must not fail a whole run.
+  return redactingGateway(retryingGateway(inner));
 }

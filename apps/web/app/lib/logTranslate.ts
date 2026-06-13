@@ -50,6 +50,13 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
           "You've reached the alpha usage limit. Try again later, or raise the local alpha limits while testing.",
         tone: "warn",
       };
+    case "llm_unavailable":
+      return {
+        title: "AI planner temporarily unavailable",
+        detail:
+          "The AI model behind the planner is briefly overloaded or unreachable. This is not a usage limit — wait a minute and retry the run.",
+        tone: "warn",
+      };
     case "llm_config_missing":
       return {
         title: "Planner setup is missing",
@@ -60,14 +67,73 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
     case "planning_failed":
       return {
         title: "Planning failed",
-        detail: str(d.message) ?? "ShipFix could not generate a deployment plan. Open technical details for the planner error.",
+        detail:
+          "ShipFix could not generate a deployment plan for this repo. Open technical details for the planner error, then try again.",
         tone: "error",
       };
-    case "run_failed":
+    case "run_failed": {
+      const message = str(d.message) ?? "";
+      if (/git clone failed/i.test(message)) {
+        return {
+          title: "Could not fetch this repository",
+          detail:
+            "This repo looks private or does not exist. ShipFix supports public GitHub repos right now — check the name, or make the repo public and try again.",
+          tone: "error",
+        };
+      }
       return {
         title: "Run failed",
-        detail: str(d.message) ?? "The run stopped before it could finish.",
+        detail: "The run stopped before it could finish. Open technical details for the underlying error.",
         tone: "error",
+      };
+    }
+    case "repo_clone_started":
+      return {
+        title: "Fetching repository",
+        detail: "ShipFix is downloading the repo to analyze it. Nothing is executed from the repo.",
+        tone: "progress",
+      };
+    case "repo_clone_completed":
+      return { title: "Repository fetched", detail: "The repo was downloaded and pinned to a commit.", tone: "success" };
+    case "service_detected": {
+      const svc = (d.service ?? {}) as Record<string, unknown>;
+      const svcRole = str(svc.role) ?? "service";
+      const framework = str(svc.framework) ?? "unknown framework";
+      const root = str(svc.rootDir) || "repo root";
+      return {
+        title: `Found a ${svcRole === "unknown" ? "" : `${svcRole} `}service: ${framework}`,
+        detail: `Located at ${root}. ShipFix will plan around the services it actually found.`,
+        tone: "info",
+      };
+    }
+    case "env_refs_detected": {
+      const refs = Array.isArray(d.envRefs) ? d.envRefs.length : null;
+      return {
+        title: "Environment variables detected",
+        detail:
+          refs === 0
+            ? "No environment variables are referenced by the code."
+            : `The code references ${refs ?? "some"} environment variable(s). ShipFix wires what it can and asks for the rest — values are never sent to the AI model.`,
+        tone: "info",
+      };
+    }
+    case "plan_generated": {
+      const source = str(d.planSource);
+      return {
+        title: "Deployment plan proposed",
+        detail:
+          source === "deterministic"
+            ? "This repo fits the supported stack, so the plan was built directly from repo evidence — no AI guesswork involved."
+            : "The AI planner proposed a plan from the repo evidence. ShipFix validates every claim before anything deploys.",
+        tone: "info",
+      };
+    }
+    case "plan_downgraded":
+      return {
+        title: "Plan adjusted after validation",
+        detail:
+          "Validation found items the plan can't safely auto-deploy yet, so the run delivers a diagnosis/setup list instead of guessing.",
+        tone: "warn",
       };
     case "analysis_completed":
       return { title: "Repository analyzed", detail: "ShipFix detected the app structure and deployment signals.", tone: "success" };
@@ -211,11 +277,23 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
       const skipped = Boolean(d.skipped);
       const code = typeof d.statusCode === "number" ? ` (HTTP ${d.statusCode})` : "";
       if (skipped) {
+        if (check === "db_connect") {
+          return {
+            title: "Database connection check",
+            detail: "Database reachability was already proven when the database was provisioned (SELECT 1 succeeded).",
+            tone: "info",
+          };
+        }
         return { title: `Check skipped: ${friendlyCheck(check)}`, detail: "Not enough was live to run this check.", tone: "info" };
       }
+      const substituted = str(d.substitutedPath);
       return {
         title: `${friendlyCheck(check)} ${ok ? "passed" : "failed"}${code}`,
-        detail: ok ? verificationSuccessDetail(check) : "ShipFix could not prove this part is live. Open technical details for the failed check.",
+        detail: ok
+          ? substituted
+            ? `The planned health path did not respond, but the backend answered at ${substituted} (a route detected in the repo). Consider adding a dedicated /health route.`
+            : verificationSuccessDetail(check)
+          : "ShipFix could not prove this part is live. Open technical details for the failed check.",
         tone: ok ? "success" : "error",
         url: str(d.url),
       };

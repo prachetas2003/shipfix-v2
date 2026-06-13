@@ -119,7 +119,7 @@ export function computeFinalizeDeployOutcome(
   const backendIds = planServiceIds(plan, (s) => s.type === "node_api" && s.provider === "render");
   const frontendIds = planServiceIds(
     plan,
-    (s) => s.type === "frontend_static" && s.provider === "vercel",
+    (s) => (s.type === "frontend_static" || s.type === "frontend_ssr") && s.provider === "vercel",
   );
   const managedIds = plan.managed.filter((m) => m.mode === "provision").map((m) => m.id);
   const hasFullStackPlan = backendIds.length > 0 && frontendIds.length > 0;

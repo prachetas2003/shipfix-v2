@@ -69,6 +69,13 @@ export const PlanService = z.object({
   outputDir: z.string().nullable(),
   /** Backends only. */
   healthCheckPath: z.string().nullable(),
+  /**
+   * Backends only: every grounded GET route path detected in the repo, best
+   * candidate first. The verifier may probe these as fallbacks when the
+   * primary healthCheckPath does not respond 2xx. Never invented paths.
+   * Optional because plans persisted before this field exist without it.
+   */
+  healthCandidates: z.array(z.string()).optional(),
   env: z.array(EnvVar).default([]),
   evidence: z.array(z.string()).default([]),
 });
@@ -143,6 +150,14 @@ export const PlanClassification = z.enum([
 ]);
 export type PlanClassification = z.infer<typeof PlanClassification>;
 
+/**
+ * Where the plan came from. Repos fully inside the supported slice are planned
+ * deterministically (reproducible, no model in the loop); everything else is
+ * proposed by the LLM and disposed by the validator.
+ */
+export const PlanSource = z.enum(["deterministic", "llm", "llm_fallback"]);
+export type PlanSource = z.infer<typeof PlanSource>;
+
 export const DeploymentPlan = z.object({
   goal: z.string(),
   classification: PlanClassification,
@@ -155,5 +170,7 @@ export const DeploymentPlan = z.object({
   blockers: z.array(Blocker).default([]),
   verification: z.array(VerificationCheck).default([]),
   confidence: z.number().min(0).max(1),
+  /** Set by the planner pipeline, never by the model itself. */
+  planSource: PlanSource.optional(),
 });
 export type DeploymentPlan = z.infer<typeof DeploymentPlan>;

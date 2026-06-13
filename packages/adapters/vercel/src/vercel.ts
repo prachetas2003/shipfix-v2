@@ -320,20 +320,20 @@ export function createVercelAdapter(options: VercelOptions = {}): ProviderAdapte
 
   return {
     id: "vercel",
-    supports: ["frontend_static"],
+    supports: ["frontend_static", "frontend_ssr"],
 
     requiredCredentials() {
       return { provider: "vercel", required: ["apiToken"], optional: ["teamId"] };
     },
 
     async deploy(input: DeployInput): Promise<DeployResult> {
-      if (input.service.type !== "frontend_static") {
+      if (input.service.type !== "frontend_static" && input.service.type !== "frontend_ssr") {
         return {
           ok: false,
           externalId: null,
           publicUrl: null,
           status: "deploy_failed",
-          logs: `Vercel adapter only supports frontend_static, not "${input.service.type}".`,
+          logs: `Vercel adapter only supports frontend_static/frontend_ssr, not "${input.service.type}".`,
         };
       }
 

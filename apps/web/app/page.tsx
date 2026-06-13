@@ -38,10 +38,10 @@ export default function DashboardPage(): React.ReactElement {
           </h1>
           <p style={{ color: colors.dim, margin: "0.55rem 0 0", fontSize: "1rem", lineHeight: 1.65, maxWidth: 720 }}>
             ShipFix analyzes a GitHub repo, plans the deployment, connects the required providers,
-            ships Vite, Node API, and Postgres services, then verifies the live system before calling it done.
+            ships Vite, Next.js, Node API, and Postgres services, then verifies the live system before calling it done.
           </p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: "1rem" }}>
-            {["Vercel frontend", "Render backend", "Neon Postgres", "Live verification"].map((item) => (
+            {["Vite + Next.js on Vercel", "Node API on Render", "Neon Postgres", "Live verification"].map((item) => (
               <span
                 key={item}
                 style={{

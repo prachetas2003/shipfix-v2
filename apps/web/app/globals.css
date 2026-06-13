@@ -1,0 +1,150 @@
+/* ShipFix global polish. Component layout lives in inline styles; this file
+   adds the interactive layer inline styles cannot express (hover, focus,
+   scrollbars, selection) plus subtle depth on the page background. */
+
+:root {
+  color-scheme: dark;
+  --sf-accent: #0ea5e9;
+  --sf-ring: rgba(14, 165, 233, 0.35);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  min-height: 100vh;
+  background-color: #08090b;
+  background-image:
+    radial-gradient(1100px 480px at 18% -8%, rgba(14, 165, 233, 0.08), transparent 60%),
+    radial-gradient(900px 420px at 92% -12%, rgba(52, 211, 153, 0.05), transparent 55%);
+  background-repeat: no-repeat;
+}
+
+::selection {
+  background: rgba(14, 165, 233, 0.32);
+  color: #f3f6fb;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+button {
+  font: inherit;
+  transition:
+    filter 130ms ease,
+    transform 130ms ease,
+    box-shadow 130ms ease,
+    opacity 130ms ease;
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+  filter: brightness(0.96);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--sf-ring) !important;
+}
+
+/* ── Inputs ───────────────────────────────────────────────────────────────── */
+input,
+textarea,
+select {
+  font: inherit;
+  transition: border-color 130ms ease, box-shadow 130ms ease;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--sf-accent) !important;
+  box-shadow: 0 0 0 3px var(--sf-ring);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #5f6877;
+}
+
+/* ── Links and small interactive details ──────────────────────────────────── */
+a {
+  transition: color 130ms ease, opacity 130ms ease;
+}
+
+a:hover {
+  opacity: 0.92;
+}
+
+summary {
+  cursor: pointer;
+  transition: color 130ms ease;
+}
+
+summary:hover {
+  color: #f3f6fb;
+}
+
+@keyframes sf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Cards fade in gently as lists load ───────────────────────────────────── */
+@keyframes sf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+article {
+  animation: sf-rise 240ms ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Scrollbars ───────────────────────────────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2c3440 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #2c3440;
+  border-radius: 999px;
+  border: 2px solid #08090b;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #3a4350;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

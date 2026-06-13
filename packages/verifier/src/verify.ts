@@ -211,7 +211,49 @@ export interface PlanVerifyOutcome {
   skipped?: boolean;
   skipReason?: string;
   assumedPath?: boolean;
+  /** Set when the planned path failed but a grounded fallback candidate passed. */
+  substitutedPath?: string;
   results: HttpVerifyResult[];
+}
+
+/** Bound fallback probing so a dead backend doesn't stall verification. */
+const MAX_HEALTH_FALLBACKS = 3;
+
+const normPath = (p: string): string => {
+  const t = p.trim();
+  const lead = t.startsWith("/") ? t : `/${t}`;
+  return lead.replace(/\/+$/, "") || "/";
+};
+
+/**
+ * Probe the planned health path; on a non-2xx, try the remaining grounded
+ * candidates (analyzer route evidence carried on the plan) once each. Never
+ * invents paths and never fakes success — every probe is recorded.
+ */
+async function probeHealthWithFallback(
+  baseUrl: string,
+  primaryPath: string,
+  candidates: string[],
+  opts: HttpVerifyOptions,
+  meta: { assumedPath?: boolean },
+): Promise<{ ok: boolean; results: HttpVerifyResult[]; substitutedPath?: string }> {
+  const primary = await verifyHttpHealth(baseUrl, primaryPath, opts, meta);
+  const results = [primary];
+  if (primary.ok) return { ok: true, results };
+
+  const fallbacks = [...new Set(candidates.map(normPath))]
+    .filter((p) => p !== normPath(primaryPath))
+    .slice(0, MAX_HEALTH_FALLBACKS);
+
+  for (const path of fallbacks) {
+    const probe = await verifyHttpHealth(baseUrl, path, opts, {});
+    results.push(probe);
+    if (probe.ok) {
+      probe.detail = `Planned path ${normPath(primaryPath)} failed (${primary.detail}); grounded fallback ${path} responded ${probe.detail}`;
+      return { ok: true, results, substitutedPath: path };
+    }
+  }
+  return { ok: false, results };
 }
 
 function pathIsUnverified(plan: DeploymentPlan, serviceId: string, path: string | null): boolean {
@@ -244,6 +286,8 @@ export async function verifyFromPlan(
 ): Promise<PlanVerifyOutcome[]> {
   const byId = new Map(resources.map((r) => [r.serviceId, r.publicUrl]));
   const outcomes: PlanVerifyOutcome[] = [];
+  // When a health probe passes on a fallback path, later checks (CORS) reuse it.
+  const effectiveHealthPath = new Map<string, string>();
 
   for (const check of plan.verification) {
     if (check.check === "db_connect") {
@@ -312,7 +356,7 @@ export async function verifyFromPlan(
       }
       const svc = plan.services.find((s) => s.id === check.serviceId);
       let resolved = resolveHealthPath(plan, check.serviceId, svc?.healthCheckPath ?? null);
-      const corsPath = resolved.path;
+      const corsPath = effectiveHealthPath.get(check.serviceId) ?? resolved.path;
       if (!corsPath) {
         outcomes.push({
           serviceId: check.serviceId,
@@ -366,15 +410,23 @@ export async function verifyFromPlan(
         continue;
       }
       resolved = markAssumedIfNeeded(resolved, pathIsUnverified(plan, check.serviceId, healthPath));
-      const result = await verifyHttpHealth(url, healthPath, opts, {
-        assumedPath: resolved.assumed,
-      });
+      const probe = await probeHealthWithFallback(
+        url,
+        healthPath,
+        svc?.healthCandidates ?? [],
+        opts,
+        { assumedPath: resolved.assumed },
+      );
+      if (probe.ok) {
+        effectiveHealthPath.set(check.serviceId, probe.substitutedPath ?? healthPath);
+      }
       outcomes.push({
         serviceId: check.serviceId,
         check: check.check,
-        ok: result.ok,
+        ok: probe.ok,
         assumedPath: resolved.assumed,
-        results: [{ ...result, check: check.check }],
+        substitutedPath: probe.substitutedPath,
+        results: probe.results.map((r) => ({ ...r, check: check.check })),
       });
       continue;
     }

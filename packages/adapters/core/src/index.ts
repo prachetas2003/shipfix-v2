@@ -105,3 +105,5 @@ export class AdapterRegistry {
 }
 
 // Concrete adapters: @shipfix/adapter-render (node_api), @shipfix/adapter-vercel (frontend_static).
+
+export { preflightProviderCredentials, type PreflightResult } from "./preflight";

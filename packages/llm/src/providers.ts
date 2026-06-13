@@ -1,4 +1,5 @@
 import { redact } from "@shipfix/secrets";
+import { LLMProviderError, llmKindFromStatus } from "./errors";
 import type { LLMGateway, LLMRequest, LLMResult } from "./types";
 
 interface ProviderConfig {
@@ -6,10 +7,33 @@ interface ProviderConfig {
   model: string;
 }
 
+const DEFAULT_LLM_HTTP_TIMEOUT_MS = 120_000;
+
 async function failBody(res: Response): Promise<never> {
   const body = await res.text().catch(() => "");
   // Redact in case a provider echoes a key back in an error payload.
-  throw new Error(`LLM provider HTTP ${res.status}: ${redact(body).slice(0, 500)}`);
+  throw new LLMProviderError({
+    kind: llmKindFromStatus(res.status),
+    status: res.status,
+    detail: redact(body).slice(0, 500),
+  });
+}
+
+/** fetch with an abort timeout; network/abort failures become typed errors. */
+async function llmFetch(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_LLM_HTTP_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new LLMProviderError({ kind: "timeout", detail: `no response within ${DEFAULT_LLM_HTTP_TIMEOUT_MS}ms` });
+    }
+    const detail = err instanceof Error ? redact(err.message).slice(0, 300) : "network error";
+    throw new LLMProviderError({ kind: "unavailable", detail });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 interface AnthropicResponse {
@@ -27,7 +51,7 @@ export function createOpenAIGateway({ apiKey, model }: ProviderConfig): LLMGatew
   return {
     model,
     async complete(req: LLMRequest): Promise<LLMResult> {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      const res = await llmFetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -63,7 +87,7 @@ export function createAnthropicGateway({ apiKey, model }: ProviderConfig): LLMGa
   return {
     model,
     async complete(req: LLMRequest): Promise<LLMResult> {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await llmFetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -104,7 +128,7 @@ export function createGeminiGateway({ apiKey, model }: ProviderConfig): LLMGatew
     model,
     async complete(req: LLMRequest): Promise<LLMResult> {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-      const res = await fetch(url, {
+      const res = await llmFetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

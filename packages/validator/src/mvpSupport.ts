@@ -11,7 +11,7 @@ import type { ManagedProvider } from "./capabilities";
  */
 export const MVP_SERVICE_SUPPORT: Readonly<Record<string, ReadonlyArray<ServiceType>>> = {
   render: ["node_api"],
-  vercel: ["frontend_static"],
+  vercel: ["frontend_static", "frontend_ssr"],
 };
 
 export const MVP_MANAGED_SUPPORT: Readonly<Record<string, ReadonlyArray<ManagedKind>>> = {
@@ -30,4 +30,4 @@ export function isManagedSupported(provider: ManagedProvider, kind: ManagedKind)
 
 /** Short human-readable description of the MVP-supported slice (for UI/copy). */
 export const MVP_SUPPORT_SUMMARY =
-  "Vite/static frontends on Vercel, Node APIs on Render, and Postgres on Neon.";
+  "Vite/static and Next.js frontends on Vercel, Node APIs on Render, and Postgres on Neon.";

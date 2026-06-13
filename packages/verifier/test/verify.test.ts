@@ -105,6 +105,104 @@ describe("verifyFromPlan", () => {
   });
 });
 
+describe("verifyFromPlan health fallback probing", () => {
+  const planWithCandidates: DeploymentPlan = {
+    goal: "x",
+    classification: "deployable",
+    services: [
+      {
+        id: "api",
+        type: "node_api",
+        provider: "render",
+        rootDir: "server",
+        install: "npm install",
+        build: null,
+        start: "npm run start",
+        outputDir: null,
+        healthCheckPath: "/health",
+        healthCandidates: ["/health", "/api/health", "/todos"],
+        env: [],
+        evidence: [],
+      },
+    ],
+    managed: [],
+    wiring: [],
+    deployOrder: ["api"],
+    questions: [],
+    blockers: [],
+    verification: [
+      { serviceId: "api", check: "health_path", target: "/health" },
+      { serviceId: "api", check: "cors_from", target: "web" },
+    ],
+    confidence: 1,
+  };
+
+  it("passes via a grounded fallback when the planned path 404s, and records the substitution", async () => {
+    const hits: string[] = [];
+    const fakeFetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      hits.push(u);
+      if (u.endsWith("/api/health")) {
+        return new Response("ok", {
+          status: 200,
+          headers: { "access-control-allow-origin": "*" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const outcomes = await verifyFromPlan(
+      planWithCandidates,
+      [
+        { serviceId: "api", publicUrl: "https://api.onrender.com" },
+        { serviceId: "web", publicUrl: "https://app.vercel.app" },
+      ],
+      { fetchImpl: fakeFetch },
+    );
+
+    const health = outcomes.find((o) => o.check === "health_path");
+    expect(health?.ok).toBe(true);
+    expect(health?.substitutedPath).toBe("/api/health");
+    expect(health?.results.length).toBe(2); // planned 404 + fallback 200, both recorded
+
+    // CORS probe must reuse the path that actually responded.
+    const cors = outcomes.find((o) => o.check === "cors_from");
+    expect(cors?.ok).toBe(true);
+    expect(hits.some((u) => u.endsWith("/api/health"))).toBe(true);
+  });
+
+  it("fails honestly when no grounded candidate responds 2xx", async () => {
+    const fakeFetch = (async () => new Response("nope", { status: 404 })) as unknown as typeof fetch;
+    const outcomes = await verifyFromPlan(
+      planWithCandidates,
+      [{ serviceId: "api", publicUrl: "https://api.onrender.com" }],
+      { fetchImpl: fakeFetch },
+    );
+    const health = outcomes.find((o) => o.check === "health_path");
+    expect(health?.ok).toBe(false);
+    expect(health?.substitutedPath).toBeUndefined();
+    // planned path + 2 distinct fallbacks all recorded
+    expect(health?.results.length).toBe(3);
+  });
+
+  it("never probes paths that are not grounded candidates", async () => {
+    const hits: string[] = [];
+    const fakeFetch = (async (url: string | URL | Request) => {
+      hits.push(String(url));
+      return new Response("nope", { status: 404 });
+    }) as unknown as typeof fetch;
+    await verifyFromPlan(
+      planWithCandidates,
+      [{ serviceId: "api", publicUrl: "https://api.onrender.com" }],
+      { fetchImpl: fakeFetch },
+    );
+    const probed = hits.map((u) => new URL(u).pathname);
+    for (const p of probed) {
+      expect(["/health", "/api/health", "/todos"]).toContain(p);
+    }
+  });
+});
+
 describe("resolveHealthPath", () => {
   const plan: DeploymentPlan = {
     goal: "x",

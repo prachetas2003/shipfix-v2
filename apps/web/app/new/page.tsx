@@ -20,15 +20,20 @@ const STEPS = ["Repository", "Plan", "Connect", "Deploy", "Result"];
 function planFailureMessage(events: RunEventRow[]): string {
   const lastFailure = [...events].reverse().find((ev) => {
     const event = typeof ev.data?.event === "string" ? ev.data.event : "";
-    return ["usage_limit_reached", "llm_config_missing", "planning_failed", "run_failed"].includes(event);
+    return ["usage_limit_reached", "llm_unavailable", "llm_config_missing", "planning_failed", "run_failed"].includes(event);
   });
   const event = typeof lastFailure?.data?.event === "string" ? lastFailure.data.event : "";
   const message = typeof lastFailure?.data?.message === "string" ? lastFailure.data.message : "";
   if (event === "usage_limit_reached") return message || "Usage limit reached. Try again later, or raise local alpha limits while testing.";
+  if (event === "llm_unavailable") {
+    return "The AI planner is temporarily unavailable (the model provider is overloaded or unreachable). This is not a usage limit — wait a minute and analyze again.";
+  }
   if (event === "llm_config_missing") {
     return message || "Planner setup is missing. Add backend-only LLM env vars to the worker, restart the worker, then try again.";
   }
-  return message || "ShipFix could not produce a plan for this repo. Check the timeline details and try again.";
+  // Raw planner/worker errors stay in the technical timeline details; this
+  // banner stays user-readable.
+  return "ShipFix could not produce a plan for this repo. Open the timeline details below for the technical error, then try again.";
 }
 
 export default function NewDeploymentPage(): React.ReactElement {
@@ -106,8 +111,15 @@ export default function NewDeploymentPage(): React.ReactElement {
   const missing = missingProviders(required, connected);
   const classification = capturedPlan?.classification;
   const allConnected = missing.length === 0;
-  const canDeploy = allConnected;
+  // Mirror the server's deploy gate: only GREEN plans can deploy. Offering the
+  // button on YELLOW/RED plans would just produce a "diagnosed" run.
+  const canDeploy = allConnected && classification === "deployable";
   const showRecheck = allConnected && classification !== "deployable";
+  const deployDisabledReason = !allConnected
+    ? "Connect the required providers first"
+    : classification !== "deployable"
+      ? "The plan is not deployable yet — resolve the setup items and re-check"
+      : "Provision, deploy, and verify";
 
   return (
     <main style={{ maxWidth: 980, margin: "0 auto", padding: "2.5rem 1.5rem 6rem" }}>
@@ -138,7 +150,7 @@ export default function NewDeploymentPage(): React.ReactElement {
         <section style={{ ...card, padding: "1.2rem" }}>
           <h2 style={{ marginTop: 0, fontSize: "1.08rem" }}>Which repository do you want to deploy?</h2>
           <p style={{ color: colors.dim, fontSize: "0.92rem", lineHeight: 1.65 }}>
-            Paste a GitHub repo. ShipFix supports Vite frontends on Vercel, Node APIs on Render, and Postgres on Neon.
+            Paste a GitHub repo. ShipFix supports Vite and Next.js frontends on Vercel, Node APIs on Render, and Postgres on Neon.
             Other stacks get an honest diagnosis instead of a fake green deploy.
           </p>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: "0.75rem" }}>
@@ -191,7 +203,7 @@ export default function NewDeploymentPage(): React.ReactElement {
             <button
               onClick={() => void startDeploy()}
               disabled={!canDeploy || starting}
-              title={canDeploy ? "Provision, deploy, and verify" : "Connect the required providers first"}
+              title={deployDisabledReason}
               style={buttonStyle("success", !canDeploy || starting)}
             >
               {starting ? "Starting deploy..." : "Deploy this plan"}
@@ -211,11 +223,11 @@ export default function NewDeploymentPage(): React.ReactElement {
             </p>
           ) : classification === "diagnose_only" ? (
             <p style={{ marginTop: "0.65rem", fontSize: "0.86rem", color: colors.warn, lineHeight: 1.55 }}>
-              This app is outside the auto-deployable alpha slice. Re-check if you just connected providers; otherwise use the diagnosis as the next step.
+              Deploy is disabled: this app is outside what ShipFix can auto-deploy (Vite/Next.js frontends, Node APIs, Neon Postgres). Use the diagnosis above as the next step, or re-check if you just connected providers.
             </p>
           ) : classification === "needs_setup" ? (
             <p style={{ marginTop: "0.65rem", fontSize: "0.86rem", color: colors.warn, lineHeight: 1.55 }}>
-              This plan still has setup items. Re-check after connecting providers or resolving repo blockers. ShipFix re-validates before provider calls.
+              Deploy is disabled until the setup items above are resolved (secrets, repo fixes, or provider setup). Re-check the plan after addressing them — ShipFix re-validates before any provider call.
             </p>
           ) : null}
         </section>

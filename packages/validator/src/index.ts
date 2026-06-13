@@ -21,3 +21,9 @@ export {
   isServiceTypeSupported,
   isManagedSupported,
 } from "./mvpSupport";
+export {
+  normalizeRoutePath,
+  pathMatchesCandidate,
+  routeCandidatesForService,
+  topHealthCandidate,
+} from "./verificationGrounding";

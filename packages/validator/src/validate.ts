@@ -13,6 +13,8 @@ import { isManagedSupported, isServiceTypeSupported, MVP_SUPPORT_SUMMARY } from 
 import {
   capConfidenceForVerification,
   checkVerificationGrounding,
+  normalizeRoutePath,
+  routeCandidatesForService,
 } from "./verificationGrounding";
 
 export interface ValidationResult {
@@ -157,11 +159,15 @@ export function validatePlan(
     checkCommand(svc, svc.install, "install", scriptsByRoot, add);
     checkCommand(svc, svc.build, "build", scriptsByRoot, add);
     checkCommand(svc, svc.start, "start", scriptsByRoot, add);
-    if (svc.type === "frontend_static" && !svc.build && !hasScript(ctx, svc.rootDir, "build")) {
+    if (
+      (svc.type === "frontend_static" || svc.type === "frontend_ssr") &&
+      !svc.build &&
+      !hasScript(ctx, svc.rootDir, "build")
+    ) {
       add({
         code: "frontend_build_missing",
         severity: "fatal",
-        message: `Frontend "${svc.id}" has no grounded build script. ShipFix needs a reproducible static build before it can deploy to Vercel.`,
+        message: `Frontend "${svc.id}" has no grounded build script. ShipFix needs a reproducible build before it can deploy to Vercel.`,
         path: `services.${svc.id}.build`,
       });
     }
@@ -191,18 +197,19 @@ export function validatePlan(
         message: `Detected a Docker-based service at "${signal.rootDir || "/"}". ShipFix does not auto-deploy Docker-only or docker-compose apps in this MVP.`,
         path: `repo.services.${signal.rootDir || "/"}`,
       });
-    } else if (signal.framework === "next" || signal.role === "fullstack") {
+    } else if (signal.role === "fullstack" && signal.framework !== "next") {
+      // Next.js on Vercel is in the supported slice; other SSR frameworks are not.
       add({
         code: "repo_ssr_unsupported",
         severity: "fatal",
-        message: `Detected ${signal.framework} / SSR-style app at "${signal.rootDir || "/"}". ShipFix does not auto-deploy Next.js/SSR apps in this MVP.`,
+        message: `Detected ${signal.framework} / SSR-style app at "${signal.rootDir || "/"}". ShipFix auto-deploys Next.js on Vercel, but does not auto-deploy ${signal.framework} apps in this MVP.`,
         path: `repo.services.${signal.rootDir || "/"}`,
       });
     } else if (signal.role === "unknown") {
       add({
         code: "repo_unknown_framework",
         severity: "fatal",
-        message: `ShipFix could not identify a supported app framework at "${signal.rootDir || "/"}". Supported alpha path is Vite/static frontend plus Express/Fastify/Node API.`,
+        message: `ShipFix could not identify a supported app framework at "${signal.rootDir || "/"}". Supported path is a Vite/static or Next.js frontend plus an Express/Fastify/Node API.`,
         path: `repo.services.${signal.rootDir || "/"}`,
       });
     }
@@ -412,8 +419,25 @@ export function validatePlan(
     issues,
   );
 
+  // Persist every grounded GET route as a health fallback candidate so the
+  // verifier can probe alternatives instead of failing hard on a single 404.
+  // Candidates come only from analyzer evidence — never invented.
+  const servicesWithCandidates = plan.services.map((svc) => {
+    if (svc.type !== "node_api" && svc.type !== "python_api" && svc.type !== "frontend_ssr") {
+      return svc;
+    }
+    // Plans built outside Zod parsing may omit the defaulted array.
+    if ((svc.healthCandidates ?? []).length > 0) return svc;
+    const grounded = routeCandidatesForService(ctx, svc.rootDir)
+      .filter((c) => c.method === "GET" || c.method === "HEAD" || c.method === "ALL")
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      .map((c) => normalizeRoutePath(c.path));
+    return { ...svc, healthCandidates: [...new Set(grounded)] };
+  });
+
   const validatedPlan: DeploymentPlan = {
     ...plan,
+    services: servicesWithCandidates,
     classification,
     confidence,
     // Preserve the planner's blockers; append validation findings.

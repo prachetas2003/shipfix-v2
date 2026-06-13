@@ -105,6 +105,62 @@ function routeFilesUnderRoot(rootDir: string, files: ReadonlySet<string>): strin
   return out.slice(0, 25);
 }
 
+const NEXT_ROUTE_EXT_RE = /\.(?:[cm]?[jt]s)x?$/;
+
+/**
+ * Map a Next.js file-based API route file (relative to the service root) to its
+ * URL path. Returns null for non-route files and for dynamic segments, which
+ * cannot be probed without inventing parameter values.
+ */
+export function nextApiRoutePath(relFile: string): string | null {
+  if (!NEXT_ROUTE_EXT_RE.test(relFile)) return null;
+  const noSrc = relFile.startsWith("src/") ? relFile.slice(4) : relFile;
+
+  let segments: string[] | null = null;
+  if (noSrc.startsWith("pages/api/")) {
+    const rest = noSrc.slice("pages/".length).replace(NEXT_ROUTE_EXT_RE, "");
+    segments = rest.split("/");
+    if (segments[segments.length - 1] === "index") segments.pop();
+  } else if (noSrc.startsWith("app/")) {
+    const rest = noSrc.slice("app/".length);
+    const parts = rest.split("/");
+    const last = parts.pop();
+    if (!last || !/^route\.(?:[cm]?[jt]s)x?$/.test(last)) return null;
+    // Route groups "(group)" and parallel slots "@slot" don't appear in the URL.
+    segments = parts.filter((p) => !(p.startsWith("(") && p.endsWith(")")) && !p.startsWith("@"));
+  }
+  if (!segments) return null;
+  if (segments.some((s) => s.includes("[") || s.includes("]"))) return null;
+  return `/${segments.join("/")}` || "/";
+}
+
+/**
+ * Discover Next.js file-based API route candidates under a service root. These
+ * are `inferred` (the handler's HTTP methods are not statically proven), so the
+ * planner treats them as probe candidates, not guaranteed GET endpoints.
+ */
+export function detectNextApiRoutes(
+  rootDir: string,
+  files: ReadonlySet<string>,
+): RouteCandidate[] {
+  const routes: RouteCandidate[] = [];
+  const prefix = rootDir === "" ? "" : `${rootDir}/`;
+  for (const f of files) {
+    if (prefix && !f.startsWith(prefix)) continue;
+    const rel = f.slice(prefix.length);
+    const path = nextApiRoutePath(rel);
+    if (!path) continue;
+    routes.push({
+      method: "GET",
+      path,
+      kind: "inferred",
+      evidence: [f],
+      score: scoreRoutePath(path, "GET"),
+    });
+  }
+  return dedupeRoutes(routes);
+}
+
 /**
  * Discover HTTP route candidates for a backend service from entrypoints and
  * nearby route modules. Never executes code.

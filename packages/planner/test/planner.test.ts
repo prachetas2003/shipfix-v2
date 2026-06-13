@@ -5,6 +5,10 @@ import { capabilities, emptyCapabilities, validatePlan } from "@shipfix/validato
 import { generatePlan } from "../src/index";
 import { buildUserPrompt } from "../src/prompt";
 
+// `ctx` fits the supported slice, so deterministic synthesis would normally
+// handle it; these LLM-path tests force the model route explicitly.
+const llmOnly = { disableSynthesis: true };
+
 const ctx: RepoContext = {
   repoFullName: "acme/app",
   commitSha: "abc123",
@@ -106,7 +110,7 @@ const json = JSON.stringify(groundedPlan);
 describe("generatePlan", () => {
   it("parses a clean JSON response into a DeploymentPlan", async () => {
     const fake = createFakeGateway(json);
-    const r = await generatePlan(ctx, fake.gateway);
+    const r = await generatePlan(ctx, fake.gateway, llmOnly);
     expect(r.usedFallback).toBe(false);
     expect(r.attempts).toBe(1);
     expect(r.plan.services.map((s) => s.id)).toEqual(["web", "api"]);
@@ -114,21 +118,21 @@ describe("generatePlan", () => {
 
   it("parses a response wrapped in ```json fences", async () => {
     const fake = createFakeGateway("```json\n" + json + "\n```");
-    const r = await generatePlan(ctx, fake.gateway);
+    const r = await generatePlan(ctx, fake.gateway, llmOnly);
     expect(r.usedFallback).toBe(false);
     expect(r.plan.classification).toBe("deployable");
   });
 
   it("parses JSON embedded in prose", async () => {
     const fake = createFakeGateway("Here is the plan you asked for:\n" + json + "\nLet me know!");
-    const r = await generatePlan(ctx, fake.gateway);
+    const r = await generatePlan(ctx, fake.gateway, llmOnly);
     expect(r.usedFallback).toBe(false);
     expect(r.plan.managed[0].id).toBe("db");
   });
 
   it("sends RepoContext evidence in the user prompt (and never a secret)", async () => {
     const fake = createFakeGateway(json);
-    await generatePlan(ctx, fake.gateway);
+    await generatePlan(ctx, fake.gateway, llmOnly);
     expect(fake.calls).toHaveLength(1);
     expect(fake.calls[0].user).toContain("apps/api");
     expect(fake.calls[0].user).toContain("DATABASE_URL");
@@ -137,7 +141,7 @@ describe("generatePlan", () => {
 
   it("repairs invalid-then-valid output in a second attempt", async () => {
     const fake = createFakeGateway(["{ this is not valid json", json]);
-    const r = await generatePlan(ctx, fake.gateway);
+    const r = await generatePlan(ctx, fake.gateway, llmOnly);
     expect(r.attempts).toBe(2);
     expect(r.usedFallback).toBe(false);
     expect(r.plan.classification).toBe("deployable");
@@ -147,7 +151,7 @@ describe("generatePlan", () => {
 
   it("falls back to an honest diagnose_only plan when output never conforms", async () => {
     const fake = createFakeGateway("totally not json, sorry");
-    const r = await generatePlan(ctx, fake.gateway);
+    const r = await generatePlan(ctx, fake.gateway, llmOnly);
     expect(r.usedFallback).toBe(true);
     expect(r.plan.classification).toBe("diagnose_only");
     expect(r.plan.services).toHaveLength(0);
@@ -158,7 +162,7 @@ describe("generatePlan", () => {
   it("rejects a schema-valid plan that omits required fields (forces repair)", async () => {
     const bad = JSON.stringify({ goal: "x", classification: "deployable" });
     const fake = createFakeGateway([bad, json]);
-    const r = await generatePlan(ctx, fake.gateway);
+    const r = await generatePlan(ctx, fake.gateway, llmOnly);
     expect(r.attempts).toBe(2);
     expect(r.usedFallback).toBe(false);
   });
@@ -188,7 +192,7 @@ describe("buildUserPrompt alpha safety", () => {
 describe("planner -> validator pipeline (isolated)", () => {
   it("a grounded plan stays deployable with full capabilities", async () => {
     const fake = createFakeGateway(json);
-    const { plan } = await generatePlan(ctx, fake.gateway);
+    const { plan } = await generatePlan(ctx, fake.gateway, llmOnly);
     const caps = capabilities(
       {
         vercel: ["frontend_static", "frontend_ssr"],
@@ -203,7 +207,7 @@ describe("planner -> validator pipeline (isolated)", () => {
 
   it("the validator downgrades the same plan to needs_setup with no connected providers", async () => {
     const fake = createFakeGateway(json);
-    const { plan } = await generatePlan(ctx, fake.gateway);
+    const { plan } = await generatePlan(ctx, fake.gateway, llmOnly);
     const result = validatePlan(plan, ctx, emptyCapabilities());
     expect(result.plan.classification).toBe("needs_setup");
     expect(result.issues.some((i) => i.code === "provider_not_connected")).toBe(true);

@@ -1,15 +1,16 @@
 # ShipFix v2
 
-> Autonomous deployment engineer: give it a repo, it figures out what the app is,
-> deploys every piece to the right provider, wires them together, provisions
-> databases, verifies the live system, and — when it can't fully deploy — hands
-> back a precise diagnosis and the shortest path to "live."
+> ShipFix reliably deploys a defined class of full-stack apps — Vite/static and
+> Next.js frontends on Vercel, Node/Express APIs on Render, Neon Postgres — wires them
+> together, and verifies they are actually live before saying so. Repos outside
+> that slice get a precise, honest diagnosis (what's blocking, what to do next)
+> before any provider resource is touched.
 
-This repository is the **clean foundation (spine)** for the ambitious product.
-The spine is wired for analyze, plan, Neon provisioning, and Render backend
-deploy; frontend deploy, full-stack verification, and recovery still land on
-top. See [`docs/e2e-manual-test.md`](docs/e2e-manual-test.md) for the live E2E
-checklist and inline `TODO:` markers for remaining work.
+The supported slice is planned **deterministically** from static repo evidence
+(no model in the loop); anything else goes through an LLM proposal that a
+deterministic validator gates. ShipFix never marks an app live unless
+verification proves it. See [`docs/e2e-manual-test.md`](docs/e2e-manual-test.md)
+for the live E2E checklist.
 
 ## Architecture (spine)
 

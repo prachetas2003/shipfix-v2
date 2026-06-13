@@ -1,7 +1,7 @@
 import type { RepoSource } from "./source";
 import type { ServiceSignal, ServiceRole } from "@shipfix/contracts";
 import { detectPackageManager } from "./packageManager";
-import { detectRouteCandidates } from "./routes";
+import { detectNextApiRoutes, detectRouteCandidates } from "./routes";
 import {
   allDeps,
   baseOf,
@@ -158,6 +158,9 @@ export async function detectServices(
       verdict.role === "backend" || verdict.role === "fullstack"
         ? await detectRouteCandidates(source, rootDir, entrypointList, files)
         : [];
+    if (verdict.framework === "next") {
+      routeCandidates.push(...detectNextApiRoutes(rootDir, files));
+    }
 
     services.push({
       rootDir,

@@ -48,13 +48,14 @@ HARD RULES (violations make the plan invalid):
 
 AUTO-DEPLOYABLE SLICE (what ShipFix can actually execute today):
 - "vercel" + "frontend_static" (Vite/static frontends)
+- "vercel" + "frontend_ssr" (Next.js apps — Vercel builds and serves them)
 - "render" + "node_api" (Node/Express-style APIs)
 - managed "neon" + "postgres"
 ONLY these provider+type combinations may be classification "deployable".
 
 EVERYTHING ELSE IS DIAGNOSIS-ONLY. If the app needs anything outside the slice
-above — "frontend_ssr", "python_api", "worker", "docker_service", "railway",
-"supabase", "upstash", redis, object storage, Next.js full-stack, Docker-only
+above — "python_api", "worker", "docker_service", "railway",
+"supabase", "upstash", redis, object storage, Nuxt/Remix SSR, Docker-only
 apps, non-JS stacks — you MUST set classification "diagnose_only" and explain it
 with blockers. Do NOT propose a "deployable" plan for unsupported stacks; the
 validator will force it to RED anyway, so be honest up front. You may still
@@ -93,8 +94,8 @@ matching this DeploymentPlan schema exactly:
     "install": string|null,
     "build": string|null,
     "start": string|null,
-    "outputDir": string|null,             // static frontends only
-    "healthCheckPath": string|null,       // backends only
+    "outputDir": string|null,             // static frontends only; null for frontend_ssr (Vercel builds Next itself)
+    "healthCheckPath": string|null,       // backends; optional grounded API route for frontend_ssr
     "env": [{ "name": string, "source": "user_secret"|"generated_from_service"|"generated_from_managed"|"provider_injected"|"literal", "ref"?: string, "value"?: string }],
     "evidence": string[]                  // RepoContext file paths that justify this
   }],

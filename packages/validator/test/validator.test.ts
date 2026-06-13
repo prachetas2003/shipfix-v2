@@ -316,12 +316,19 @@ describe("validatePlan — MVP support boundary", () => {
     expect(res.plan.classification).toBe("diagnose_only");
   });
 
-  it("marks Next.js/SSR repo evidence RED", () => {
+  it("marks non-Next SSR repo evidence RED", () => {
     const ctx = makeCtx();
-    ctx.services[0] = { ...ctx.services[0], framework: "next", role: "fullstack" };
+    ctx.services[0] = { ...ctx.services[0], framework: "remix", role: "fullstack" };
     const res = validatePlan(makePlan(), ctx, fullCaps);
     expect(codes(res)).toContain("repo_ssr_unsupported");
     expect(res.plan.classification).toBe("diagnose_only");
+  });
+
+  it("does NOT mark a Next.js repo unsupported (in the Vercel slice)", () => {
+    const ctx = makeCtx();
+    ctx.services[0] = { ...ctx.services[0], framework: "next", role: "fullstack" };
+    const res = validatePlan(makePlan(), ctx, fullCaps);
+    expect(codes(res)).not.toContain("repo_ssr_unsupported");
   });
 
   it("marks unknown framework repo evidence RED", () => {

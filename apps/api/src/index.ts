@@ -13,8 +13,9 @@ import {
   runEvents,
   runs,
 } from "@shipfix/db";
-import { createPostgresSink, createRunLogger } from "@shipfix/observability";
+import { createSafePostgresSink, createRunLogger } from "@shipfix/observability";
 import { reconcileStuckRuns } from "@shipfix/workflow";
+import { preflightProviderCredentials } from "@shipfix/adapter-core";
 import { createSecretVaultFromEnv } from "@shipfix/secrets";
 import { env } from "./env";
 import { requireAdmin, requireUser, type AuthenticatedUser } from "./auth";
@@ -460,7 +461,7 @@ async function startRun(
 
   // Seed the timeline immediately so the UI shows the run before the worker
   // picks it up (and so a start failure has somewhere to record itself).
-  const logger = createRunLogger(run.id, createPostgresSink(db));
+  const logger = createRunLogger(run.id, createSafePostgresSink(db));
   await logger.stage("queued", `Run queued for ${input.repoFullName}`);
 
   const workflowId = `run-${run.id}`;
@@ -556,7 +557,7 @@ async function startDeployFromExistingRun(
     .returning();
   await db.update(runs).set({ planId: copiedPlan.id }).where(eq(runs.id, run.id));
 
-  const logger = createRunLogger(run.id, createPostgresSink(db));
+  const logger = createRunLogger(run.id, createSafePostgresSink(db));
   await logger.stage("queued", `Deploy queued for ${source.repoFullName}`);
   await logger.log("Deploy will use the selected validated plan", {
     event: "deploy_from_plan",
@@ -636,10 +637,11 @@ function runRouteHandler(mode: RunMode) {
       }
       return reply.status(202).send({ runId: result.runId, repoFullName, mode });
     } catch (err) {
+      // Log the real error server-side; never leak internals to the client.
       request.log.error(err);
       return reply.status(500).send({
         error: "internal",
-        message: err instanceof Error ? err.message : String(err),
+        message: "ShipFix hit an internal error starting this run. Try again in a minute.",
       });
     }
   };
@@ -728,9 +730,21 @@ app.post("/provider-accounts", async (request, reply) => {
   try {
     vault = createSecretVaultFromEnv();
   } catch (e) {
+    request.log.error(e);
     return reply.status(500).send({
       error: "vault_unconfigured",
-      message: e instanceof Error ? e.message : String(e),
+      message: "ShipFix's secret storage is not configured on the server, so credentials cannot be saved yet.",
+    });
+  }
+
+  // Prove the token is accepted by the provider BEFORE sealing it, so a bad
+  // key fails here in seconds instead of mid-deploy. Provider outages do not
+  // block (preflight only rejects on a definite 401/403).
+  const preflight = await preflightProviderCredentials(parsed.data.provider, parsed.data.values);
+  if (!preflight.ok) {
+    return reply.status(422).send({
+      error: "credential_rejected",
+      message: preflight.message ?? "The provider rejected this credential.",
     });
   }
 
@@ -764,7 +778,10 @@ app.post("/provider-accounts", async (request, reply) => {
     return reply.status(201).send({ id: created.id, provider: parsed.data.provider });
   } catch (err) {
     request.log.error(err);
-    return reply.status(500).send({ error: "internal", message: err instanceof Error ? err.message : String(err) });
+    return reply.status(500).send({
+      error: "internal",
+      message: "ShipFix hit an internal error saving this connection. Try again in a minute.",
+    });
   }
 });
 

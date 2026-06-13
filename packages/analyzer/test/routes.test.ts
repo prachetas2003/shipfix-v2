@@ -1,7 +1,12 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
-import { extractRoutesFromSource, scoreRoutePath } from "../src/routes";
+import {
+  detectNextApiRoutes,
+  extractRoutesFromSource,
+  nextApiRoutePath,
+  scoreRoutePath,
+} from "../src/routes";
 import { analyzeRepo, createLocalFsRepoSource } from "../src/index";
 
 const FIXTURES = fileURLToPath(new URL("./fixtures", import.meta.url));
@@ -44,6 +49,50 @@ app.get("/", (_req, res) => res.send("hi"));
   it("ignores template literal paths", () => {
     const src = `app.get(\`/users/\${id}\`, handler);`;
     expect(extractRoutesFromSource(src, "x.ts")).toHaveLength(0);
+  });
+});
+
+describe("nextApiRoutePath", () => {
+  it("maps pages router API files", () => {
+    expect(nextApiRoutePath("pages/api/health.ts")).toBe("/api/health");
+    expect(nextApiRoutePath("pages/api/todos/index.ts")).toBe("/api/todos");
+    expect(nextApiRoutePath("src/pages/api/ping.js")).toBe("/api/ping");
+  });
+
+  it("maps app router route handlers", () => {
+    expect(nextApiRoutePath("app/api/health/route.ts")).toBe("/api/health");
+    expect(nextApiRoutePath("src/app/api/todos/route.js")).toBe("/api/todos");
+    expect(nextApiRoutePath("app/(admin)/api/stats/route.ts")).toBe("/api/stats");
+  });
+
+  it("rejects dynamic segments and non-route files", () => {
+    expect(nextApiRoutePath("pages/api/[id].ts")).toBeNull();
+    expect(nextApiRoutePath("app/api/users/[id]/route.ts")).toBeNull();
+    expect(nextApiRoutePath("app/page.tsx")).toBeNull();
+    expect(nextApiRoutePath("pages/index.tsx")).toBeNull();
+    expect(nextApiRoutePath("components/api/client.ts")).toBeNull();
+  });
+});
+
+describe("detectNextApiRoutes", () => {
+  it("collects routes under a service root and ranks health first", () => {
+    const files = new Set([
+      "package.json",
+      "app/api/health/route.ts",
+      "app/api/todos/route.ts",
+      "app/page.tsx",
+    ]);
+    const routes = detectNextApiRoutes("", files);
+    expect(routes.map((r) => r.path)).toEqual(["/api/health", "/api/todos"]);
+    expect(routes.every((r) => r.kind === "inferred" && r.method === "GET")).toBe(true);
+  });
+
+  it("respects a nested rootDir", () => {
+    const files = new Set(["apps/site/pages/api/health.ts", "apps/other/pages/api/x.ts"]);
+    const routes = detectNextApiRoutes("apps/site", files);
+    expect(routes).toHaveLength(1);
+    expect(routes[0]?.path).toBe("/api/health");
+    expect(routes[0]?.evidence).toEqual(["apps/site/pages/api/health.ts"]);
   });
 });
 
