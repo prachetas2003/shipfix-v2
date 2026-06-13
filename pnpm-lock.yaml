@@ -423,6 +423,9 @@ importers:
         specifier: ^0.38.2
         version: 0.38.4(@types/pg@8.20.0)(@types/react@19.2.16)(pg@8.21.0)(react@19.2.7)
     devDependencies:
+      '@temporalio/worker':
+        specifier: ^1.11.7
+        version: 1.17.2(tslib@2.8.1)
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.19

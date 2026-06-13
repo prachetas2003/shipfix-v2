@@ -13,6 +13,14 @@ export type LiveStatus =
 
 const TERMINAL = new Set(["succeeded", "diagnosed", "failed"]);
 
+/**
+ * A run that sits in "queued" with zero timeline events for this long has no
+ * worker picking it up (worker down/unreachable). Surface that honestly
+ * instead of letting the page imply work is happening.
+ */
+const QUEUED_STALL_MS = 45_000;
+const QUEUED_POLL_MS = 10_000;
+
 function normalize(status: string): LiveStatus {
   if (status === "succeeded") return "succeeded";
   if (status === "diagnosed") return "diagnosed";
@@ -32,6 +40,8 @@ export function useRun(runId: string | null): {
   repoContext: unknown;
   snapshot: RunSnapshot | null;
   error: string | null;
+  /** True when the run sits "queued" with no events — the worker is not picking it up. */
+  workerStalled: boolean;
 } {
   const [status, setStatus] = useState<LiveStatus>("loading");
   const [events, setEvents] = useState<RunEventRow[]>([]);
@@ -39,7 +49,9 @@ export function useRun(runId: string | null): {
   const [repoContext, setRepoContext] = useState<unknown>(null);
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [workerStalled, setWorkerStalled] = useState(false);
   const esRef = useRef<EventSource | null>(null);
+  const eventCountRef = useRef(0);
 
   const loadSnapshot = useCallback(async (id: string) => {
     try {
@@ -61,6 +73,28 @@ export function useRun(runId: string | null): {
     setRepoContext(null);
     setSnapshot(null);
     setError(null);
+    setWorkerStalled(false);
+    eventCountRef.current = 0;
+
+    // Worker-down watchdog: while the run is queued and silent, re-check the
+    // snapshot; past the stall window, tell the user the worker is not running.
+    const startedWatching = Date.now();
+    const stallTimer = setInterval(() => {
+      if (cancelled || eventCountRef.current > 0) {
+        clearInterval(stallTimer);
+        return;
+      }
+      void loadSnapshot(runId).then((snap) => {
+        if (cancelled || !snap) return;
+        if (snap.run.status !== "queued") {
+          if (eventCountRef.current > 0 || TERMINAL.has(snap.run.status)) clearInterval(stallTimer);
+          setWorkerStalled(false);
+          return;
+        }
+        const queuedSinceMs = Date.now() - Math.min(new Date(snap.run.startedAt).getTime(), startedWatching);
+        if (queuedSinceMs > QUEUED_STALL_MS) setWorkerStalled(true);
+      });
+    }, QUEUED_POLL_MS);
 
     void (async () => {
       const snap = await loadSnapshot(runId);
@@ -76,6 +110,8 @@ export function useRun(runId: string | null): {
 
       es.addEventListener("run_event", (e) => {
         const row = JSON.parse((e as MessageEvent).data) as RunEventRow;
+        eventCountRef.current += 1;
+        setWorkerStalled(false);
         setEvents((prev) => (prev.some((p) => p.seq === row.seq) ? prev : [...prev, row]));
         if (row.data?.event === "analysis_completed" && row.data.repoContext) {
           setRepoContext(row.data.repoContext);
@@ -106,10 +142,11 @@ export function useRun(runId: string | null): {
 
     return () => {
       cancelled = true;
+      clearInterval(stallTimer);
       esRef.current?.close();
       esRef.current = null;
     };
   }, [runId, loadSnapshot]);
 
-  return { status, events, plan, repoContext, snapshot, error };
+  return { status, events, plan, repoContext, snapshot, error, workerStalled };
 }

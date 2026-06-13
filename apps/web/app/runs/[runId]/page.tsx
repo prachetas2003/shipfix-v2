@@ -13,6 +13,7 @@ import { OutcomeBanner } from "../../components/OutcomeBanner";
 import { PlanPanel } from "../../components/PlanPanel";
 import { ProviderRequirements } from "../../components/ProviderRequirements";
 import { Timeline } from "../../components/Timeline";
+import { WorkerStalledNotice } from "../../components/WorkerStalledNotice";
 
 export default function RunPage({
   params,
@@ -133,6 +134,7 @@ export default function RunPage({
         <ProviderRequirements plan={run.plan} connected={connected} onConnected={refreshProviders} />
       )}
 
+      <WorkerStalledNotice show={run.workerStalled} />
       <OutcomeBanner status={snap?.run.status ?? run.status} snapshot={snap} />
       <FixGuidance events={run.events} />
       {run.plan && <PlanPanel plan={run.plan} />}

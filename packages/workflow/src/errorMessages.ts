@@ -1,4 +1,11 @@
-import { LLMProviderError, llmKindFromMessage } from "@shipfix/llm";
+// WORKFLOW-SAFE MODULE: this file is bundled into the Temporal workflow
+// sandbox (imported by workflows.ts). It must stay pure — no Node builtins and
+// no imports that transitively reach node:crypto, secrets, DB clients, LLM
+// runtime code, or provider adapters. `@shipfix/llm/errors` is the pure
+// error-types subpath (zero imports); NEVER switch this to `@shipfix/llm`,
+// whose index pulls in @shipfix/secrets -> node:crypto and breaks the worker
+// at startup. Guarded by packages/workflow/test/workflowBundle.test.ts.
+import { LLMProviderError, llmKindFromMessage } from "@shipfix/llm/errors";
 
 const GENERIC_TEMPORAL_MESSAGES = new Set([
   "Activity task failed",

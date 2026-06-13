@@ -107,11 +107,26 @@ function SummaryItem({ label, value }: { label: string; value: string }): React.
   );
 }
 
+const IN_PROGRESS_STATUSES = new Set([
+  "queued",
+  "analyzing",
+  "planning",
+  "validating",
+  "provisioning",
+  "deploying",
+  "verifying",
+]);
+
 function computeNextAction(
   display: NonNullable<ReturnType<typeof buildAppResourceDisplay>>,
   status: string,
 ): string | null {
   if (display.fullStack.live) return null;
+  if (IN_PROGRESS_STATUSES.has(status)) {
+    return status === "queued"
+      ? "The run is queued and waiting for the deployment worker to pick it up."
+      : "The run is still in progress — the timeline below updates live.";
+  }
   if (status === "succeeded") {
     return "Connect the required providers, then deploy this plan.";
   }
