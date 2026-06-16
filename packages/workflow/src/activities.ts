@@ -32,6 +32,7 @@ import {
 import { verifyFromPlan } from "@shipfix/verifier";
 import { resolveServiceEnv, type DeployedResourceRow } from "./resolveEnv";
 import { buildRepoFixGuidance } from "./brokenRepoGuidance";
+import { resolveProviderDeployTarget } from "./providerResource";
 import {
   computeFinalizeDeployOutcome,
   evaluateDeployGate,
@@ -55,6 +56,13 @@ import { and, desc, eq, gte, sql } from "drizzle-orm";
 import type { LLMGateway, LLMRequest, LLMResult } from "@shipfix/llm";
 import { failureEventForError, failureEventForMessage, unwrapFailureMessage } from "./errorMessages";
 import { llmUsageLimitMessage, workflowAlphaLimit } from "./alphaLimits";
+import {
+  ControlPlaneConsistencyError,
+  CONTROL_PLANE_CONSISTENCY_EVENT,
+  controlPlaneConsistencyDetail,
+  isControlPlaneConsistencyMessage,
+  logWorkerControlPlaneMismatch,
+} from "./controlPlaneConsistency";
 
 /**
  * Temporal ACTIVITIES — the only side-effecting units.
@@ -96,7 +104,9 @@ async function loadRun(
   runId: string,
 ): Promise<{ run: RunRow; repoFullName: string; defaultBranch: string }> {
   const [run] = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
-  if (!run) throw new Error(`Run ${runId} not found.`);
+  if (!run) {
+    throw new ControlPlaneConsistencyError(runId, controlPlaneConsistencyDetail(runId));
+  }
   const [project] = await db
     .select()
     .from(projects)
@@ -484,10 +494,46 @@ export async function completeRun(runId: string): Promise<void> {
 /** Terminal failure: record status + emit a final (redacted) error event. */
 export async function failRun(runId: string, message: string): Promise<void> {
   const db = getDb();
+  const [existing] = await db.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)).limit(1);
+  if (!existing) {
+    logWorkerControlPlaneMismatch(runId, message);
+    return;
+  }
+
   await setStatus(db, runId, "failed", true);
   const logger = createRunLogger(runId, createSafePostgresSink(db));
+
+  if (isControlPlaneConsistencyMessage(message)) {
+    await logger.error(
+      "ShipFix started a worker task, but the worker could not find the run record. This usually means API and worker are connected to different databases.",
+      {
+        event: CONTROL_PLANE_CONSISTENCY_EVENT,
+        runId,
+        message,
+      },
+    );
+    return;
+  }
+
   const failure = failureEventForMessage(message);
   await logger.error(failure.title, { event: failure.event, message });
+}
+
+/**
+ * Boundary marker between static analysis and plan generation. This makes the
+ * analyze -> plan handoff visible even if the planner activity fails before it
+ * can write its own event.
+ */
+export async function startPlanTransition(runId: string): Promise<void> {
+  const db = getDb();
+  const logger = createRunLogger(runId, createSafePostgresSink(db));
+  await loadRun(db, runId);
+  await setStatus(db, runId, "planning");
+  await logger.stage("planning", "Starting deployment plan generation");
+  await logger.log("Starting deployment plan generation", {
+    event: "planning_started",
+    fromEvent: "analysis_completed",
+  });
 }
 
 /**
@@ -515,6 +561,11 @@ export async function proposePlan(runId: string, ctx: RepoContext): Promise<Depl
   }
 
   await logger.stage("planning", "Generating a deployment plan from the analysis");
+  await logger.log("Generating a deployment plan from the analysis", {
+    event: "plan_generation_started",
+    serviceCount: ctx.services.length,
+    dataNeedCount: ctx.dataNeeds.length,
+  });
 
   let result: Awaited<ReturnType<typeof runPlanner>>;
   try {
@@ -535,7 +586,11 @@ export async function proposePlan(runId: string, ctx: RepoContext): Promise<Depl
     const message = unwrapFailureMessage(err);
     // Classify from the typed error first: a provider 429/503 must surface as
     // "AI planner temporarily unavailable", never as a ShipFix usage limit.
-    const failure = failureEventForError(err);
+    const classified = failureEventForError(err);
+    const failure =
+      classified.event === "planning_failed"
+        ? { ...classified, event: "internal_plan_generation_failed" as const, title: "Plan generation failed inside ShipFix" }
+        : classified;
     await logger.error(failure.title, {
       event: failure.event,
       operation: "plan",
@@ -543,6 +598,14 @@ export async function proposePlan(runId: string, ctx: RepoContext): Promise<Depl
     });
     throw new Error(message);
   }
+
+  await logger.log("Deployment plan generated", {
+    event: "plan_generation_completed",
+    model: result.model,
+    usedFallback: result.usedFallback,
+    planSource: result.planSource,
+    proposedClassification: result.plan.classification,
+  });
 
   await logger.log(
     `Proposed plan: ${result.plan.classification}, ${result.plan.services.length} service(s), ${result.plan.managed.length} managed`,
@@ -964,12 +1027,15 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
       provider: "render",
     });
 
+    const deployTarget = await resolveProviderDeployTarget(db, run.projectId, svc.id, "render", 60);
+
     const deployLogs = chainedDeployOnLog(logger, svc.id);
     const result = await adapter.deploy({
       service: svc,
       repo: { fullName: repoFullName, branch: defaultBranch, commitSha: run.commitSha },
       rootDir: svc.rootDir,
-      resourceName: `shipfix-${runId}-${svc.id}`.slice(0, 60),
+      resourceName: deployTarget.resourceName,
+      existingExternalId: deployTarget.existingExternalId,
       env,
       credentials: { provider: "render", values: credValues },
       onLog: deployLogs.onLog,
@@ -987,6 +1053,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
         externalId: result.externalId,
         url: result.publicUrl,
         status: "failed",
+        meta: { resourceName: deployTarget.resourceName },
       });
       await logger.error(`Deploy failed for "${svc.id}".`, {
         event: kind === "setup_blocker" ? "deploy_setup_blocker" : "deploy_failed",
@@ -1012,6 +1079,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
       externalId: result.externalId,
       url: result.publicUrl,
       status: "live",
+      meta: { resourceName: deployTarget.resourceName },
     });
 
     summary.deployed.push(svc.id);
@@ -1108,12 +1176,15 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
       provider: "vercel",
     });
 
+    const deployTarget = await resolveProviderDeployTarget(db, run.projectId, svc.id, "vercel", 52);
+
     const deployLogs = chainedDeployOnLog(logger, svc.id);
     const result = await adapter.deploy({
       service: svc,
       repo: { fullName: repoFullName, branch: defaultBranch, commitSha: run.commitSha },
       rootDir: svc.rootDir,
-      resourceName: `shipfix-${runId}-${svc.id}`.slice(0, 52),
+      resourceName: deployTarget.resourceName,
+      existingExternalId: deployTarget.existingExternalId,
       env,
       credentials: { provider: "vercel", values: credValues },
       onLog: deployLogs.onLog,
@@ -1131,20 +1202,29 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
         externalId: result.externalId,
         url: result.publicUrl,
         status: "failed",
+        meta: { resourceName: deployTarget.resourceName },
       });
       const setupMsg =
-        kind === "setup_blocker"
-          ? `Deploy blocked for "${svc.id}": provider account setup required.`
-          : kind === "timeout"
-            ? `Frontend "${svc.id}" deployment timed out on Vercel. Backend and database may still be live — check Vercel deployment logs or rerun Deploy.`
-            : `Deploy failed for "${svc.id}".`;
+        kind === "provider_limit"
+          ? `Vercel refused to create another project for this GitHub repo because the repo is already connected to too many Vercel projects. Delete old Vercel projects or reuse an existing project.`
+          : kind === "provider_env_conflict"
+            ? `Vercel could not update an environment variable after retrying. This is a provider-side env conflict — rerun Deploy after ShipFix replaces the variable, or check the Vercel project settings.`
+          : kind === "setup_blocker"
+            ? `Deploy blocked for "${svc.id}": provider account setup required.`
+            : kind === "timeout"
+              ? `Frontend "${svc.id}" deployment timed out on Vercel. Backend and database may still be live — check Vercel deployment logs or rerun Deploy.`
+              : `Deploy failed for "${svc.id}".`;
       await logger.error(setupMsg, {
         event:
-          kind === "setup_blocker"
-            ? "deploy_setup_blocker"
-            : kind === "timeout"
-              ? "deploy_timeout"
-              : "deploy_failed",
+          kind === "provider_limit"
+            ? "deploy_provider_limit"
+            : kind === "provider_env_conflict"
+              ? "deploy_provider_env_conflict"
+            : kind === "setup_blocker"
+              ? "deploy_setup_blocker"
+              : kind === "timeout"
+                ? "deploy_timeout"
+                : "deploy_failed",
         serviceId: svc.id,
         provider: "vercel",
         failureKind: kind,
@@ -1169,6 +1249,7 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
       externalId: result.externalId,
       url: result.publicUrl,
       status: "live",
+      meta: { resourceName: deployTarget.resourceName },
     });
 
     summary.deployed.push(svc.id);

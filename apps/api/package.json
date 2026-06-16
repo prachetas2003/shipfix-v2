@@ -18,6 +18,7 @@
     "@shipfix/db": "workspace:*",
     "@shipfix/observability": "workspace:*",
     "@shipfix/secrets": "workspace:*",
+    "@shipfix/verifier": "workspace:*",
     "@shipfix/workflow": "workspace:*",
     "@temporalio/client": "^1.11.7",
     "dotenv": "^16.4.7",

@@ -34,6 +34,8 @@ export interface DeployInput {
   rootDir: string;
   /** Stable provider resource name for idempotent create-or-update. */
   resourceName?: string;
+  /** When set, reuse this provider resource id instead of creating a new one. */
+  existingExternalId?: string;
   /** Fully resolved (wiring + secrets) env to apply at the provider. */
   env: Record<string, string>;
   credentials: ProviderCredentials;
@@ -44,7 +46,13 @@ export interface DeployInput {
 export type DeployStatus = "live" | "build_failed" | "deploy_failed" | "timeout";
 
 /** Why a deploy failed — drives terminal outcome and UI messaging. */
-export type DeployFailureKind = "setup_blocker" | "deploy_failed" | "build_failed" | "timeout";
+export type DeployFailureKind =
+  | "setup_blocker"
+  | "provider_limit"
+  | "provider_env_conflict"
+  | "deploy_failed"
+  | "build_failed"
+  | "timeout";
 
 export interface DeployResult {
   ok: boolean;

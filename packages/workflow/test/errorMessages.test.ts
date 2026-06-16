@@ -67,4 +67,12 @@ describe("workflow failure messages", () => {
       event: "planning_failed",
     });
   });
+
+  it("classifies missing run rows as control-plane consistency failures", () => {
+    expect(
+      failureEventForMessage("Run af0c11c3-94a1-4b97-b415-7ea2801b3c78 not found in worker database."),
+    ).toMatchObject({
+      event: "internal_control_plane_consistency_error",
+    });
+  });
 });

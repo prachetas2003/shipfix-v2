@@ -3,6 +3,15 @@ import pg from "pg";
 import { schema } from "./schema";
 
 export * from "./schema";
+export {
+  loadShipfixEnv,
+  databaseFingerprint,
+  effectiveTemporalTaskQueue,
+  logDatabaseFingerprint,
+  type ShipfixEnvLoadOptions,
+  type ShipfixEnvLoadResult,
+  type DatabaseFingerprint,
+} from "./env";
 
 export type Database = NodePgDatabase<typeof schema>;
 

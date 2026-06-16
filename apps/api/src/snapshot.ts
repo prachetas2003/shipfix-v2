@@ -5,6 +5,8 @@
  * verification summary. Never touches secret columns (enc_blob/enc_iv/enc_dek).
  */
 
+import { accountVerificationEvents } from "@shipfix/verifier";
+
 export type LayerRole = "database" | "backend" | "frontend" | "other";
 
 export interface RawResourceRow {
@@ -20,8 +22,17 @@ export interface RawResourceRow {
 
 export interface PlanServiceLite {
   id: string;
-  type: string; // 'node_api' | 'frontend_static' | ...
+  type: string; // 'node_api' | 'frontend_static' | 'frontend_ssr' | ...
   provider?: string | null;
+  healthCheckPath?: string | null;
+}
+
+function isFrontendServiceType(type: string): boolean {
+  return type === "frontend_static" || type === "frontend_ssr";
+}
+
+function isBackendServiceType(type: string): boolean {
+  return type === "node_api";
 }
 
 export interface PlanLite {
@@ -71,8 +82,9 @@ export function roleForResource(row: RawResourceRow, plan: PlanLite | null): Lay
   if (row.kind !== "service") return "database";
   const svc = plan?.services?.find((s) => s.id === row.serviceId);
   if (svc) {
-    if (svc.type === "frontend_static") return "frontend";
-    return "backend";
+    if (isFrontendServiceType(svc.type)) return "frontend";
+    if (isBackendServiceType(svc.type)) return "backend";
+    return "other";
   }
   if (row.provider === "vercel") return "frontend";
   if (row.provider === "render") return "backend";
@@ -156,46 +168,53 @@ export function deriveLayers(
   plan: PlanLite | null,
   verification: VerificationEntry[] = [],
 ): RunLayers {
+  const services = plan?.services ?? [];
+  const backendService = services.find((s) => isBackendServiceType(s.type));
+  const frontendService = services.find((s) => isFrontendServiceType(s.type));
+
+  const resourceFor = (serviceId: string | undefined): SnapshotResource | undefined =>
+    serviceId ? resources.find((r) => r.serviceId === serviceId) : undefined;
+
   const byRole = (role: LayerRole): SnapshotResource | undefined =>
     resources.find((r) => r.role === role);
 
-  const services = plan?.services ?? [];
-  const plannedFrontend = services.some((s) => s.type === "frontend_static");
-  const plannedBackend = services.some((s) => s.type !== "frontend_static");
+  const plannedFrontend = services.some((s) => isFrontendServiceType(s.type));
+  const plannedBackend = services.some((s) => isBackendServiceType(s.type));
   const plannedDb = (plan?.managed?.length ?? 0) > 0 || !!byRole("database");
 
   const database = layerFromResource(byRole("database"), plannedDb);
-  const backend = layerFromResource(byRole("backend"), plannedBackend);
-  const frontend = layerFromResource(byRole("frontend"), plannedFrontend);
+  const backend = layerFromResource(
+    resourceFor(backendService?.id) ?? byRole("backend"),
+    plannedBackend,
+  );
+  const frontend = layerFromResource(
+    resourceFor(frontendService?.id) ?? byRole("frontend"),
+    plannedFrontend,
+  );
 
   const requiredLayers = [database, backend, frontend].filter(
     (l): l is LayerStatus => l !== null,
   );
   const resourcesLive = requiredLayers.length > 0 && requiredLayers.every((l) => l.state === "live");
-  const requiredChecks = (plan?.verification ?? []).filter((c) => c.check !== "db_connect");
-  const failedChecks = verification.filter((v) => !v.ok && !v.skipped && v.check !== "db_connect");
-  const skippedRequired = verification.filter((v) => v.skipped && v.check !== "db_connect");
-  const passed = new Set(
-    verification
-      .filter((v) => v.ok && !v.skipped && v.check !== "db_connect")
-      .map((v) => `${v.serviceId}.${v.check}`),
-  );
-  const requiredChecksPassed =
-    requiredChecks.length > 0 &&
-    requiredChecks.every((c) => passed.has(`${c.serviceId ?? ""}.${c.check ?? ""}`));
-  const hasVerificationFailure = failedChecks.length > 0 || skippedRequired.length > 0;
-  const allLive = resourcesLive && requiredChecksPassed && !hasVerificationFailure;
+  const verificationSummary = accountVerificationEvents(plan ?? {}, verification);
+  const optionalIssues = [
+    ...verificationSummary.optionalFailed,
+    ...verificationSummary.optionalSkipped,
+  ];
+  const allLive = resourcesLive && verificationSummary.allRequiredPassed;
   const fullStack = {
     live: allLive,
     detail: allLive
-      ? "Your app is live."
-      : resourcesLive && hasVerificationFailure
+      ? optionalIssues.length > 0
+        ? "Your app is live. Optional wiring checks did not fully pass — see timeline."
+        : "Your app is live."
+      : resourcesLive && verificationSummary.requiredFailed.length > 0
         ? "All parts have URLs, but live verification failed."
-        : resourcesLive && !requiredChecksPassed
+        : resourcesLive && !verificationSummary.allRequiredPassed
           ? "All parts have URLs, but ShipFix has not proven the full app works yet."
-      : frontend && frontend.state !== "live"
-        ? "Backend may be live, but the frontend is not deployed/verified yet."
-        : "Not all parts of the app are live yet.",
+          : frontend && frontend.state !== "live"
+            ? "Backend may be live, but the frontend is not deployed/verified yet."
+            : "Not all parts of the app are live yet.",
   };
 
   return { database, backend, frontend, fullStack };

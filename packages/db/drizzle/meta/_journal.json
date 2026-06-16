@@ -15,6 +15,13 @@
       "when": 1780887031784,
       "tag": "0001_needy_morph",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781566617348,
+      "tag": "0002_cool_enchantress",
+      "breakpoints": true
     }
   ]
 }

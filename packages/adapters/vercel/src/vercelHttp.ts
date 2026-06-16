@@ -38,6 +38,25 @@ export function classifyVercelFailure(status: number, statusText: string, bodyTe
         message: `Vercel git deployment requires a linked GitHub repoId: ${msg}. Ensure the repo is connected in Vercel and rerun Deploy.${link}`,
       };
     }
+    if (
+      /repository cannot be connected to more than|repository-connection-limit|connected to more than \d+ projects/i.test(
+        msg,
+      )
+    ) {
+      return {
+        kind: "provider_limit",
+        message: `Vercel refused to create another project for this GitHub repo because the repo is already connected to too many Vercel projects. Delete old Vercel projects or reuse an existing project.${link}`,
+      };
+    }
+    if (
+      /variable with the name .* already exists/i.test(msg) ||
+      /already exists for the target/i.test(msg)
+    ) {
+      return {
+        kind: "provider_env_conflict",
+        message: `Vercel env var conflict: ${redact(msg).slice(0, 500)}${link}`,
+      };
+    }
     if (err?.message) {
       return {
         kind: "deploy_failed",

@@ -53,6 +53,29 @@ describe("buildRepoFixGuidance", () => {
     expect(g).toBeNull();
   });
 
+  it("returns null for provider project limit failures (not a repo bug)", () => {
+    const g = buildRepoFixGuidance({
+      repoFullName: "acme/app",
+      service,
+      provider: "vercel",
+      failureKind: "provider_limit",
+      errorSummary:
+        "Vercel refused to create another project for this GitHub repo because the repo is already connected to too many Vercel projects.",
+    });
+    expect(g).toBeNull();
+  });
+
+  it("returns null for duplicate Vercel env var conflicts (not a repo bug)", () => {
+    const g = buildRepoFixGuidance({
+      repoFullName: "acme/app",
+      service: { ...service, id: "web", type: "frontend_static" },
+      provider: "vercel",
+      failureKind: "provider_env_conflict",
+      errorSummary: "Vercel env var conflict for VITE_API_URL",
+    });
+    expect(g).toBeNull();
+  });
+
   it("never instructs ShipFix to edit the repo (operator, not fixer)", () => {
     const g = buildRepoFixGuidance({
       repoFullName: "acme/app",

@@ -12,14 +12,24 @@ import {
   llmUsage,
   runEvents,
   runs,
+  workerHeartbeats,
 } from "@shipfix/db";
 import { createSafePostgresSink, createRunLogger } from "@shipfix/observability";
 import { reconcileStuckRuns } from "@shipfix/workflow";
 import { preflightProviderCredentials } from "@shipfix/adapter-core";
 import { createSecretVaultFromEnv } from "@shipfix/secrets";
-import { env } from "./env";
+import { env, shipfixEnvLoad } from "./env";
 import { requireAdmin, requireUser, type AuthenticatedUser } from "./auth";
 import { alphaDefaultsProfile, usageLimitMessage } from "./alphaLimits";
+import { apiControlPlaneDiagnostics } from "./configCheck";
+import { assertRunPersisted } from "./runLifecycle";
+import {
+  logWorkflowStarted,
+  logWorkflowStarting,
+  markWorkflowStartFailed,
+  withTimeout,
+  type WorkflowStartInfo,
+} from "./workflowStart";
 import {
   deriveLayers,
   toSnapshotResources,
@@ -64,10 +74,38 @@ async function temporal(): Promise<Client> {
   return _client;
 }
 
+async function refreshTemporalStatus(reason: string): Promise<typeof temporalStatus> {
+  try {
+    await withTimeout(
+      Connection.connect({ address: env.TEMPORAL_ADDRESS }),
+      TEMPORAL_CHECK_TIMEOUT_MS,
+      `Temporal connectivity check timed out after ${TEMPORAL_CHECK_TIMEOUT_MS}ms`,
+    );
+    temporalStatus = { reachable: true, checkedAt: new Date().toISOString(), error: null };
+  } catch (err) {
+    temporalStatus = {
+      reachable: false,
+      checkedAt: new Date().toISOString(),
+      error: err instanceof Error ? err.message : String(err),
+    };
+    app.log.warn({ reason, temporalStatus }, "Temporal connectivity check failed");
+  }
+  return temporalStatus;
+}
+
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "diagnosed"]);
-const RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+const RECONCILE_INTERVAL_MS = 15 * 1000;
+const TEMPORAL_CHECK_INTERVAL_MS = 60 * 1000;
+const TEMPORAL_CHECK_TIMEOUT_MS = 2_500;
+const WORKFLOW_START_TIMEOUT_MS = 10_000;
 const NON_TERMINAL_STATUSES = ["queued", "analyzing", "planning", "validating", "awaiting_input", "provisioning", "deploying", "verifying"];
 const ipStarts = new Map<string, number[]>();
+
+let temporalStatus: { reachable: boolean; checkedAt: string | null; error: string | null } = {
+  reachable: false,
+  checkedAt: null,
+  error: "not_checked",
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -179,7 +217,27 @@ async function userCanAccessRun(userId: string, runId: string): Promise<boolean>
   return Boolean(row);
 }
 
-function backendConfigCheck() {
+async function latestWorkerHeartbeat() {
+  try {
+    const [row] = await db
+      .select({
+        lastSeenAt: workerHeartbeats.lastSeenAt,
+        taskQueue: workerHeartbeats.taskQueue,
+        temporalAddress: workerHeartbeats.temporalAddress,
+        temporalNamespace: workerHeartbeats.temporalNamespace,
+        status: workerHeartbeats.status,
+      })
+      .from(workerHeartbeats)
+      .orderBy(desc(workerHeartbeats.lastSeenAt))
+      .limit(1);
+    return row ?? null;
+  } catch (err) {
+    app.log.warn({ err }, "worker heartbeat diagnostics unavailable");
+    return null;
+  }
+}
+
+async function backendConfigCheck() {
   const provider = process.env.LLM_PROVIDER ?? "";
   const providerKey =
     provider.trim().toLowerCase() === "openai"
@@ -191,8 +249,15 @@ function backendConfigCheck() {
           : null;
   const providerKeyConfigured = providerKey ? Boolean(process.env[providerKey]?.trim()) : false;
   const legacyLlmKeyConfigured = Boolean(process.env.LLM_API_KEY?.trim());
+  const controlPlane = apiControlPlaneDiagnostics(
+    env,
+    shipfixEnvLoad,
+    await latestWorkerHeartbeat(),
+    temporalStatus,
+  );
   return {
-    databaseUrl: Boolean(env.DATABASE_URL),
+    databaseUrl: controlPlane.databaseUrlPresent,
+    ...controlPlane,
     authMode: env.AUTH_MODE,
     clerkSecretConfigured: Boolean(env.CLERK_SECRET_KEY),
     adminTokenConfigured: Boolean(env.SHIPFIX_ADMIN_TOKEN),
@@ -222,6 +287,7 @@ function backendConfigCheck() {
       note: "Plan/deploy work runs in the worker. Restart pnpm dev:worker after changing root .env or apps/worker/.env.local.",
       readsRootEnv: true,
       readsWorkerEnvLocal: true,
+      envSourcePath: shipfixEnvLoad.envSourcePath,
     },
   };
 }
@@ -432,6 +498,57 @@ async function checkRunLimits(
   return { ok: true };
 }
 
+async function startTemporalWorkflowForRun(
+  runId: string,
+  mode: RunMode,
+  logger: ReturnType<typeof createRunLogger>,
+): Promise<StartResult> {
+  const workflowId = `run-${runId}`;
+  const info: WorkflowStartInfo = {
+    workflowId,
+    taskQueue: env.TEMPORAL_TASK_QUEUE,
+    temporalAddress: env.TEMPORAL_ADDRESS,
+    temporalNamespace: env.TEMPORAL_NAMESPACE,
+  };
+
+  await logWorkflowStarting(logger, info);
+
+  try {
+    const client = await withTimeout(
+      temporal(),
+      WORKFLOW_START_TIMEOUT_MS,
+      `Temporal is not reachable at ${env.TEMPORAL_ADDRESS}. Start Temporal and retry.`,
+    );
+    await withTimeout(
+      client.workflow.start("deploymentWorkflow", {
+        taskQueue: env.TEMPORAL_TASK_QUEUE,
+        workflowId,
+        args: [{ runId, mode }],
+      }),
+      WORKFLOW_START_TIMEOUT_MS,
+      `Temporal did not accept workflow start within ${WORKFLOW_START_TIMEOUT_MS}ms.`,
+    );
+    await db.update(runs).set({ temporalId: workflowId }).where(eq(runs.id, runId));
+    temporalStatus = { reachable: true, checkedAt: new Date().toISOString(), error: null };
+    await logWorkflowStarted(logger, info);
+    return { ok: true, runId };
+  } catch (startErr) {
+    await markWorkflowStartFailed(db, logger, runId, info, startErr);
+    temporalStatus = {
+      reachable: false,
+      checkedAt: new Date().toISOString(),
+      error: startErr instanceof Error ? startErr.message : String(startErr),
+    };
+    return {
+      ok: false,
+      runId,
+      code: "internal_workflow_start_failed",
+      message:
+        "ShipFix created the run, but could not start the Temporal workflow. Start Temporal and the worker, then retry.",
+    };
+  }
+}
+
 /**
  * Create a run, seed its timeline, and start the Temporal workflow. Shared by
  * the analyze and plan routes — the only difference is `mode`. On a workflow
@@ -463,33 +580,8 @@ async function startRun(
   // picks it up (and so a start failure has somewhere to record itself).
   const logger = createRunLogger(run.id, createSafePostgresSink(db));
   await logger.stage("queued", `Run queued for ${input.repoFullName}`);
-
-  const workflowId = `run-${run.id}`;
-  try {
-    const client = await temporal();
-    await client.workflow.start("deploymentWorkflow", {
-      taskQueue: env.TEMPORAL_TASK_QUEUE,
-      workflowId,
-      args: [{ runId: run.id, mode }],
-    });
-    await db.update(runs).set({ temporalId: workflowId }).where(eq(runs.id, run.id));
-    return { ok: true, runId: run.id };
-  } catch (startErr) {
-    await db
-      .update(runs)
-      .set({ status: "failed", finishedAt: new Date() })
-      .where(eq(runs.id, run.id));
-    await logger.error(
-      "Could not start the deployment workflow. Is the Temporal dev server running? (temporal server start-dev)",
-      { error: startErr instanceof Error ? startErr.message : String(startErr) },
-    );
-    return {
-      ok: false,
-      runId: run.id,
-      code: "workflow_start_failed",
-      message: "Could not start the Temporal workflow. Is the Temporal dev server running?",
-    };
-  }
+  await assertRunPersisted(db, run.id);
+  return startTemporalWorkflowForRun(run.id, mode, logger);
 }
 
 async function startDeployFromExistingRun(
@@ -564,33 +656,8 @@ async function startDeployFromExistingRun(
     sourceRunId,
     sourcePlanId: sourcePlan.id,
   });
-
-  const workflowId = `run-${run.id}`;
-  try {
-    const client = await temporal();
-    await client.workflow.start("deploymentWorkflow", {
-      taskQueue: env.TEMPORAL_TASK_QUEUE,
-      workflowId,
-      args: [{ runId: run.id, mode: "deploy" }],
-    });
-    await db.update(runs).set({ temporalId: workflowId }).where(eq(runs.id, run.id));
-    return { ok: true, runId: run.id };
-  } catch (startErr) {
-    await db
-      .update(runs)
-      .set({ status: "failed", finishedAt: new Date() })
-      .where(eq(runs.id, run.id));
-    await logger.error(
-      "Could not start the deployment workflow. Is the Temporal dev server running? (temporal server start-dev)",
-      { error: startErr instanceof Error ? startErr.message : String(startErr) },
-    );
-    return {
-      ok: false,
-      runId: run.id,
-      code: "workflow_start_failed",
-      message: "Could not start the Temporal workflow. Is the Temporal dev server running?",
-    };
-  }
+  await assertRunPersisted(db, run.id);
+  return startTemporalWorkflowForRun(run.id, "deploy", logger);
 }
 
 /** Build a Fastify handler that launches a run in the given mode. */
@@ -841,6 +908,14 @@ app.get("/admin/config-check", async (request, reply) => {
 });
 
 app.post("/admin/reconcile-stuck-runs", async (request, reply) => {
+  if (!requireAdmin(request, reply, env)) return;
+
+  const summary = await reconcileStuckRunsSafely("admin");
+  if (!summary) return { ok: false };
+  return { ok: true, summary };
+});
+
+app.post("/admin/runs/reconcile-stuck", async (request, reply) => {
   if (!requireAdmin(request, reply, env)) return;
 
   const summary = await reconcileStuckRunsSafely("admin");
@@ -1125,6 +1200,8 @@ app.get("/apps/:projectId", async (request, reply) => {
 
 const start = async (): Promise<void> => {
   try {
+    await refreshTemporalStatus("startup");
+    setInterval(() => void refreshTemporalStatus("interval"), TEMPORAL_CHECK_INTERVAL_MS).unref();
     await reconcileStuckRunsSafely("startup");
     setInterval(() => void reconcileStuckRunsSafely("interval"), RECONCILE_INTERVAL_MS).unref();
     await app.listen({ port: env.API_PORT, host: "0.0.0.0" });

@@ -9,6 +9,7 @@ import { resolveGitRepoId } from "./resolveGitRepoId.js";
 import { failVercelBody, parseVercelJson } from "./vercelHttp.js";
 import { buildGitSource, VercelRepoIdError } from "./vercelGit.js";
 import { buildProjectBody, buildProjectPatch } from "./vercelProject.js";
+import { setProjectEnv, VercelEnvConflictError } from "./vercelEnv.js";
 import {
   DEFAULT_VERCEL_DEPLOY_TIMEOUT_MS,
   DEFAULT_VERCEL_HTTP_TIMEOUT_MS,
@@ -79,12 +80,25 @@ function deployError(e: unknown): { logs: string; failureKind: DeployFailureKind
   if (e instanceof VercelRepoIdError) {
     return { logs: e.message, failureKind: e.failureKind };
   }
+  if (e instanceof VercelEnvConflictError) {
+    return { logs: e.message, failureKind: e.failureKind };
+  }
   const msg = e instanceof Error ? e.message : String(e);
   if (/GitHub connection required|Login Connection|git repoId unresolved|requires a linked GitHub repoId/i.test(msg)) {
     return { logs: msg, failureKind: "setup_blocker" };
   }
   if (/timed out|timeout/i.test(msg)) {
     return { logs: msg, failureKind: "timeout" };
+  }
+  if (
+    /refused to create another project|repository cannot be connected to more than|repository-connection-limit|connected to more than \d+ projects/i.test(
+      msg,
+    )
+  ) {
+    return { logs: msg, failureKind: "provider_limit" };
+  }
+  if (/env var conflict|provider_env_conflict|already exists for the target/i.test(msg)) {
+    return { logs: msg, failureKind: "provider_env_conflict" };
   }
   return { logs: msg, failureKind: "deploy_failed" };
 }
@@ -93,6 +107,27 @@ function creds(input: ProviderCredentials): { token: string; teamId?: string } {
   const token = input.values.apiToken;
   if (!token) throw new Error("Missing Vercel apiToken.");
   return { token, teamId: input.values.teamId };
+}
+
+async function getProjectById(
+  fetchImpl: typeof fetch,
+  base: string,
+  token: string,
+  teamId: string | undefined,
+  httpTimeoutMs: number,
+  projectId: string,
+): Promise<VercelProject | null> {
+  const res = await vercelApiFetch(
+    fetchImpl,
+    base,
+    `/v9/projects/${encodeURIComponent(projectId)}`,
+    token,
+    teamId,
+    httpTimeoutMs,
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) await failBody(res);
+  return parseVercelJson<VercelProject>(res, "get project");
 }
 
 async function findProjectByName(
@@ -125,6 +160,34 @@ async function upsertProject(
   input: DeployInput,
   name: string,
 ): Promise<string> {
+  if (input.existingExternalId) {
+    const stored = await getProjectById(
+      fetchImpl,
+      base,
+      token,
+      teamId,
+      httpTimeoutMs,
+      input.existingExternalId,
+    );
+    if (stored?.id) {
+      input.onLog?.(`Vercel: reusing stored project ${stored.id}`);
+      const patch = await vercelApiFetch(
+        fetchImpl,
+        base,
+        `/v9/projects/${encodeURIComponent(stored.id)}`,
+        token,
+        teamId,
+        httpTimeoutMs,
+        { method: "PATCH", body: JSON.stringify(buildProjectPatch(input)) },
+      );
+      if (!patch.ok) await failBody(patch);
+      return stored.id;
+    }
+    input.onLog?.(
+      `Vercel: stored project ${input.existingExternalId} missing — reconciling by name "${name}"`,
+    );
+  }
+
   const existing = await findProjectByName(fetchImpl, base, token, teamId, httpTimeoutMs, name);
   if (existing?.id) {
     const patch = await vercelApiFetch(
@@ -147,32 +210,6 @@ async function upsertProject(
   const created = await parseVercelJson<VercelProject>(res, "create project");
   if (!created.id) throw new Error("Vercel create project response did not include an id.");
   return created.id;
-}
-
-async function setProjectEnv(
-  fetchImpl: typeof fetch,
-  base: string,
-  token: string,
-  teamId: string | undefined,
-  httpTimeoutMs: number,
-  projectId: string,
-  env: Record<string, string>,
-): Promise<void> {
-  for (const [key, value] of Object.entries(env)) {
-    const res = await vercelApiFetch(
-      fetchImpl,
-      base,
-      `/v10/projects/${encodeURIComponent(projectId)}/env`,
-      token,
-      teamId,
-      httpTimeoutMs,
-      {
-        method: "POST",
-        body: JSON.stringify({ key, value, type: "plain", target: ["production", "preview"] }),
-      },
-    );
-    if (!res.ok) await failBody(res);
-  }
 }
 
 async function triggerGitDeployment(
@@ -374,7 +411,7 @@ export function createVercelAdapter(options: VercelOptions = {}): ProviderAdapte
       if (Object.keys(input.env).length > 0) {
         input.onLog?.(`Vercel: setting ${Object.keys(input.env).length} build env var(s)`);
         try {
-          await setProjectEnv(fetchImpl, base, token, teamId, httpTimeoutMs, projectId, input.env);
+          await setProjectEnv(fetchImpl, base, token, teamId, httpTimeoutMs, projectId, input.env, input.onLog);
         } catch (e) {
           const err = deployError(e);
           return {

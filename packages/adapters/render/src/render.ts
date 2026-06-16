@@ -260,6 +260,20 @@ async function getService(
   return unwrapService(json) ?? (json as RenderService);
 }
 
+async function getServiceOrNull(
+  fetchImpl: typeof fetch,
+  base: string,
+  apiKey: string,
+  httpTimeoutMs: number,
+  serviceId: string,
+): Promise<RenderService | null> {
+  const res = await apiFetch(fetchImpl, base, `/services/${encodeURIComponent(serviceId)}`, apiKey, httpTimeoutMs);
+  if (res.status === 404) return null;
+  if (!res.ok) await failBody(res, "get service");
+  const json = await parseRenderResponse(res, "get service");
+  return unwrapService(json) ?? (json as RenderService);
+}
+
 async function getDeploy(
   fetchImpl: typeof fetch,
   base: string,
@@ -393,39 +407,71 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
         };
       }
 
-      let serviceId: string;
+      let serviceId: string | undefined;
       try {
-        const existing = await findServiceByName(fetchImpl, base, apiKey, httpTimeoutMs, stableName);
-        if (existing?.id) {
-          input.onLog?.(`Render: updating existing service ${existing.id}`);
-          const patch = await apiFetch(fetchImpl, base, `/services/${encodeURIComponent(existing.id)}`, apiKey, httpTimeoutMs, {
-            method: "PATCH",
-            body: JSON.stringify(buildUpdateBody(input)),
-          });
-          if (!patch.ok) await failBody(patch, "update service");
-          serviceId = existing.id;
-        } else {
-          input.onLog?.(`Render: creating web service "${stableName}"`);
-          const res = await apiFetch(fetchImpl, base, "/services", apiKey, httpTimeoutMs, {
-            method: "POST",
-            body: JSON.stringify(buildCreateBody(input, ownerId, stableName)),
-          });
-          if (!res.ok) await failBody(res, "create service");
-          const created = unwrapService(await parseRenderResponse(res, "create service"));
-          if (!created?.id) {
-            return {
-              ok: false,
-              externalId: null,
-              publicUrl: null,
-              status: "deploy_failed",
-              logs: formatDeployFailureDetail({
-                serviceId: "unknown",
-                action: "create service",
-                extra: "response did not include a service id",
-              }),
-            };
+        if (input.existingExternalId) {
+          const stored = await getServiceOrNull(
+            fetchImpl,
+            base,
+            apiKey,
+            httpTimeoutMs,
+            input.existingExternalId,
+          );
+          if (stored?.id) {
+            input.onLog?.(`Render: reusing stored service ${stored.id}`);
+            const patch = await apiFetch(
+              fetchImpl,
+              base,
+              `/services/${encodeURIComponent(stored.id)}`,
+              apiKey,
+              httpTimeoutMs,
+              {
+                method: "PATCH",
+                body: JSON.stringify(buildUpdateBody(input)),
+              },
+            );
+            if (!patch.ok) await failBody(patch, "update service");
+            serviceId = stored.id;
+          } else {
+            input.onLog?.(
+              `Render: stored service ${input.existingExternalId} missing — reconciling by name "${stableName}"`,
+            );
           }
-          serviceId = created.id;
+        }
+
+        if (!serviceId) {
+          const existing = await findServiceByName(fetchImpl, base, apiKey, httpTimeoutMs, stableName);
+          if (existing?.id) {
+            input.onLog?.(`Render: updating existing service ${existing.id}`);
+            const patch = await apiFetch(fetchImpl, base, `/services/${encodeURIComponent(existing.id)}`, apiKey, httpTimeoutMs, {
+              method: "PATCH",
+              body: JSON.stringify(buildUpdateBody(input)),
+            });
+            if (!patch.ok) await failBody(patch, "update service");
+            serviceId = existing.id;
+          } else {
+            input.onLog?.(`Render: creating web service "${stableName}"`);
+            const res = await apiFetch(fetchImpl, base, "/services", apiKey, httpTimeoutMs, {
+              method: "POST",
+              body: JSON.stringify(buildCreateBody(input, ownerId, stableName)),
+            });
+            if (!res.ok) await failBody(res, "create service");
+            const created = unwrapService(await parseRenderResponse(res, "create service"));
+            if (!created?.id) {
+              return {
+                ok: false,
+                externalId: null,
+                publicUrl: null,
+                status: "deploy_failed",
+                logs: formatDeployFailureDetail({
+                  serviceId: "unknown",
+                  action: "create service",
+                  extra: "response did not include a service id",
+                }),
+              };
+            }
+            serviceId = created.id;
+          }
         }
       } catch (e) {
         const logs = e instanceof Error ? e.message : String(e);

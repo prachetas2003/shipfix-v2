@@ -30,7 +30,7 @@ Copy `.env.example` to `.env` at the repo root and fill in every **required** va
 
 | Variable | Required for E2E | Notes |
 | --- | --- | --- |
-| `DATABASE_URL` | Yes | ShipFix control-plane Postgres (not Neon). API + worker both read this. |
+| `DATABASE_URL` | Yes | ShipFix control-plane Postgres (not Neon). **API and worker must use the same value.** After changing it, restart API, worker, web, and Temporal together. Do not mix local Docker Postgres and Neon in one session — old Temporal workflows may reference runs in a previous database. Compare `GET /admin/config-check` (`apiDbFingerprint.hostHash`) with the worker startup log. |
 | `SHIPFIX_MASTER_KEY` | Yes | Base64 32-byte key. Generate: `openssl rand -base64 32`. Seals provider creds + Neon connection strings. |
 | `LLM_PROVIDER` | Yes | `anthropic` or `gemini`. Deploy runs include AI planning — no mock fallback. |
 | `LLM_API_KEY` | Yes | Key for the chosen provider. |
@@ -55,6 +55,24 @@ Provider credentials are **not** env vars — connect them in the UI (sealed int
 | **git** | Clone public repos during analyze | On PATH (worker uses dev sandbox) |
 
 You do **not** run Neon, Render, or Vercel locally — those are real cloud APIs.
+
+### Control-plane database consistency
+
+If a run stays **queued** while the worker log shows `Run … not found`, API and worker are
+almost certainly pointed at **different** Postgres instances (common after switching between
+local Docker and Neon without restarting everything).
+
+1. Set one `DATABASE_URL` in repo-root `.env` (avoid conflicting overrides in
+   `apps/api/.env.local` vs `apps/worker/.env.local` unless intentional).
+2. Restart **API, worker, web, and Temporal** in that order after any `DATABASE_URL` change.
+3. Confirm fingerprints match:
+   - API: `GET /admin/config-check` → `apiDbFingerprint.hostHash` and `databaseName`
+   - Worker: startup log `[shipfix-worker] database fingerprint`
+4. Cancel or ignore stale Temporal workflows from a previous database (Temporal UI at
+   http://localhost:8233).
+
+The UI surfaces this as: *“ShipFix started a worker task, but the worker could not find the
+run record…”*
 
 ---
 

@@ -65,6 +65,32 @@ describe("translateEvent - failure kinds", () => {
     expect(f.detail.toLowerCase()).toContain("not a usage limit");
     expect(f.tone).toBe("warn");
   });
+
+  it("explains Vercel repository project limit without blaming the repo", () => {
+    const f = translateEvent(
+      ev(
+        {
+          event: "deploy_provider_limit",
+          serviceId: "web",
+          provider: "vercel",
+          failureKind: "provider_limit",
+        },
+        "Vercel refused to create another project for this GitHub repo because the repo is already connected to too many Vercel projects. Delete old Vercel projects or reuse an existing project.",
+      ),
+    );
+    expect(f.title.toLowerCase()).toContain("project limit");
+    expect(f.detail).toContain("too many Vercel projects");
+    expect(f.detail.toLowerCase()).not.toContain("repo script");
+    expect(f.tone).toBe("warn");
+  });
+
+  it("does not suggest a repo fix for provider_limit deploy_failed events", () => {
+    const f = translateEvent(
+      ev({ event: "deploy_failed", serviceId: "web", failureKind: "provider_limit", provider: "vercel" }),
+    );
+    expect(f.title.toLowerCase()).toContain("project limit");
+    expect(f.detail.toLowerCase()).not.toContain("typescript");
+  });
 });
 
 describe("translateEvent - analysis and planning events", () => {
@@ -133,5 +159,53 @@ describe("translateEvent - leakage and honesty", () => {
     );
     expect(f.detail).toContain("/api/health");
     expect(f.tone).toBe("success");
+  });
+
+  it("explains API/worker database mismatch failures", () => {
+    const f = translateEvent(ev({ event: "internal_control_plane_consistency_error" }));
+    expect(f.title.toLowerCase()).toContain("worker could not find");
+    expect(f.detail).toContain("different databases");
+    expect(f.tone).toBe("error");
+  });
+
+  it("explains workflow start failures as internal ShipFix issues", () => {
+    const f = translateEvent(ev({ event: "internal_workflow_start_failed", taskQueue: "shipfix" }));
+    expect(f.title.toLowerCase()).toContain("workflow");
+    expect(f.detail).toContain("Temporal");
+    expect(f.detail.toLowerCase()).not.toContain("repo");
+    expect(f.tone).toBe("error");
+  });
+
+  it("explains queued timeout without workflow_started", () => {
+    const f = translateEvent(ev({ event: "internal_workflow_start_missing" }));
+    expect(f.title.toLowerCase()).toContain("workflow start");
+    expect(f.detail).toContain("no workflow start was recorded");
+    expect(f.detail.toLowerCase()).not.toContain("repo");
+    expect(f.tone).toBe("error");
+  });
+
+  it("explains queued timeout after workflow_started as worker not polling", () => {
+    const f = translateEvent(ev({ event: "internal_worker_not_polling", taskQueue: "shipfix" }));
+    expect(f.title.toLowerCase()).toContain("worker");
+    expect(f.detail).toContain("worker did not pick it up");
+    expect(f.detail).toContain("task queue");
+    expect(f.detail.toLowerCase()).not.toContain("repo");
+    expect(f.tone).toBe("error");
+  });
+
+  it("explains analysis-to-plan transition failures as internal ShipFix issues", () => {
+    const f = translateEvent(ev({ event: "internal_plan_transition_failed" }));
+    expect(f.title.toLowerCase()).toContain("planning");
+    expect(f.detail).toContain("workflow did not enter plan generation");
+    expect(f.detail.toLowerCase()).not.toContain("fix your repo");
+    expect(f.tone).toBe("error");
+  });
+
+  it("explains planner stalls without repo-fix guidance", () => {
+    const f = translateEvent(ev({ event: "internal_plan_generation_stalled" }));
+    expect(f.title.toLowerCase()).toContain("plan generation");
+    expect(f.detail).toContain("did not record a plan");
+    expect(f.detail.toLowerCase()).not.toContain("repo script");
+    expect(f.tone).toBe("error");
   });
 });

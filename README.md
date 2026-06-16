@@ -68,7 +68,7 @@ pnpm dev:web     # Next.js shell        -> http://localhost:3000
 pnpm dev:api     # Fastify control plane -> http://localhost:4000/health
 # Worker needs a running Temporal dev server first:
 temporal server start-dev
-pnpm dev:worker  # registers workflows + activities on the 'shipfix' task queue
+pnpm dev:worker  # registers workflows + activities on the effective task queue
 ```
 
 ## Verify the analyze-only slice (local end-to-end)
@@ -121,6 +121,15 @@ Recommended local file layout:
 | `apps/web/.env.local` | Web only | Optional web-only overrides; only use `NEXT_PUBLIC_*` values |
 
 After changing Clerk env vars, restart both `pnpm dev:api` and `pnpm dev:web`.
+After changing **`DATABASE_URL`**, restart **API, worker, web, and Temporal** together.
+Do not mix local Docker Postgres and Neon in one test session — old Temporal workflows may
+still reference runs in a previous database. Compare startup logs or `GET /admin/config-check`
+(`apiDbFingerprint.hostHash` must match the worker log) to confirm API and worker point at the
+same control-plane database.
+In local dev, the generic `TEMPORAL_TASK_QUEUE=shipfix` is automatically scoped
+to the configured `DATABASE_URL` (for example `shipfix-abc123...`) so an old
+worker on a different database cannot pick up new runs. If you set a custom
+queue, set the same value for API and worker.
 After changing LLM/provider env vars, restart `pnpm dev:worker`; plan/deploy
 activities run in the worker, not the API process.
 
@@ -156,7 +165,7 @@ Do not put provider tokens, LLM keys, `SHIPFIX_ADMIN_TOKEN`,
 ```bash
 temporal server start-dev          # terminal 1  -> localhost:7233 + UI :8233
 pnpm dev:api                       # terminal 2  -> http://localhost:4000/health
-pnpm dev:worker                    # terminal 3  -> "connected to Temporal … polling 'shipfix'"
+pnpm dev:worker                    # terminal 3  -> "connected to Temporal ... polling 'shipfix-...'"
 pnpm dev:web                       # terminal 4  -> http://localhost:3000
 ```
 

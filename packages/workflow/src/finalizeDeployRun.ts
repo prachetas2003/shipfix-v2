@@ -1,6 +1,7 @@
 import type { DeploymentPlan, PlanService } from "@shipfix/contracts";
 import type { Capabilities } from "@shipfix/validator";
 import type { DeployFailureKind } from "@shipfix/adapter-core";
+import { accountPlanVerifySummary } from "@shipfix/verifier";
 
 export interface DeployFailure {
   id: string;
@@ -127,7 +128,10 @@ export function computeFinalizeDeployOutcome(
 
   const allDeployFailures = [...backendDeploy.failed, ...frontendDeploy.failed];
   const setupBlockers = allDeployFailures.filter((f) => f.kind === "setup_blocker");
-  const hardDeployFailures = allDeployFailures.filter((f) => f.kind !== "setup_blocker");
+  const providerLimits = allDeployFailures.filter((f) => f.kind === "provider_limit");
+  const hardDeployFailures = allDeployFailures.filter(
+    (f) => f.kind !== "setup_blocker" && f.kind !== "provider_limit",
+  );
 
   const backendsOk = allServicesDeployed(backendIds, backendDeploy.deployed, backendDeploy.failed);
   const frontendsOk = allServicesDeployed(
@@ -139,19 +143,8 @@ export function computeFinalizeDeployOutcome(
     managedIds.length === 0 ||
     (provision.failed.length === 0 &&
       managedIds.every((id) => provision.provisioned.includes(id)));
-  // `db_connect` is stubbed (not implemented) and always reports skipped. It must
-  // NOT make an otherwise-verified app un-shippable. Exclude it from the
-  // pass/fail accounting; database reachability is proven at provision time
-  // (Neon `SELECT 1`) instead. Backend health is verified against the grounded
-  // healthCheckPath, never the root, so a 404 at "/" never fails the run.
-  const requiredChecks = plan.verification.filter((c) => c.check !== "db_connect");
-  const relevantSkipped = verify.skipped.filter((s) => s.check !== "db_connect");
-  const relevantPassed = verify.passed.filter((p) => p.check !== "db_connect");
-  const allChecksPassed =
-    requiredChecks.length === 0 ||
-    (verify.failed.length === 0 &&
-      relevantSkipped.length === 0 &&
-      relevantPassed.length === requiredChecks.length);
+  const verification = accountPlanVerifySummary(plan, verify);
+  const allChecksPassed = verification.allRequiredPassed;
   const hasLiveServices =
     backendDeploy.deployed.length > 0 || frontendDeploy.deployed.length > 0;
   const hasPartial = hasPartialLiveProgress(outcome);
@@ -168,9 +161,13 @@ export function computeFinalizeDeployOutcome(
   }
 
   if (!unsupported && managedOk && hasFullStackPlan && backendsOk && frontendsOk && allChecksPassed) {
+    const optionalNote =
+      verification.optionalFailed.length > 0
+        ? ` Optional wiring check(s) did not pass (${verification.optionalFailed.join(", ")}).`
+        : "";
     return {
       status: "succeeded",
-      message: "App deployed and verified — frontend, backend, and wiring checks passed.",
+      message: `App deployed and verified — frontend, backend, and required checks passed.${optionalNote}`,
     };
   }
 
@@ -198,6 +195,14 @@ export function computeFinalizeDeployOutcome(
   const detail = parts.length ? parts.join("; ") : "deploy finished";
   const failedChecks = verify.failed.map((f) => `${f.serviceId}.${f.check}`).join(", ");
 
+  if (providerLimits.length > 0) {
+    const blocked = providerLimits.map((f) => f.id).join(", ");
+    return {
+      status: "diagnosed",
+      message: `${detail}. Vercel refused to create another project for this GitHub repo because the repo is already connected to too many Vercel projects (services: ${blocked}). Delete old Vercel projects or reuse an existing project. Full-stack app is NOT live.`,
+    };
+  }
+
   if (setupBlockers.length > 0) {
     const blocked = setupBlockers.map((f) => f.id).join(", ");
     return {
@@ -214,13 +219,23 @@ export function computeFinalizeDeployOutcome(
   }
 
   if (verify.failed.length > 0 && backendsOk && frontendsOk) {
+    const failedRequired = verification.requiredFailed;
+    if (failedRequired.length > 0) {
+      return {
+        status: "diagnosed",
+        message: `${detail}. Services are live but verification failed (${failedRequired.join(", ")}) — full app is NOT proven working.`,
+      };
+    }
     return {
       status: "diagnosed",
-      message: `${detail}. Services are live but verification failed (${failedChecks}) — full app is NOT proven working.`,
+      message: `${detail}. Services are live but optional wiring checks failed (${verification.optionalFailed.join(", ")}) — core app may still work.`,
     };
   }
 
   if (verify.failed.length > 0) {
+    const failedChecks = verification.requiredFailed.length
+      ? verification.requiredFailed.join(", ")
+      : verify.failed.map((f) => `${f.serviceId}.${f.check}`).join(", ");
     return {
       status: "diagnosed",
       message: `${detail}. Verification failed (${failedChecks}) — see timeline for details.`,
@@ -242,9 +257,13 @@ export function computeFinalizeDeployOutcome(
   }
 
   if (backendsOk && frontendsOk && !allChecksPassed) {
+    const missing = verification.requiredChecks
+      .filter((c) => !verification.requiredPassed.has(`${c.serviceId ?? ""}.${c.check ?? ""}`))
+      .map((c) => `${c.serviceId}.${c.check}`)
+      .join(", ");
     return {
       status: "diagnosed",
-      message: `${detail}. Services deployed but not all verification checks completed — see timeline.`,
+      message: `${detail}. Services deployed but required verification did not complete${missing ? ` (${missing})` : ""} — see timeline.`,
     };
   }
 

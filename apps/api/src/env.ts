@@ -1,18 +1,25 @@
 import { fileURLToPath } from "node:url";
-import { config as loadEnvFile } from "dotenv";
+import { effectiveTemporalTaskQueue, loadShipfixEnv, logDatabaseFingerprint } from "@shipfix/db";
 import { z } from "zod";
 import { alphaDefault } from "./alphaLimits";
 
-// Load the repo-root .env for local dev, then allow API-local overrides. Real
-// shell-exported env still wins unless the API-local file explicitly overrides.
-loadEnvFile({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
-loadEnvFile({ path: fileURLToPath(new URL("../.env.local", import.meta.url)), override: true });
+const rootEnvPath = fileURLToPath(new URL("../../../.env", import.meta.url));
+const appLocalEnvPath = fileURLToPath(new URL("../.env.local", import.meta.url));
+
+/** Shared with worker: repo-root `.env` then app-local overrides. */
+export const shipfixEnvLoad = loadShipfixEnv({
+  rootEnvPath,
+  appLocalEnvPath,
+  rootOverride: process.env.NODE_ENV !== "production",
+});
+
+logDatabaseFingerprint("shipfix-api", process.env.DATABASE_URL, shipfixEnvLoad);
 
 /**
  * Validated control-plane environment. Fails fast at boot if misconfigured so a
  * half-configured API never half-works. Never logs values.
  */
-export const EnvSchema = z.object({
+const BaseEnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   API_PORT: z.preprocess(
     (value) => value ?? process.env.PORT ?? 4000,
@@ -20,7 +27,7 @@ export const EnvSchema = z.object({
   ),
   TEMPORAL_ADDRESS: z.string().default("localhost:7233"),
   TEMPORAL_NAMESPACE: z.string().default("default"),
-  TEMPORAL_TASK_QUEUE: z.string().default("shipfix"),
+  TEMPORAL_TASK_QUEUE: z.string().optional(),
   /** Allowed browser origin for the web app (CORS). "*" in dev. */
   WEB_ORIGIN: z.string().default("*"),
   /**
@@ -41,6 +48,15 @@ export const EnvSchema = z.object({
   ALPHA_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(alphaDefault("ALPHA_RATE_LIMIT_WINDOW_MS")),
   ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW: z.coerce.number().int().positive().default(alphaDefault("ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW")),
 });
+
+export const EnvSchema = BaseEnvSchema.transform((value) => ({
+  ...value,
+  TEMPORAL_TASK_QUEUE: effectiveTemporalTaskQueue(
+    value.TEMPORAL_TASK_QUEUE,
+    value.DATABASE_URL,
+    process.env.NODE_ENV,
+  ),
+}));
 
 export const env = EnvSchema.parse(process.env);
 export type Env = z.infer<typeof EnvSchema>;

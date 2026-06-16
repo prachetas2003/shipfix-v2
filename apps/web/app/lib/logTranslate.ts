@@ -87,6 +87,92 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
         tone: "error",
       };
     }
+    case "internal_control_plane_consistency_error":
+      return {
+        title: "Worker could not find this run",
+        detail:
+          "ShipFix started a worker task, but the worker could not find the run record. This usually means API and worker are connected to different databases.",
+        tone: "error",
+      };
+    case "workflow_starting":
+      return {
+        title: "Starting deployment worker",
+        detail: "ShipFix created the run and is asking Temporal to start the workflow.",
+        tone: "progress",
+      };
+    case "workflow_started":
+      return {
+        title: "Deployment workflow started",
+        detail: "Temporal accepted the workflow. A ShipFix worker should pick it up from the task queue next.",
+        tone: "info",
+      };
+    case "internal_workflow_start_failed":
+      return {
+        title: "Workflow did not start",
+        detail:
+          "ShipFix created the run, but Temporal did not accept the workflow. Start Temporal and the worker, then retry.",
+        tone: "error",
+      };
+    case "internal_workflow_start_missing":
+      return {
+        title: "Workflow start was not recorded",
+        detail:
+          "ShipFix queued the run, but no workflow start was recorded. Start Temporal or check the API Temporal configuration, then retry.",
+        tone: "error",
+      };
+    case "internal_worker_not_polling":
+      return {
+        title: "Worker did not pick up the run",
+        detail:
+          "ShipFix queued the run, but the worker did not pick it up. Start the worker or check Temporal/task queue configuration.",
+        tone: "error",
+      };
+    case "internal_validation_stalled":
+      return {
+        title: "Plan validation stalled inside ShipFix",
+        detail:
+          "ShipFix finalized this run so it would not stay validating forever. Restart API and worker, then start a new plan/deploy.",
+        tone: "error",
+      };
+    case "planning_started":
+      return {
+        title: "Starting deployment plan",
+        detail: "ShipFix finished repository analysis and is moving into plan generation.",
+        tone: "progress",
+      };
+    case "plan_generation_started":
+      return {
+        title: "Generating deployment plan",
+        detail: "ShipFix is turning the detected services, database needs, and environment variables into a deploy plan.",
+        tone: "progress",
+      };
+    case "plan_generation_completed":
+      return {
+        title: "Deployment plan generated",
+        detail: "ShipFix generated a plan and is ready to validate it against the supported deployment lane.",
+        tone: "info",
+      };
+    case "internal_plan_transition_failed":
+      return {
+        title: "Planning did not start",
+        detail:
+          "ShipFix analyzed the repo, but the workflow did not enter plan generation. Restart the API and worker and check that they use the same database and Temporal task queue.",
+        tone: "error",
+      };
+    case "internal_plan_generation_failed":
+      return {
+        title: "Plan generation failed inside ShipFix",
+        detail:
+          "ShipFix could not generate the deployment plan. Check the worker logs and LLM configuration, then retry.",
+        tone: "error",
+      };
+    case "internal_plan_generation_stalled":
+      return {
+        title: "Plan generation stalled",
+        detail:
+          "ShipFix started plan generation but did not record a plan or planner error. Restart the API and worker, then retry.",
+        tone: "error",
+      };
     case "repo_clone_started":
       return {
         title: "Fetching repository",
@@ -209,6 +295,13 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
           "The deploy stopped because a provider account needs setup. Fix the provider connection and retry deploy.",
         tone: "warn",
       };
+    case "deploy_provider_limit":
+      return {
+        title: "Vercel project limit reached for this repo",
+        detail:
+          "Vercel refused to create another project for this GitHub repo because the repo is already connected to too many Vercel projects. Delete old Vercel projects or reuse an existing project.",
+        tone: "warn",
+      };
     case "deploy_needs_credential":
       return {
         title: "Provider connection missing",
@@ -230,6 +323,14 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
       return { title: "Step skipped", detail: humanizeRawMessage(ev.message), tone: "info" };
     case "deploy_failed": {
       const kind = str(d.failureKind);
+      if (kind === "provider_limit") {
+        return {
+          title: "Vercel project limit reached for this repo",
+          detail:
+            "Vercel refused to create another project for this GitHub repo because the repo is already connected to too many Vercel projects. Delete old Vercel projects or reuse an existing project.",
+          tone: "warn",
+        };
+      }
       if (kind === "build_failed") {
         return {
           title: role === "backend" ? "Render could not build the backend" : "Provider could not build the service",

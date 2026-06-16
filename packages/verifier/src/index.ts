@@ -17,3 +17,12 @@ export {
   type BackendVerifyOutcome,
   type PlanVerifyOutcome,
 } from "./verify";
+export {
+  OPTIONAL_VERIFICATION_CHECKS,
+  isOptionalVerificationCheck,
+  requiredVerificationChecks,
+  accountPlanVerifySummary,
+  accountVerificationEvents,
+  type PlanVerificationCheck,
+  type VerificationAccounting,
+} from "./verificationOutcome";

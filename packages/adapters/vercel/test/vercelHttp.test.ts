@@ -33,4 +33,31 @@ describe("classifyVercelFailure", () => {
     expect(result.kind).toBe("setup_blocker");
     expect(result.message).toContain("repoId");
   });
+
+  it("classifies repository connection limit as provider_limit", () => {
+    const body = JSON.stringify({
+      error: {
+        code: "bad_request",
+        message: "A Git Repository cannot be connected to more than 10 Projects.",
+        link: "https://vercel.link/repository-connection-limit",
+      },
+    });
+    const result = classifyVercelFailure(400, "Bad Request", body);
+    expect(result.kind).toBe("provider_limit");
+    expect(result.message).toContain("too many Vercel projects");
+    expect(result.message).not.toContain("repo script");
+  });
+
+  it("classifies duplicate env var errors as provider_env_conflict", () => {
+    const body = JSON.stringify({
+      error: {
+        code: "bad_request",
+        message:
+          "A variable with the name `VITE_API_URL` already exists for the target production,preview on branch undefined",
+      },
+    });
+    const result = classifyVercelFailure(400, "Bad Request", body);
+    expect(result.kind).toBe("provider_env_conflict");
+    expect(result.message).toContain("env var conflict");
+  });
 });

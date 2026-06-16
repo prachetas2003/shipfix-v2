@@ -14,6 +14,7 @@ import { PlanPanel } from "../../components/PlanPanel";
 import { ProviderRequirements } from "../../components/ProviderRequirements";
 import { Timeline } from "../../components/Timeline";
 import { WorkerStalledNotice } from "../../components/WorkerStalledNotice";
+import { ControlPlaneConsistencyNotice } from "../../components/ControlPlaneConsistencyNotice";
 
 export default function RunPage({
   params,
@@ -134,7 +135,8 @@ export default function RunPage({
         <ProviderRequirements plan={run.plan} connected={connected} onConnected={refreshProviders} />
       )}
 
-      <WorkerStalledNotice show={run.workerStalled} />
+      <WorkerStalledNotice show={run.workerStalled && !run.controlPlaneMismatch} />
+      <ControlPlaneConsistencyNotice show={run.controlPlaneMismatch} />
       <OutcomeBanner status={snap?.run.status ?? run.status} snapshot={snap} />
       <FixGuidance events={run.events} />
       {run.plan && <PlanPanel plan={run.plan} />}
@@ -165,7 +167,8 @@ function runPageTitle(mode: string | undefined, status: string, fullStackLive: b
   if (mode === "plan" && status === "failed") return "Plan failed";
   if (mode === "deploy" && status === "failed") return "Deploy failed";
   if (mode === "deploy" && status === "diagnosed") return "Deploy needs attention";
-  if (["queued", "cloning", "analyzing", "planning", "provisioning", "deploying", "verifying"].includes(status)) {
+  if (mode === "deploy" && status === "succeeded") return "Deploy succeeded";
+  if (["queued", "cloning", "analyzing", "planning", "validating", "provisioning", "deploying", "verifying"].includes(status)) {
     return "Deployment in progress";
   }
   return mode === "plan" ? "Deployment plan" : "Deployment run";

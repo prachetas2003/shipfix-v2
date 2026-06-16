@@ -71,6 +71,7 @@ export async function deploymentWorkflow(
 
     // Stage 2 — AI proposes a plan; the deterministic validator disposes. The
     // returned plan is already validated (classification downgraded as needed).
+    await planActs.startPlanTransition(input.runId);
     const plan = await planActs.proposePlan(input.runId, ctx);
 
     // plan mode stops here: the validated DeploymentPlan IS the deliverable
@@ -89,8 +90,21 @@ export async function deploymentWorkflow(
     const provision = await deployActs.provisionManagedServices(input.runId);
     const backendDeploy = await deployActs.deployBackendServices(input.runId);
     const frontendDeploy = await deployActs.deployFrontendServices(input.runId);
-    const verify = await deployActs.verifyDeployedPlan(input.runId);
-    await acts.finalizeDeployRun(input.runId, { provision, backendDeploy, frontendDeploy, verify });
+    let verify: Awaited<ReturnType<typeof deployActs.verifyDeployedPlan>> = {
+      passed: [],
+      failed: [],
+      skipped: [],
+    };
+    try {
+      verify = await deployActs.verifyDeployedPlan(input.runId);
+    } finally {
+      await acts.finalizeDeployRun(input.runId, {
+        provision,
+        backendDeploy,
+        frontendDeploy,
+        verify,
+      });
+    }
   } catch (err) {
     // Mark the run failed (best-effort) and let Temporal record the failure.
     await acts.failRun(input.runId, unwrapFailureMessage(err));

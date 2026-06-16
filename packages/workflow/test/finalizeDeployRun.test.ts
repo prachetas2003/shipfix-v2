@@ -59,6 +59,18 @@ describe("computeFinalizeDeployOutcome", () => {
     expect(result.message).not.toContain("failed with no useful");
   });
 
+  it("returns diagnosed when Vercel project limit is hit", () => {
+    const outcome = emptyOutcome();
+    outcome.provision.provisioned = ["db"];
+    outcome.backendDeploy.deployed = ["api"];
+    outcome.frontendDeploy.failed = [{ id: "web", kind: "provider_limit" }];
+
+    const result = computeFinalizeDeployOutcome(fullStackPlan, outcome, caps);
+    expect(result.status).toBe("diagnosed");
+    expect(result.message).toContain("too many Vercel projects");
+    expect(result.message).not.toContain("repo script");
+  });
+
   it("returns failed when nothing live was produced", () => {
     const outcome = emptyOutcome();
     outcome.backendDeploy.failed = [{ id: "api", kind: "deploy_failed" }];
@@ -121,6 +133,30 @@ describe("computeFinalizeDeployOutcome", () => {
 
     const result = computeFinalizeDeployOutcome(planWithDbCheck, outcome, caps);
     expect(result.status).toBe("succeeded");
+  });
+
+  it("returns succeeded when required checks pass even if cors_from fails", () => {
+    const planWithCors: DeploymentPlan = {
+      ...fullStackPlan,
+      verification: [
+        { serviceId: "api", check: "health_path", target: "/health" },
+        { serviceId: "web", check: "frontend_loads" },
+        { serviceId: "api", check: "cors_from", target: "web" },
+      ],
+    };
+    const outcome = emptyOutcome();
+    outcome.provision.provisioned = ["db"];
+    outcome.backendDeploy.deployed = ["api"];
+    outcome.frontendDeploy.deployed = ["web"];
+    outcome.verify.passed = [
+      { serviceId: "api", check: "health_path" },
+      { serviceId: "web", check: "frontend_loads" },
+    ];
+    outcome.verify.failed = [{ serviceId: "api", check: "cors_from" }];
+
+    const result = computeFinalizeDeployOutcome(planWithCors, outcome, caps);
+    expect(result.status).toBe("succeeded");
+    expect(result.message.toLowerCase()).toContain("required checks passed");
   });
 });
 

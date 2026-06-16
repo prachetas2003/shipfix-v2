@@ -42,6 +42,8 @@ export function useRun(runId: string | null): {
   error: string | null;
   /** True when the run sits "queued" with no events — the worker is not picking it up. */
   workerStalled: boolean;
+  /** True when the worker could not find this run in its database. */
+  controlPlaneMismatch: boolean;
 } {
   const [status, setStatus] = useState<LiveStatus>("loading");
   const [events, setEvents] = useState<RunEventRow[]>([]);
@@ -50,6 +52,7 @@ export function useRun(runId: string | null): {
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [workerStalled, setWorkerStalled] = useState(false);
+  const [controlPlaneMismatch, setControlPlaneMismatch] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const eventCountRef = useRef(0);
 
@@ -74,6 +77,7 @@ export function useRun(runId: string | null): {
     setSnapshot(null);
     setError(null);
     setWorkerStalled(false);
+    setControlPlaneMismatch(false);
     eventCountRef.current = 0;
 
     // Worker-down watchdog: while the run is queued and silent, re-check the
@@ -99,9 +103,10 @@ export function useRun(runId: string | null): {
     void (async () => {
       const snap = await loadSnapshot(runId);
       if (cancelled) return;
-      if (snap && TERMINAL.has(snap.run.status)) {
+      // Failed runs still need SSE replay so timeline + failure diagnostics hydrate on refresh.
+      if (snap && TERMINAL.has(snap.run.status) && snap.run.status !== "failed") {
         setStatus(normalize(snap.run.status));
-        return; // finished run: render from snapshot, no SSE needed
+        return;
       }
 
       const es = new EventSource(await withAuthQuery(`${API_BASE}/runs/${runId}/events`));
@@ -113,11 +118,33 @@ export function useRun(runId: string | null): {
         eventCountRef.current += 1;
         setWorkerStalled(false);
         setEvents((prev) => (prev.some((p) => p.seq === row.seq) ? prev : [...prev, row]));
+        if (row.data?.event === "internal_control_plane_consistency_error") {
+          setControlPlaneMismatch(true);
+          setWorkerStalled(false);
+        }
         if (row.data?.event === "analysis_completed" && row.data.repoContext) {
           setRepoContext(row.data.repoContext);
         }
         if (row.data?.event === "plan_validated" && row.data.plan) {
           setPlan(row.data.plan as PlanView);
+        }
+        const ev = row.data?.event;
+        const stage = row.data?.stage ?? row.stage;
+        if (
+          ev === "verification" ||
+          ev === "service_deployed" ||
+          ev === "verify_skipped" ||
+          stage === "succeeded" ||
+          stage === "diagnosed" ||
+          stage === "failed" ||
+          stage === "verifying"
+        ) {
+        void loadSnapshot(runId).then((snap) => {
+          if (!cancelled && snap) {
+            setSnapshot(snap);
+            if (snap.run.status === "failed") setWorkerStalled(false);
+          }
+        });
         }
       });
 
@@ -148,5 +175,5 @@ export function useRun(runId: string | null): {
     };
   }, [runId, loadSnapshot]);
 
-  return { status, events, plan, repoContext, snapshot, error, workerStalled };
+  return { status, events, plan, repoContext, snapshot, error, workerStalled, controlPlaneMismatch };
 }

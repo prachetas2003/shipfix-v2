@@ -1,15 +1,28 @@
-import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { config as loadEnvFile } from "dotenv";
+import {
+  createDb,
+  effectiveTemporalTaskQueue,
+  loadShipfixEnv,
+  logDatabaseFingerprint,
+  workerHeartbeats,
+} from "@shipfix/db";
 import { NativeConnection, Worker } from "@temporalio/worker";
 import { activities, TASK_QUEUE, workflowsPath } from "@shipfix/workflow";
 
-// Load repo-root .env for local dev, then allow worker-local overrides.
-// Activities read DATABASE_URL, Temporal, provider, and LLM config at runtime.
 const rootEnvPath = fileURLToPath(new URL("../../../.env", import.meta.url));
-const workerEnvPath = fileURLToPath(new URL("../.env.local", import.meta.url));
-const rootEnvResult = loadEnvFile({ path: rootEnvPath });
-const workerEnvResult = loadEnvFile({ path: workerEnvPath, override: true });
+const appLocalEnvPath = fileURLToPath(new URL("../.env.local", import.meta.url));
+export const shipfixEnvLoad = loadShipfixEnv({
+  rootEnvPath,
+  appLocalEnvPath,
+  rootOverride: process.env.NODE_ENV !== "production",
+});
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const workerId = `worker-${process.pid}`;
+const effectiveTaskQueue = effectiveTemporalTaskQueue(
+  process.env.TEMPORAL_TASK_QUEUE ?? TASK_QUEUE,
+  process.env.DATABASE_URL,
+  process.env.NODE_ENV,
+);
 
 function providerKeyEnv(provider: string | undefined): string | null {
   const normalized = provider?.trim().toLowerCase();
@@ -20,6 +33,8 @@ function providerKeyEnv(provider: string | undefined): string | null {
 }
 
 function logSafeEnvDiagnostic(): void {
+  logDatabaseFingerprint("shipfix-worker", process.env.DATABASE_URL, shipfixEnvLoad);
+
   const provider = process.env.LLM_PROVIDER?.trim().toLowerCase();
   const expectedKey = providerKeyEnv(provider);
   const acceptedProvider = provider === "openai" || provider === "anthropic" || provider === "gemini";
@@ -28,11 +43,14 @@ function logSafeEnvDiagnostic(): void {
   console.log("[shipfix-worker] env diagnostic", {
     cwd: process.cwd(),
     rootEnvPath,
-    rootEnvExists: existsSync(rootEnvPath),
-    rootEnvLoaded: !rootEnvResult.error,
-    workerEnvPath,
-    workerEnvExists: existsSync(workerEnvPath),
-    workerEnvLoaded: !workerEnvResult.error,
+    rootEnvExists: shipfixEnvLoad.rootEnvExists,
+    rootEnvLoaded: shipfixEnvLoad.rootEnvLoaded,
+    rootEnvOverride: shipfixEnvLoad.rootEnvOverride,
+    workerEnvPath: appLocalEnvPath,
+    workerEnvExists: shipfixEnvLoad.appLocalEnvExists,
+    workerEnvLoaded: shipfixEnvLoad.appLocalEnvLoaded,
+    workerEnvOverride: shipfixEnvLoad.appLocalEnvOverride,
+    envSourcePath: shipfixEnvLoad.envSourcePath,
     LLM_PROVIDER_present: Boolean(process.env.LLM_PROVIDER?.trim()),
     LLM_PROVIDER_accepted: acceptedProvider,
     LLM_MODEL_present: Boolean(process.env.LLM_MODEL?.trim()),
@@ -45,6 +63,8 @@ function logSafeEnvDiagnostic(): void {
     LLM_API_KEY_legacy_present: legacyFallbackPresent,
     expected_provider_key_present: expectedKey ? Boolean(process.env[expectedKey]?.trim()) : false,
     provider_key_or_legacy_present: expectedKey ? Boolean(process.env[expectedKey]?.trim()) || legacyFallbackPresent : false,
+    TEMPORAL_ADDRESS: process.env.TEMPORAL_ADDRESS || "localhost:7233",
+    TEMPORAL_TASK_QUEUE: effectiveTaskQueue,
   });
   if (legacyFallbackPresent && expectedKey && !process.env[expectedKey]?.trim()) {
     // eslint-disable-next-line no-console
@@ -57,19 +77,17 @@ function logSafeEnvDiagnostic(): void {
  *
  * Prerequisite: a running Temporal server. For local dev:
  *   temporal server start-dev
- *
- * The worker registers workflow code (bundled into an isolated context by
- * Temporal) and the activity implementations (which do the real I/O).
  */
 
 async function run(): Promise<void> {
   logSafeEnvDiagnostic();
   const address = process.env.TEMPORAL_ADDRESS || "localhost:7233";
+  const namespace = process.env.TEMPORAL_NAMESPACE || "default";
   if (!process.env.DATABASE_URL) {
     // eslint-disable-next-line no-console
     console.warn(
-      "[shipfix-worker] DATABASE_URL is not set — analyze activities will fail. " +
-        "Set it in .env or the shell before running.",
+      "[shipfix-worker] DATABASE_URL is not set — activities will fail. " +
+        "Set it in repo-root .env or apps/worker/.env.local, then restart API and worker together.",
     );
   }
   if (!process.env.LLM_PROVIDER?.trim() || !process.env.LLM_MODEL?.trim()) {
@@ -85,15 +103,67 @@ async function run(): Promise<void> {
     connection,
     workflowsPath,
     activities,
-    taskQueue: TASK_QUEUE,
-    namespace: process.env.TEMPORAL_NAMESPACE || "default",
+    taskQueue: effectiveTaskQueue,
+    namespace,
+  });
+
+  const stopHeartbeat = startHeartbeat({
+    address,
+    namespace,
+    taskQueue: effectiveTaskQueue,
   });
 
   // eslint-disable-next-line no-console
   console.log(
-    `[shipfix-worker] connected to Temporal at ${address}; polling task queue "${TASK_QUEUE}"`,
+    `[shipfix-worker] connected to Temporal at ${address}; polling task queue "${effectiveTaskQueue}"`,
   );
-  await worker.run();
+  try {
+    await worker.run();
+  } finally {
+    stopHeartbeat();
+  }
+}
+
+function startHeartbeat(args: { address: string; namespace: string; taskQueue: string }): () => void {
+  if (!process.env.DATABASE_URL) return () => {};
+  const db = createDb(process.env.DATABASE_URL);
+  const beat = async (): Promise<void> => {
+    try {
+      await db
+        .insert(workerHeartbeats)
+        .values({
+          id: workerId,
+          taskQueue: args.taskQueue,
+          temporalAddress: args.address,
+          temporalNamespace: args.namespace,
+          status: "polling",
+          lastSeenAt: new Date(),
+          meta: {
+            envSourcePath: shipfixEnvLoad.envSourcePath,
+          },
+        })
+        .onConflictDoUpdate({
+          target: workerHeartbeats.id,
+          set: {
+            taskQueue: args.taskQueue,
+            temporalAddress: args.address,
+            temporalNamespace: args.namespace,
+            status: "polling",
+            lastSeenAt: new Date(),
+            meta: {
+              envSourcePath: shipfixEnvLoad.envSourcePath,
+            },
+          },
+        });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[shipfix-worker] heartbeat write failed:", err instanceof Error ? err.message : String(err));
+    }
+  };
+  void beat();
+  const interval = setInterval(() => void beat(), HEARTBEAT_INTERVAL_MS);
+  interval.unref();
+  return () => clearInterval(interval);
 }
 
 run().catch((err) => {

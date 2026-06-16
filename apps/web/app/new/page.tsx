@@ -7,6 +7,7 @@ import { api, type PlanView, type RunEventRow } from "../lib/api";
 import { deriveRequiredProviders, missingProviders } from "../lib/planRequirements";
 import { useRun } from "../lib/useRun";
 import { WorkerStalledNotice } from "../components/WorkerStalledNotice";
+import { ControlPlaneConsistencyNotice } from "../components/ControlPlaneConsistencyNotice";
 import { buttonStyle, card, colors, inputStyle, mono } from "../lib/theme";
 import { BrandMark } from "../components/BrandMark";
 import { FixGuidance } from "../components/FixGuidance";
@@ -184,7 +185,8 @@ export default function NewDeploymentPage(): React.ReactElement {
               ShipFix is reading <code style={{ fontFamily: mono }}>{repo}</code>, identifying services, and checking whether it can deploy them safely.
             </p>
           </div>
-          <WorkerStalledNotice show={run.workerStalled} />
+          <WorkerStalledNotice show={run.workerStalled && !run.controlPlaneMismatch} />
+          <ControlPlaneConsistencyNotice show={run.controlPlaneMismatch} />
           <Timeline events={run.events} />
           {run.status === "failed" && !capturedPlan && (
             <div style={{ ...card, borderColor: colors.errorBorder, background: colors.errorBg, color: colors.errorText, marginTop: "1rem" }}>
@@ -243,7 +245,8 @@ export default function NewDeploymentPage(): React.ReactElement {
               ShipFix provisions the database, deploys backend and frontend services, wires env vars, and verifies the live system.
             </p>
           </div>
-          <WorkerStalledNotice show={run.workerStalled} />
+          <WorkerStalledNotice show={run.workerStalled && !run.controlPlaneMismatch} />
+          <ControlPlaneConsistencyNotice show={run.controlPlaneMismatch} />
           <Timeline events={run.events} />
         </section>
       )}

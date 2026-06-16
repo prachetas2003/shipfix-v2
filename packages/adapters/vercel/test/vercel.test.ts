@@ -33,6 +33,56 @@ function linkedProject(projectId: string) {
   });
 }
 
+/** Default env list/create handlers for project env upsert. */
+function handleEnvUpsert(
+  u: string,
+  method: string,
+  init: RequestInit | undefined,
+  projectId: string,
+  state: {
+    envs: Array<{ id: string; key: string; target: string[]; gitBranch?: null; value?: string }>;
+    createAttempts?: { count: number };
+    forceDuplicateOnCreate?: boolean;
+  },
+): Response | null {
+  if (!u.includes(`/v10/projects/${projectId}/env`)) return null;
+  if (method === "GET" && !u.match(/\/env\/[^/?]+$/)) {
+    return jsonResponse({ envs: state.envs });
+  }
+  const deleteMatch = u.match(/\/env\/([^/?]+)$/);
+  if (deleteMatch && method === "DELETE") {
+    state.envs = state.envs.filter((e) => e.id !== deleteMatch[1]);
+    return jsonResponse({ deleted: true });
+  }
+  if (method === "POST" && u.endsWith(`/v10/projects/${projectId}/env`)) {
+    const body = JSON.parse(String(init?.body)) as { key: string; value: string; target: string[] };
+    const duplicate = state.envs.some(
+      (e) => e.key === body.key && e.target.join(",") === body.target.join(","),
+    );
+    if (state.forceDuplicateOnCreate || duplicate) {
+      if (state.createAttempts) state.createAttempts.count++;
+      return jsonResponse(
+        {
+          error: {
+            code: "bad_request",
+            message: `A variable with the name \`${body.key}\` already exists for the target production,preview on branch undefined`,
+          },
+        },
+        400,
+      );
+    }
+    state.envs.push({
+      id: `env_${state.envs.length + 1}`,
+      key: body.key,
+      target: body.target,
+      gitBranch: null,
+      value: body.value,
+    });
+    return jsonResponse({ created: true });
+  }
+  return null;
+}
+
 describe("createVercelAdapter", () => {
   it("creates a project, resolves repoId, deploys from git with repoId, and waits for READY", async () => {
     let deployPolls = 0;
@@ -48,9 +98,8 @@ describe("createVercelAdapter", () => {
       if (u.endsWith("/v11/projects") && method === "POST") {
         return jsonResponse({ id: "prj_1", name: "shipfix-run-web" });
       }
-      if (u.includes("/v10/projects/prj_1/env") && method === "POST") {
-        return jsonResponse({ created: true });
-      }
+      const envRes = handleEnvUpsert(u, method, init, "prj_1", { envs: [] });
+      if (envRes) return envRes;
       if (u.includes("/v9/projects/prj_1") && method === "GET") {
         return linkedProject("prj_1");
       }
@@ -553,5 +602,224 @@ describe("createVercelAdapter", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.logs).toContain("frontend_static");
+  });
+
+  it("reuses a stored Vercel project id without listing or creating by name", async () => {
+    let createPosted = false;
+    let listPosted = false;
+
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      if (u.includes("/v9/projects?") && method === "GET") {
+        listPosted = true;
+        return jsonResponse({ projects: [] });
+      }
+      if (u.endsWith("/v11/projects") && method === "POST") {
+        createPosted = true;
+        return jsonResponse({ id: "prj_new" });
+      }
+      if (u.includes("/v9/projects/prj_stored") && method === "PATCH") {
+        return jsonResponse({ id: "prj_stored" });
+      }
+      if (u.includes("/v9/projects/prj_stored") && method === "GET") {
+        return linkedProject("prj_stored");
+      }
+      if (u.endsWith("/v13/deployments") && method === "POST") {
+        return jsonResponse({ id: "dpl_1" });
+      }
+      if (u.includes("/v13/deployments/dpl_1") && method === "GET") {
+        return jsonResponse({ id: "dpl_1", readyState: "READY", alias: ["https://x.vercel.app"] });
+      }
+      return new Response("unexpected", { status: 500 });
+    }) as unknown as typeof fetch;
+
+    const vercel = createVercelAdapter({ fetchImpl: fakeFetch, apiBase: "https://vercel.test", pollIntervalMs: 1 });
+    const result = await vercel.deploy({
+      service,
+      repo: { fullName: REPO_SLUG, branch: "main" },
+      rootDir: "apps/web",
+      resourceName: "sf-proj-web",
+      existingExternalId: "prj_stored",
+      env: {},
+      credentials: { provider: "vercel", values: { apiToken: "k" } },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.externalId).toBe("prj_stored");
+    expect(createPosted).toBe(false);
+    expect(listPosted).toBe(false);
+  });
+
+  it("recreates by stable name when the stored Vercel project was deleted externally", async () => {
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      if (u.includes("/v9/projects/prj_gone") && method === "GET") {
+        return new Response("not found", { status: 404 });
+      }
+      if (u.includes("/v9/projects?") && method === "GET") {
+        return jsonResponse({ projects: [{ id: "prj_by_name", name: "sf-proj-web" }] });
+      }
+      if (u.includes("/v9/projects/prj_by_name") && method === "PATCH") {
+        return jsonResponse({ id: "prj_by_name" });
+      }
+      if (u.includes("/v9/projects/prj_by_name") && method === "GET") {
+        return linkedProject("prj_by_name");
+      }
+      if (u.endsWith("/v13/deployments") && method === "POST") {
+        return jsonResponse({ id: "dpl_1" });
+      }
+      if (u.includes("/v13/deployments/dpl_1")) {
+        return jsonResponse({ id: "dpl_1", readyState: "READY", alias: ["https://x.vercel.app"] });
+      }
+      return new Response("unexpected", { status: 500 });
+    }) as unknown as typeof fetch;
+
+    const vercel = createVercelAdapter({ fetchImpl: fakeFetch, apiBase: "https://vercel.test", pollIntervalMs: 1 });
+    const result = await vercel.deploy({
+      service,
+      repo: { fullName: REPO_SLUG, branch: "main" },
+      rootDir: "apps/web",
+      resourceName: "sf-proj-web",
+      existingExternalId: "prj_gone",
+      env: {},
+      credentials: { provider: "vercel", values: { apiToken: "k" } },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.externalId).toBe("prj_by_name");
+  });
+
+  it("classifies repository connection limit as provider_limit", async () => {
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      if (u.includes("/v9/projects?") && method === "GET") {
+        return jsonResponse({ projects: [] });
+      }
+      if (u.endsWith("/v11/projects") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: "bad_request",
+              message: "A Git Repository cannot be connected to more than 10 Projects.",
+              link: "https://vercel.link/repository-connection-limit",
+            },
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("unexpected", { status: 500 });
+    }) as unknown as typeof fetch;
+
+    const vercel = createVercelAdapter({ fetchImpl: fakeFetch, apiBase: "https://vercel.test", pollIntervalMs: 1 });
+    const result = await vercel.deploy({
+      service,
+      repo: { fullName: REPO_SLUG, branch: "main" },
+      rootDir: "apps/web",
+      resourceName: "sf-proj-web",
+      env: {},
+      credentials: { provider: "vercel", values: { apiToken: "k" } },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failureKind).toBe("provider_limit");
+    expect(result.logs).toContain("too many Vercel projects");
+  });
+
+  it("replaces an existing VITE_API_URL on redeploy without failing", async () => {
+    const envState = {
+      envs: [
+        {
+          id: "env_existing",
+          key: "VITE_API_URL",
+          target: ["production", "preview"],
+          gitBranch: null as null,
+          value: "https://old.onrender.com",
+        },
+      ],
+    };
+    let deleteCount = 0;
+
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      if (u.includes("/v9/projects?") && method === "GET") {
+        return jsonResponse({ projects: [{ id: "prj_existing", name: "sf-proj-web" }] });
+      }
+      if (u.includes("/v9/projects/prj_existing") && method === "PATCH") {
+        return jsonResponse({ id: "prj_existing" });
+      }
+      if (u.includes("/v9/projects/prj_existing") && method === "GET") {
+        return linkedProject("prj_existing");
+      }
+      if (u.includes("/v10/projects/prj_existing/env/env_existing") && method === "DELETE") {
+        deleteCount++;
+        envState.envs = [];
+        return jsonResponse({ deleted: true });
+      }
+      const envRes = handleEnvUpsert(u, method, init, "prj_existing", envState);
+      if (envRes) return envRes;
+      if (u.endsWith("/v13/deployments") && method === "POST") {
+        return jsonResponse({ id: "dpl_1" });
+      }
+      if (u.includes("/v13/deployments/dpl_1") && method === "GET") {
+        return jsonResponse({ id: "dpl_1", readyState: "READY", alias: ["https://x.vercel.app"] });
+      }
+      return new Response("unexpected", { status: 500 });
+    }) as unknown as typeof fetch;
+
+    const logs: string[] = [];
+    const vercel = createVercelAdapter({ fetchImpl: fakeFetch, apiBase: "https://vercel.test", pollIntervalMs: 1 });
+    const result = await vercel.deploy({
+      service,
+      repo: { fullName: REPO_SLUG, branch: "main" },
+      rootDir: "apps/web",
+      resourceName: "sf-proj-web",
+      existingExternalId: "prj_existing",
+      env: { VITE_API_URL: "https://api-new.onrender.com" },
+      credentials: { provider: "vercel", values: { apiToken: "k" } },
+      onLog: (line) => logs.push(line),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.externalId).toBe("prj_existing");
+    expect(deleteCount).toBe(1);
+    expect(envState.envs[0]?.value).toBe("https://api-new.onrender.com");
+    expect(logs.some((l) => l.includes("env var exists, replacing VITE_API_URL"))).toBe(true);
+    expect(logs.some((l) => l.includes("env var VITE_API_URL updated"))).toBe(true);
+  });
+
+  it("classifies unrecoverable duplicate env var errors as provider_env_conflict", async () => {
+    const envState = { envs: [] as Array<{ id: string; key: string; target: string[]; gitBranch: null }>, forceDuplicateOnCreate: true };
+
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      if (u.includes("/v9/projects?") && method === "GET") {
+        return jsonResponse({ projects: [] });
+      }
+      if (u.endsWith("/v11/projects") && method === "POST") {
+        return jsonResponse({ id: "prj_1", name: "sf-proj-web" });
+      }
+      const envRes = handleEnvUpsert(u, method, init, "prj_1", envState);
+      if (envRes) return envRes;
+      return new Response("unexpected", { status: 500 });
+    }) as unknown as typeof fetch;
+
+    const vercel = createVercelAdapter({ fetchImpl: fakeFetch, apiBase: "https://vercel.test", pollIntervalMs: 1 });
+    const result = await vercel.deploy({
+      service,
+      repo: { fullName: REPO_SLUG, branch: "main" },
+      rootDir: "apps/web",
+      resourceName: "sf-proj-web",
+      env: { VITE_API_URL: "https://api.onrender.com" },
+      credentials: { provider: "vercel", values: { apiToken: "k" } },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failureKind).toBe("provider_env_conflict");
+    expect(result.logs).toContain("env var conflict");
   });
 });

@@ -313,10 +313,32 @@ describe("deployBackendServices", () => {
 
     expect(summary.deployed).toEqual(["api"]);
     expect(h.adapterBehavior.renderCalls).toHaveLength(1);
+    const call = h.adapterBehavior.renderCalls[0] as { resourceName: string; existingExternalId?: string };
+    expect(call.resourceName).toBe("sf-proj1-api");
+    expect(call.resourceName).not.toContain(RUN_ID);
     const apiRow = h.rows.deployed_resources.find((r) => r.serviceId === "api");
     expect(apiRow).toMatchObject({ status: "live", url: "https://api.onrender.com", provider: "render" });
     const deployedEvent = h.events.find((e) => e.data.event === "service_deployed");
     expect(deployedEvent?.data.publicUrl).toBe("https://api.onrender.com");
+  });
+
+  it("reuses a persisted Render service id from an earlier run", async () => {
+    h.rows.deployed_resources.push(liveDbRow(), {
+      runId: "run-old",
+      serviceId: "api",
+      kind: "service",
+      provider: "render",
+      externalId: "srv-persisted",
+      url: null,
+      status: "failed",
+    });
+    h.rows.runs.push({ id: "run-old", projectId: "proj-1", commitSha: "b".repeat(40), mode: "deploy", status: "failed" });
+
+    await deployBackendServices(RUN_ID);
+
+    const call = h.adapterBehavior.renderCalls[0] as { existingExternalId?: string; resourceName: string };
+    expect(call.existingExternalId).toBe("srv-persisted");
+    expect(call.resourceName).toBe("sf-proj1-api");
   });
 
   it("propagates the adapter failureKind and persists the failed attempt", async () => {
@@ -393,9 +415,72 @@ describe("deployFrontendServices", () => {
     const summary = await deployFrontendServices(RUN_ID);
 
     expect(summary.deployed).toEqual(["web"]);
-    const call = h.adapterBehavior.vercelCalls[0] as { env: Record<string, string> };
+    const call = h.adapterBehavior.vercelCalls[0] as {
+      env: Record<string, string>;
+      resourceName: string;
+      existingExternalId?: string;
+    };
     expect(call.env.VITE_API_URL).toBe("https://api.onrender.com");
+    expect(call.resourceName).toBe("sf-proj1-web");
+    expect(call.resourceName).not.toContain(RUN_ID);
+    expect(call.existingExternalId).toBeUndefined();
     const webRow = h.rows.deployed_resources.find((r) => r.serviceId === "web");
     expect(webRow).toMatchObject({ status: "live", url: "https://web.vercel.app" });
+  });
+
+  it("reuses a persisted Vercel project id from an earlier run of the same ShipFix project", async () => {
+    h.rows.deployed_resources.push(liveDbRow(), liveApiRow(), {
+      runId: "run-old",
+      serviceId: "web",
+      kind: "service",
+      provider: "vercel",
+      externalId: "prj-persisted",
+      url: null,
+      status: "failed",
+    });
+    h.rows.runs.push({ id: "run-old", projectId: "proj-1", commitSha: "b".repeat(40), mode: "deploy", status: "failed" });
+
+    await deployFrontendServices(RUN_ID);
+
+    const call = h.adapterBehavior.vercelCalls[0] as { existingExternalId?: string; resourceName: string };
+    expect(call.existingExternalId).toBe("prj-persisted");
+    expect(call.resourceName).toBe("sf-proj1-web");
+  });
+
+  it("does not emit repo fix guidance for provider project limit failures", async () => {
+    h.rows.deployed_resources.push(liveDbRow(), liveApiRow());
+    h.adapterBehavior.vercel.deploy = async () => ({
+      ok: false,
+      externalId: null,
+      publicUrl: null,
+      status: "deploy_failed",
+      failureKind: "provider_limit",
+      logs:
+        "Vercel refused to create another project for this GitHub repo because the repo is already connected to too many Vercel projects.",
+    });
+
+    const summary = await deployFrontendServices(RUN_ID);
+
+    expect(summary.failed).toEqual([{ id: "web", kind: "provider_limit" }]);
+    expect(h.events.some((e) => e.data.event === "deploy_fix_guidance")).toBe(false);
+    expect(h.events.some((e) => e.data.event === "deploy_provider_limit")).toBe(true);
+  });
+
+  it("does not emit repo fix guidance for provider env var conflicts", async () => {
+    h.rows.deployed_resources.push(liveDbRow(), liveApiRow());
+    h.adapterBehavior.vercel.deploy = async () => ({
+      ok: false,
+      externalId: "prj_1",
+      publicUrl: null,
+      status: "deploy_failed",
+      failureKind: "provider_env_conflict",
+      logs: "Vercel env var conflict for VITE_API_URL: ShipFix could not replace the env var after retry.",
+    });
+
+    const summary = await deployFrontendServices(RUN_ID);
+
+    expect(summary.failed).toEqual([{ id: "web", kind: "provider_env_conflict" }]);
+    expect(h.events.some((e) => e.data.event === "deploy_fix_guidance")).toBe(false);
+    expect(h.events.some((e) => e.data.event === "deploy_provider_env_conflict")).toBe(true);
   });
 });

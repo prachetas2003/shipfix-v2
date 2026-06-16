@@ -131,8 +131,30 @@ describe("buildAppResourceDisplay", () => {
     const projectId = "b015561e-4a18-491c-998d-a53c-bb8e9789e514";
     const host = display.database?.host ?? "";
     expect(projectId).not.toBe(host);
-    // Bare Neon host must not become href (would navigate to /apps/ep-winter-breeze...)
     expect(safeExternalHref(host)).toBeNull();
     expect(host).not.toMatch(/^https?:\/\//);
+  });
+
+  it("derives health URL from plan when verification passed without a url field", () => {
+    const display = buildAppResourceDisplay({
+      resources,
+      layers,
+      verification: [
+        {
+          serviceId: "api",
+          check: "health_path",
+          ok: true,
+          skipped: false,
+          statusCode: 200,
+          url: null,
+          assumedPath: false,
+        },
+      ],
+      plan: { services: [{ id: "api", type: "node_api", healthCheckPath: "/health" }] },
+    })!;
+    expect(display.backend?.healthCheckUrl).toBe(
+      "https://shipfix-b015561e-4a18-491c-998d.onrender.com/health",
+    );
+    expect(display.backend?.healthCheckPassed).toBe(true);
   });
 });

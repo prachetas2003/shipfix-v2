@@ -61,14 +61,28 @@ function layerState(
 function backendHealthCheck(
   verification: VerificationEntry[],
   backendServiceId: string | undefined,
+  backendBaseUrl: string | null,
+  plannedHealthPath: string | null | undefined,
 ): VerificationEntry | undefined {
   if (!backendServiceId) return undefined;
-  return verification.find(
-    (v) =>
+  for (let i = verification.length - 1; i >= 0; i--) {
+    const v = verification[i];
+    if (
       v.serviceId === backendServiceId &&
       (v.check === "health_path" || v.check === "http_2xx") &&
-      !v.skipped,
-  );
+      !v.skipped &&
+      v.ok
+    ) {
+      if (v.url) return v;
+      if (backendBaseUrl && plannedHealthPath) {
+        const base = backendBaseUrl.replace(/\/+$/, "");
+        const path = plannedHealthPath.startsWith("/") ? plannedHealthPath : `/${plannedHealthPath}`;
+        return { ...v, url: `${base}${path}` };
+      }
+      return v;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -79,15 +93,22 @@ export function buildAppResourceDisplay(input: {
   resources: SnapshotResource[];
   layers: RunLayers | null;
   verification?: VerificationEntry[];
+  plan?: { services?: Array<{ id: string; type: string; healthCheckPath?: string | null }> } | null;
 }): AppResourceDisplay | null {
   if (!input.layers) return null;
 
-  const { resources, layers, verification = [] } = input;
+  const { resources, layers, verification = [], plan } = input;
   const frontendRes = resources.find((r) => r.role === "frontend");
   const backendRes = resources.find((r) => r.role === "backend");
   const dbRes = resources.find((r) => r.role === "database");
+  const backendPlan = plan?.services?.find((s) => s.type === "node_api" || s.id === backendRes?.serviceId);
 
-  const health = backendHealthCheck(verification, backendRes?.serviceId);
+  const health = backendHealthCheck(
+    verification,
+    backendRes?.serviceId,
+    safeExternalHref(layers.backend?.url ?? backendRes?.url),
+    backendPlan?.healthCheckPath,
+  );
 
   const frontend: FrontendDisplay | null = layers.frontend
     ? {

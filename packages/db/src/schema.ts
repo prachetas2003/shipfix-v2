@@ -197,6 +197,17 @@ export const llmUsage = pgTable("llm_usage", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const workerHeartbeats = pgTable("worker_heartbeats", {
+  id: text("id").primaryKey(),
+  taskQueue: text("task_queue").notNull(),
+  temporalAddress: text("temporal_address").notNull(),
+  temporalNamespace: text("temporal_namespace").notNull().default("default"),
+  status: text("status").notNull().default("polling"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  meta: jsonb("meta"),
+});
+
 export const schema = {
   users,
   providerAccounts,
@@ -207,4 +218,5 @@ export const schema = {
   deployedResources,
   runInputs,
   llmUsage,
+  workerHeartbeats,
 };

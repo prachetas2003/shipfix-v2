@@ -22,21 +22,30 @@ export function OutcomeBanner({
     resources: snapshot.resources,
     layers: snapshot.layers,
     verification: snapshot.verification,
+    plan: snapshot.plan,
   });
   if (!display) return null;
 
   const allLive = display.fullStack.live;
   const isPlanRun = snapshot.run.mode === "plan";
+  const runStatus = status;
+  const terminal = runStatus === "succeeded" || runStatus === "diagnosed" || runStatus === "failed";
   const hasAnyLiveResource = snapshot.resources.some((r) => r.status === "live");
   const headline = allLive
     ? "Your app is live"
-    : isPlanRun && status === "succeeded"
+    : isPlanRun && runStatus === "succeeded"
       ? "Plan generated. App not deployed yet."
-      : status === "failed"
+      : runStatus === "failed"
         ? deployFailureHeadline(snapshot)
-        : hasAnyLiveResource
-          ? "Part of the stack is live, but verification is not complete."
-          : "App not deployed yet.";
+        : runStatus === "succeeded"
+          ? "Deploy succeeded with partial verification"
+          : runStatus === "diagnosed" && hasAnyLiveResource
+            ? "Deploy needs attention"
+            : terminal
+              ? "Deploy finished without full verification"
+              : hasAnyLiveResource
+                ? "Part of the stack is live, but verification is not complete."
+                : "App not deployed yet.";
 
   const tone = allLive
     ? { border: colors.successDeep, bg: colors.successBg, text: colors.successText }

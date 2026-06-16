@@ -50,6 +50,10 @@ export type RunFailureEvent =
   | "llm_unavailable"
   | "llm_config_missing"
   | "planning_failed"
+  | "internal_plan_transition_failed"
+  | "internal_plan_generation_failed"
+  | "internal_plan_generation_stalled"
+  | "internal_control_plane_consistency_error"
   | "run_failed";
 
 export interface ClassifiedFailure {
@@ -74,6 +78,21 @@ const LLM_UNAVAILABLE: ClassifiedFailure = {
  *  4. Other planning-flavored failures.
  */
 export function failureEventForMessage(message: string): ClassifiedFailure {
+  if (/internal_plan_transition_failed/i.test(message)) {
+    return { event: "internal_plan_transition_failed", title: "Plan transition failed inside ShipFix" };
+  }
+  if (/internal_plan_generation_stalled/i.test(message)) {
+    return { event: "internal_plan_generation_stalled", title: "Plan generation stalled inside ShipFix" };
+  }
+  if (/internal_plan_generation_failed/i.test(message)) {
+    return { event: "internal_plan_generation_failed", title: "Plan generation failed inside ShipFix" };
+  }
+  if (/Run [0-9a-f-]{36} not found/i.test(message) || /internal_control_plane_consistency_error/i.test(message)) {
+    return {
+      event: "internal_control_plane_consistency_error",
+      title: "Control plane database mismatch",
+    };
+  }
   const llmKind = llmKindFromMessage(message);
   if (llmKind === "rate_limited" || llmKind === "unavailable" || llmKind === "timeout") {
     return LLM_UNAVAILABLE;
@@ -95,6 +114,12 @@ export function failureEventForMessage(message: string): ClassifiedFailure {
 
 /** Classify from the typed error when available; fall back to the message. */
 export function failureEventForError(err: unknown): ClassifiedFailure {
+  if (err instanceof Error && err.name === "ControlPlaneConsistencyError") {
+    return {
+      event: "internal_control_plane_consistency_error",
+      title: "Control plane database mismatch",
+    };
+  }
   if (err instanceof LLMProviderError) {
     if (err.kind === "auth") return { event: "llm_config_missing", title: "Planner setup is invalid" };
     if (err.kind === "bad_request") return { event: "planning_failed", title: "Planning failed" };

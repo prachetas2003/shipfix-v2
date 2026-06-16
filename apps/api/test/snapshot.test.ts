@@ -105,6 +105,37 @@ describe("deriveLayers", () => {
     expect(layers.fullStack.live).toBe(false);
     expect(layers.fullStack.detail).toContain("verification failed");
   });
+
+  it("reports full-stack live when required checks pass and cors_from fails", () => {
+    const fullPlan: PlanLite = {
+      ...plan,
+      verification: [
+        { serviceId: "api", check: "health_path", target: "/health" },
+        { serviceId: "web", check: "frontend_loads" },
+        { serviceId: "api", check: "cors_from", target: "web" },
+      ],
+    };
+    const rows = [
+      row({ serviceId: "db", kind: "managed_db", provider: "neon", url: "db-host", exposesEnv: "DATABASE_URL" }),
+      row({ serviceId: "api", provider: "render", url: "https://api.onrender.com" }),
+      row({ serviceId: "web", provider: "vercel", url: "https://web.vercel.app" }),
+    ];
+    const resources = toSnapshotResources(rows, fullPlan);
+    const layers = deriveLayers(resources, fullPlan, [
+      { serviceId: "api", check: "health_path", ok: true, skipped: false, statusCode: 200, url: "https://api.onrender.com/health", assumedPath: false },
+      { serviceId: "web", check: "frontend_loads", ok: true, skipped: false, statusCode: 200, url: "https://web.vercel.app/", assumedPath: false },
+      { serviceId: "api", check: "cors_from", ok: false, skipped: false, statusCode: 200, url: "https://api.onrender.com/health", assumedPath: false },
+    ]);
+    expect(layers.fullStack.live).toBe(true);
+  });
+
+  it("maps frontend_ssr to the frontend layer", () => {
+    const nextPlan: PlanLite = {
+      services: [{ id: "web", type: "frontend_ssr", provider: "vercel" }],
+      verification: [{ serviceId: "web", check: "frontend_loads" }],
+    };
+    expect(roleForResource(row({ serviceId: "web", provider: "vercel" }), nextPlan)).toBe("frontend");
+  });
 });
 
 describe("verificationFromEvents", () => {

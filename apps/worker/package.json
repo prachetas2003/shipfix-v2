@@ -10,6 +10,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@shipfix/db": "workspace:^",
     "@shipfix/workflow": "workspace:*",
     "@temporalio/worker": "^1.11.7",
     "dotenv": "^16.4.7"

@@ -43,6 +43,8 @@ function stageForFailure(failureKind: DeployFailureKind): FailingStage {
     case "timeout":
       return "timeout";
     case "setup_blocker":
+    case "provider_limit":
+    case "provider_env_conflict":
       return "provider_setup";
     default:
       return "deploy";
@@ -75,6 +77,8 @@ function expectationFor(stage: FailingStage, service: RepoFixInput["service"]): 
 export function buildRepoFixGuidance(input: RepoFixInput): RepoFixGuidance | null {
   const stage = stageForFailure(input.failureKind);
   if (stage === "provider_setup") return null; // not a repo issue — handled by setup_blocker copy
+  if (input.failureKind === "provider_limit") return null;
+  if (input.failureKind === "provider_env_conflict") return null;
 
   const { service, repoFullName, provider, errorSummary } = input;
   const rootDir = service.rootDir || "/";
