@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { effectiveTemporalTaskQueue, loadShipfixEnv, logDatabaseFingerprint } from "@shipfix/db";
+import { assertProductionEnv } from "@shipfix/workflow/productionEnv";
 import { z } from "zod";
 import { alphaDefault } from "./alphaLimits";
 
@@ -59,4 +60,5 @@ export const EnvSchema = BaseEnvSchema.transform((value) => ({
 }));
 
 export const env = EnvSchema.parse(process.env);
+assertProductionEnv("api", process.env);
 export type Env = z.infer<typeof EnvSchema>;

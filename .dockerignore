@@ -1,0 +1,12 @@
+node_modules
+.next
+.turbo
+dist
+coverage
+*.log
+.env
+.env.*
+!.env.example
+.git
+.codex
+.agents

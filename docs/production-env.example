@@ -1,0 +1,48 @@
+# Copy this file to the VM as `.env.production`.
+# Do not commit the filled file.
+
+NODE_ENV=production
+
+# ShipFix control-plane database on Neon
+DATABASE_URL=postgresql://USER:PASSWORD@HOST/neondb?sslmode=require
+
+# API / browser access
+API_PORT=4000
+WEB_ORIGIN=https://YOUR-VERCEL-APP.vercel.app
+
+# Temporal running in docker-compose.prod.yml
+TEMPORAL_ADDRESS=temporal:7233
+TEMPORAL_NAMESPACE=default
+TEMPORAL_TASK_QUEUE=shipfix-prod
+
+# Auth
+AUTH_MODE=clerk
+CLERK_SECRET_KEY=sk_live_or_test_...
+
+# Admin endpoints
+SHIPFIX_ADMIN_TOKEN=replace-with-a-long-random-token
+
+# Secret vault for provider credentials stored by ShipFix
+# Generate with: openssl rand -base64 32
+SHIPFIX_MASTER_KEY=
+
+# Backend-only LLM settings
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o-mini
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+ANTHROPIC_API_KEY=
+
+# Provider/platform secrets kept on the server
+NEON_API_KEY=
+NEON_ORG_ID=
+RENDER_API_KEY=
+VERCEL_TOKEN=
+
+# Local/dev alpha limits can be overridden here if needed.
+# Keep production values conservative.
+# ALPHA_MAX_DEPLOY_RUNS_PER_USER_PER_DAY=3
+# ALPHA_MAX_PLAN_ANALYZE_RUNS_PER_USER_PER_DAY=10
+# ALPHA_MAX_ACTIVE_DEPLOY_RUNS_PER_USER=1
+# ALPHA_MAX_LLM_CALLS_PER_RUN=3
+# ALPHA_MAX_LLM_CALLS_PER_USER_PER_DAY=30

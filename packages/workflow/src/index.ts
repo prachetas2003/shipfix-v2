@@ -9,6 +9,11 @@ export {
   type ReconcileStuckRunsOptions,
   type ReconcileStuckRunsSummary,
 } from "./reconcileStuckRuns.js";
+export {
+  assertProductionEnv,
+  validateProductionEnv,
+  type ProductionEnvValidation,
+} from "./productionEnv.js";
 
 export const TASK_QUEUE = "shipfix";
 

@@ -8,7 +8,8 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "start": "tsx src/index.ts"
+    "start": "tsx src/index.ts",
+    "start:prod": "tsx src/index.ts"
   },
   "dependencies": {
     "@clerk/backend": "^3.5.0",

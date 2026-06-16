@@ -7,6 +7,7 @@ import {
   workerHeartbeats,
 } from "@shipfix/db";
 import { NativeConnection, Worker } from "@temporalio/worker";
+import { assertProductionEnv } from "@shipfix/workflow/productionEnv";
 import { activities, TASK_QUEUE, workflowsPath } from "@shipfix/workflow";
 
 const rootEnvPath = fileURLToPath(new URL("../../../.env", import.meta.url));
@@ -23,6 +24,7 @@ const effectiveTaskQueue = effectiveTemporalTaskQueue(
   process.env.DATABASE_URL,
   process.env.NODE_ENV,
 );
+assertProductionEnv("worker", process.env);
 
 function providerKeyEnv(provider: string | undefined): string | null {
   const normalized = provider?.trim().toLowerCase();

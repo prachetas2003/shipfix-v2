@@ -7,7 +7,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "start": "tsx src/index.ts"
+    "start": "tsx src/index.ts",
+    "start:prod": "tsx src/index.ts"
   },
   "dependencies": {
     "@shipfix/db": "workspace:^",
