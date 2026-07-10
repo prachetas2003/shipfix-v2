@@ -10,6 +10,10 @@ export {
   type ReconcileStuckRunsSummary,
 } from "./reconcileStuckRuns.js";
 export {
+  revalidatePlanForRun,
+  type RevalidateResult,
+} from "./revalidatePlan.js";
+export {
   assertProductionEnv,
   validateProductionEnv,
   type ProductionEnvValidation,

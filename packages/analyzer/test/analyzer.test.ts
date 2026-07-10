@@ -177,6 +177,16 @@ describe("prisma-postgres", () => {
   });
 });
 
+describe("drizzle-postgres", () => {
+  it("detects a Postgres need via Drizzle (with migration tool)", async () => {
+    const ctx = await analyzeFixture("drizzle-postgres");
+    const pg = ctx.dataNeeds.find((d) => d.kind === "postgres");
+    expect(pg).toBeDefined();
+    expect(pg?.detectedFrom).toBe("drizzle");
+    expect(pg?.migrationTool).toBe("drizzle");
+  });
+});
+
 describe("pnpm-workspace", () => {
   it("reports the pnpm_workspace monorepo signal", async () => {
     const ctx = await analyzeFixture("pnpm-workspace");

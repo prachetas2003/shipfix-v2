@@ -308,17 +308,24 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
         detail: "Connect the required provider account, then retry deploy.",
         tone: "warn",
       };
-    case "deploy_env_blocked":
+    case "deploy_env_blocked": {
+      const diagnosis = d.diagnosis as { action?: string; evidence?: { issues?: string[] } } | undefined;
+      const issues = diagnosis?.evidence?.issues ?? (Array.isArray(d.issues) ? d.issues.map(String) : []);
       return {
         title:
           role === "backend"
-            ? "The backend is waiting for the database URL"
+            ? "The backend is waiting for a required env value"
             : role === "frontend"
-              ? "The frontend is waiting for the backend URL"
+              ? "The frontend is waiting for a required env value"
               : "A required environment value is not ready",
-        detail: "ShipFix did not deploy this service because a dependency was not available yet.",
+        detail:
+          diagnosis?.action ??
+          (issues.includes("missing_secret")
+            ? "A secret is missing. Answer the plan question or set it on the app Environment page."
+            : "ShipFix did not deploy this service because a dependency was not available yet."),
         tone: "warn",
       };
+    }
     case "deploy_skipped":
       return { title: "Step skipped", detail: humanizeRawMessage(ev.message), tone: "info" };
     case "deploy_failed": {
@@ -377,6 +384,7 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
       const ok = Boolean(d.ok);
       const skipped = Boolean(d.skipped);
       const code = typeof d.statusCode === "number" ? ` (HTTP ${d.statusCode})` : "";
+      const diagnosis = d.diagnosis as { action?: string; code?: string } | undefined;
       if (skipped) {
         if (check === "db_connect") {
           return {
@@ -394,11 +402,39 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
           ? substituted
             ? `The planned health path did not respond, but the backend answered at ${substituted} (a route detected in the repo). Consider adding a dedicated /health route.`
             : verificationSuccessDetail(check)
-          : "ShipFix could not prove this part is live. Open technical details for the failed check.",
+          : diagnosis?.action ??
+            "ShipFix could not prove this part is live. Open technical details for the failed check.",
         tone: ok ? "success" : "error",
         url: str(d.url),
       };
     }
+    case "migration_failed": {
+      const diagnosis = d.diagnosis as { action?: string } | undefined;
+      return {
+        title: "Database migration failed",
+        detail: diagnosis?.action ?? humanizeRawMessage(ev.message),
+        tone: "error",
+      };
+    }
+    case "recovery_attempt":
+      return {
+        title: "Trying automatic recovery",
+        detail: "ShipFix is re-wiring backend CORS origins and will re-check the live system.",
+        tone: "info",
+      };
+    case "recovery_succeeded":
+      return {
+        title: "Recovery succeeded",
+        detail: "Verification passed after ShipFix rewired the backend origins.",
+        tone: "success",
+      };
+    case "recovery_exhausted":
+    case "recovery_skipped":
+      return {
+        title: "Automatic recovery did not fix the issue",
+        detail: "Review the failed verification checks below and apply the suggested fix.",
+        tone: "warn",
+      };
     case "verify_skipped":
       return { title: "Verification skipped", detail: humanizeRawMessage(ev.message), tone: "info" };
     default:

@@ -206,6 +206,7 @@ export default function NewDeploymentPage(): React.ReactElement {
             runId={planRunId ?? undefined}
             answeredQuestionIds={run.snapshot?.answeredQuestionIds ?? []}
             onAnswersSaved={() => void run.refreshSnapshot()}
+            onPlanRevalidated={(p) => setCapturedPlan(p)}
           />
           <ProviderRequirements plan={capturedPlan} connected={connected} onConnected={refreshProviders} />
           <div style={{ display: "flex", gap: 10, marginTop: "1.5rem", flexWrap: "wrap" }}>

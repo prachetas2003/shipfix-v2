@@ -20,6 +20,11 @@ export {
   type PlanVerifyOutcome,
 } from "./verify";
 export {
+  diagnosisFromVerifyOutcome,
+  diagnosisForMigrationFailure,
+  diagnosisForEnvUnresolved,
+} from "./diagnosis";
+export {
   OPTIONAL_VERIFICATION_CHECKS,
   isOptionalVerificationCheck,
   requiredVerificationChecks,

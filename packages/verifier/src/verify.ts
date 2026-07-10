@@ -23,6 +23,8 @@ export interface HttpVerifyResult {
   check: string;
   detail: string;
   assumedPath?: boolean;
+  /** Present for cors_from checks (non-secret header value). */
+  allowOrigin?: string | null;
 }
 
 function joinUrl(base: string, path: string): string {
@@ -199,6 +201,7 @@ export async function verifyCorsFrom(
           ? `Allow-Origin "${allow}" does not match "${frontendOrigin}"${assumedSuffix}`
           : `Missing Access-Control-Allow-Origin header${assumedSuffix}`,
       assumedPath: meta?.assumedPath,
+      allowOrigin: allow,
     };
   } catch (e) {
     return {
@@ -208,6 +211,7 @@ export async function verifyCorsFrom(
       check: "cors_from",
       detail: `${e instanceof Error ? e.message : String(e)}${assumedSuffix}`,
       assumedPath: meta?.assumedPath,
+      allowOrigin: null,
     };
   } finally {
     clearTimeout(timer);

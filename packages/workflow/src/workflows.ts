@@ -100,7 +100,9 @@ export async function deploymentWorkflow(
       skipped: [],
     };
     try {
-      verify = await deployActs.verifyDeployedPlan(input.runId);
+      // Bounded recovery (C3): re-wire CORS + re-verify up to 2 times on failure.
+      const recovery = await deployActs.verifySystem(input.runId);
+      verify = recovery.verify;
     } finally {
       await acts.finalizeDeployRun(input.runId, {
         provision,

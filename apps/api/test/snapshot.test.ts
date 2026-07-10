@@ -6,6 +6,7 @@ import {
   roleForResource,
   toSnapshotResources,
   verificationFromEvents,
+  diagnosesFromEvents,
   type PlanLite,
   type RawResourceRow,
 } from "../src/snapshot";
@@ -178,5 +179,43 @@ describe("verificationFromEvents", () => {
     expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({ serviceId: "api", check: "health_path", ok: true, statusCode: 200 });
     expect(entries[1]).toMatchObject({ serviceId: "db", check: "db_connect", ok: false });
+  });
+});
+
+describe("diagnosesFromEvents", () => {
+  it("extracts structured diagnoses and dedupes", () => {
+    const entries = diagnosesFromEvents([
+      {
+        data: {
+          event: "verification",
+          diagnosis: {
+            code: "cors_failed",
+            fromServiceId: "web",
+            toServiceId: "api",
+            action: "Set CORS_ORIGIN",
+          },
+        },
+      },
+      {
+        data: {
+          event: "verification",
+          diagnosis: {
+            code: "cors_failed",
+            fromServiceId: "web",
+            toServiceId: "api",
+            action: "Set CORS_ORIGIN",
+          },
+        },
+      },
+      {
+        data: {
+          event: "migration_failed",
+          diagnosis: { code: "migration_failed", managedId: "db", action: "Fix migration" },
+        },
+      },
+    ]);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.code).toBe("cors_failed");
+    expect(entries[1]?.code).toBe("migration_failed");
   });
 });

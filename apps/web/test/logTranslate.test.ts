@@ -161,6 +161,33 @@ describe("translateEvent - leakage and honesty", () => {
     expect(f.tone).toBe("success");
   });
 
+  it("surfaces structured diagnosis action on verification failure", () => {
+    const f = translateEvent(
+      ev({
+        event: "verification",
+        check: "cors_from",
+        ok: false,
+        diagnosis: {
+          code: "cors_failed",
+          action: "Set CORS_ORIGIN to the frontend origin and redeploy the API.",
+        },
+      }),
+    );
+    expect(f.detail).toContain("CORS_ORIGIN");
+    expect(f.tone).toBe("error");
+  });
+
+  it("surfaces structured diagnosis on migration_failed", () => {
+    const f = translateEvent(
+      ev({
+        event: "migration_failed",
+        diagnosis: { code: "migration_failed", action: "Fix the migration error, then redeploy." },
+      }),
+    );
+    expect(f.title.toLowerCase()).toContain("migration");
+    expect(f.detail).toContain("redeploy");
+  });
+
   it("explains API/worker database mismatch failures", () => {
     const f = translateEvent(ev({ event: "internal_control_plane_consistency_error" }));
     expect(f.title.toLowerCase()).toContain("worker could not find");

@@ -30,12 +30,16 @@ import {
   runtimeConnectionUrl,
   type ManagedProviderId,
 } from "@shipfix/provisioner";
-import { verifyFromPlan } from "@shipfix/verifier";
+import { verifyFromPlan, diagnosisFromVerifyOutcome, diagnosisForMigrationFailure, diagnosisForEnvUnresolved } from "@shipfix/verifier";
 import { resolveServiceEnv, openManagedConnectionUrls, type DeployedResourceRow } from "./resolveEnv";
 import {
   findPrismaSchemaPath,
   runPrismaMigrateDeploy,
 } from "./prismaMigrate";
+import {
+  findDrizzleConfigPath,
+  runDrizzleMigrateDeploy,
+} from "./drizzleMigrate";
 import { buildRepoFixGuidance } from "./brokenRepoGuidance";
 import { resolveProviderDeployTarget } from "./providerResource";
 import {
@@ -784,6 +788,21 @@ export async function finalizePlanRun(
 export async function gateDeploy(runId: string): Promise<{ allow: boolean }> {
   const db = getDb();
   const logger = createRunLogger(runId, createSafePostgresSink(db));
+
+  // C2: flip Yellow→Green when secrets/project env are already answered.
+  try {
+    const { revalidatePlanForRun } = await import("./revalidatePlan");
+    const rev = await revalidatePlanForRun(db, runId);
+    if (rev.changed) {
+      await logger.log("Plan revalidated before deploy gate", {
+        event: "plan_revalidated",
+        classification: rev.classification,
+      });
+    }
+  } catch {
+    /* proceed with stored plan */
+  }
+
   const plan = await loadPlan(db, runId);
   const gate = evaluateDeployGate(plan);
   const needsNeonOrgId = plan.managed.some((m) => m.mode === "provision" && m.provider === "neon");
@@ -992,6 +1011,18 @@ export async function provisionManagedServices(runId: string): Promise<Provision
       managedId: m.id,
       ok: verdict.ok,
       detail: verdict.detail,
+      ...(verdict.ok
+        ? {}
+        : {
+            diagnosis: {
+              code: "db_unreachable" as const,
+              managedId: m.id,
+              serviceId: m.id,
+              evidence: { detail: verdict.detail },
+              action:
+                "Confirm the Neon project is live and DATABASE_URL is wired to the backend, then retry deploy.",
+            },
+          }),
     };
     if (!verdict.ok) {
       summary.failed.push(m.id);
@@ -1053,7 +1084,7 @@ export interface MigrationSummary {
 
 /**
  * Run managed DB migrations after provision and before service deploy.
- * Prisma only in this release: uses Neon **direct** URL inside the sandbox.
+ * Prisma and Drizzle: use Neon **direct** URL inside the sandbox.
  * Runtime services still receive the **pooled** URL via resolveEnv.
  */
 export async function runManagedMigrations(runId: string): Promise<MigrationSummary> {
@@ -1064,9 +1095,9 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
   const vault = getVault();
   const summary: MigrationSummary = { applied: [], skipped: [], failed: [] };
 
-  const targets = plan.managed.filter((m) => m.migration === "prisma");
+  const targets = plan.managed.filter((m) => m.migration === "prisma" || m.migration === "drizzle");
   if (targets.length === 0) {
-    await logger.log("No Prisma migrations to run.", { event: "migration_skipped" });
+    await logger.log("No managed migrations to run.", { event: "migration_skipped" });
     return summary;
   }
 
@@ -1098,6 +1129,7 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
           event: "migration_failed",
           managedId: m.id,
           reason: "managed_not_live",
+          diagnosis: diagnosisForMigrationFailure({ managedId: m.id, reason: "managed_not_live" }),
         });
         continue;
       }
@@ -1109,34 +1141,63 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
           event: "migration_failed",
           managedId: m.id,
           reason: "secret_missing",
+          diagnosis: diagnosisForMigrationFailure({ managedId: m.id, reason: "secret_missing" }),
         });
         continue;
       }
 
-      const schemaPath = findPrismaSchemaPath(files, preferredRoot || undefined);
-      if (!schemaPath) {
-        summary.failed.push(m.id);
-        await logger.error(`Cannot migrate "${m.id}": no schema.prisma found in the repo.`, {
-          event: "migration_failed",
+      const tool = m.migration === "drizzle" ? "drizzle" : "prisma";
+      let result: { ok: boolean; skipped: boolean; skipReason?: string; detail: string };
+
+      if (tool === "drizzle") {
+        const configPath = findDrizzleConfigPath(files, preferredRoot || undefined);
+        if (!configPath) {
+          summary.failed.push(m.id);
+          await logger.error(`Cannot migrate "${m.id}": no drizzle.config found in the repo.`, {
+            event: "migration_failed",
+            managedId: m.id,
+            reason: "schema_missing",
+            diagnosis: diagnosisForMigrationFailure({ managedId: m.id, reason: "schema_missing" }),
+          });
+          continue;
+        }
+        await logger.log(`Running drizzle-kit migrate for "${m.id}"`, {
+          event: "migration_started",
           managedId: m.id,
-          reason: "schema_missing",
+          tool: "drizzle",
+          configPath,
         });
-        continue;
+        result = await runDrizzleMigrateDeploy({
+          sandbox,
+          configPath,
+          packageManager,
+          urls,
+        });
+      } else {
+        const schemaPath = findPrismaSchemaPath(files, preferredRoot || undefined);
+        if (!schemaPath) {
+          summary.failed.push(m.id);
+          await logger.error(`Cannot migrate "${m.id}": no schema.prisma found in the repo.`, {
+            event: "migration_failed",
+            managedId: m.id,
+            reason: "schema_missing",
+            diagnosis: diagnosisForMigrationFailure({ managedId: m.id, reason: "schema_missing" }),
+          });
+          continue;
+        }
+        await logger.log(`Running Prisma migrate deploy for "${m.id}"`, {
+          event: "migration_started",
+          managedId: m.id,
+          tool: "prisma",
+          schemaPath,
+        });
+        result = await runPrismaMigrateDeploy({
+          sandbox,
+          schemaPath,
+          packageManager,
+          urls,
+        });
       }
-
-      await logger.log(`Running Prisma migrate deploy for "${m.id}"`, {
-        event: "migration_started",
-        managedId: m.id,
-        tool: "prisma",
-        schemaPath,
-      });
-
-      const result = await runPrismaMigrateDeploy({
-        sandbox,
-        schemaPath,
-        packageManager,
-        urls,
-      });
 
       if (result.skipped) {
         summary.skipped.push({ id: m.id, reason: result.skipReason ?? "skipped" });
@@ -1153,8 +1214,13 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
         await logger.error(`Migration failed for "${m.id}".`, {
           event: "migration_failed",
           managedId: m.id,
-          tool: "prisma",
+          tool,
           detail: result.detail,
+          diagnosis: diagnosisForMigrationFailure({
+            managedId: m.id,
+            reason: "command_failed",
+            detail: result.detail,
+          }),
         });
         continue;
       }
@@ -1173,14 +1239,14 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
         await db
           .update(deployedResources)
           .set({
-            meta: { ...prevMeta, migrationsApplied: true, migrationTool: "prisma" },
+            meta: { ...prevMeta, migrationsApplied: true, migrationTool: tool },
           })
           .where(eq(deployedResources.id, existing.id));
       }
       await logger.log(`Migrations applied for "${m.id}"`, {
         event: "migration_completed",
         managedId: m.id,
-        tool: "prisma",
+        tool,
       });
     }
   } finally {
@@ -1270,6 +1336,10 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
         event: "deploy_env_blocked",
         serviceId: svc.id,
         issues: issues.map((i) => i.code),
+        diagnosis: diagnosisForEnvUnresolved({
+          serviceId: svc.id,
+          issues: issues.map((i) => i.code),
+        }),
       });
       continue;
     }
@@ -1439,6 +1509,10 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
         event: "deploy_env_blocked",
         serviceId: svc.id,
         issues: issues.map((i) => i.code),
+        diagnosis: diagnosisForEnvUnresolved({
+          serviceId: svc.id,
+          issues: issues.map((i) => i.code),
+        }),
       });
       continue;
     }
@@ -1765,15 +1839,12 @@ export async function verifyDeployedPlan(runId: string): Promise<PlanVerifySumma
   }
 
   const neon = createNeonProvisioner();
-  const outcomes = await verifyFromPlan(
-    plan,
-    live.map((r) => ({ serviceId: r.serviceId, publicUrl: r.url! })),
-    {
-      dbConnections,
-      verifyDbConnect: async (connectionString) =>
-        neon.verify({ name: "DATABASE_URL", value: connectionString }),
-    },
-  );
+  const resourceRefs = live.map((r) => ({ serviceId: r.serviceId, publicUrl: r.url! }));
+  const outcomes = await verifyFromPlan(plan, resourceRefs, {
+    dbConnections,
+    verifyDbConnect: async (connectionString) =>
+      neon.verify({ name: "DATABASE_URL", value: connectionString }),
+  });
 
   for (const o of outcomes) {
     const primary = o.results[0];
@@ -1796,6 +1867,7 @@ export async function verifyDeployedPlan(runId: string): Promise<PlanVerifySumma
     // On fallback substitution the passing probe is the last result, not the
     // first — report the URL/status that actually proved (or disproved) health.
     const decisive = o.results.find((r) => r.ok) ?? primary;
+    const diagnosis = diagnosisFromVerifyOutcome(o, plan, resourceRefs);
     await logger.log(
       `"${o.serviceId}" ${o.check}: ${o.ok ? "passed" : "failed"} (${decisive?.detail ?? "unknown"})`,
       {
@@ -1808,6 +1880,7 @@ export async function verifyDeployedPlan(runId: string): Promise<PlanVerifySumma
         assumedPath: o.assumedPath ?? false,
         substitutedPath: o.substitutedPath ?? null,
         probedPaths: o.results.length > 1 ? o.results.map((r) => r.url) : undefined,
+        ...(diagnosis ? { diagnosis } : {}),
       },
     );
     if (o.ok) summary.passed.push({ serviceId: o.serviceId, check: o.check });
@@ -1835,9 +1908,85 @@ export async function finalizeDeployRun(runId: string, outcome: DeployRunOutcome
 
 // ── Deploy-mode activities (intentionally unimplemented beyond this slice) ───
 
-/** Full-system recovery wrapper — not this slice. */
-export async function verifySystem(_runId: string): Promise<{ ok: boolean }> {
-  return notImplemented("verifySystem");
+/**
+ * Bounded recovery after deploy: re-verify, and for CORS failures re-wire
+ * deferred backend origins up to 2 times. Does not mutate the user's repo.
+ */
+export async function verifySystem(runId: string): Promise<{
+  ok: boolean;
+  verify: PlanVerifySummary;
+  attempts: number;
+  actions: string[];
+}> {
+  const db = getDb();
+  const logger = createRunLogger(runId, createSafePostgresSink(db));
+  const actions: string[] = [];
+  let attempts = 0;
+
+  let verify = await verifyDeployedPlan(runId);
+  if (verify.failed.length === 0) {
+    return { ok: true, verify, attempts: 0, actions };
+  }
+
+  const maxAttempts = 2;
+  while (attempts < maxAttempts && verify.failed.length > 0) {
+    const corsFailed = verify.failed.some((f) => f.check === "cors_from");
+    const dbFailed = verify.failed.some((f) => f.check === "db_connect");
+    const healthFailed = verify.failed.some(
+      (f) => f.check === "health_path" || f.check === "http_2xx" || f.check === "frontend_loads",
+    );
+
+    if (dbFailed && !corsFailed) {
+      // DB connectivity is not recoverable by rewiring origins.
+      await logger.warn("Verification failed on database reachability; skipping automatic recovery.", {
+        event: "recovery_skipped",
+        reason: "db_unreachable",
+        failed: verify.failed,
+      });
+      break;
+    }
+
+    if (!corsFailed && healthFailed) {
+      await logger.warn("Verification failed on health checks; automatic recovery is limited to CORS rewiring.", {
+        event: "recovery_skipped",
+        reason: "health_failed",
+        failed: verify.failed,
+      });
+      break;
+    }
+
+    if (!corsFailed) break;
+
+    attempts += 1;
+    actions.push("wireDeferredBackendEnv");
+    await logger.log(`Recovery attempt ${attempts}/${maxAttempts}: re-wiring backend CORS origins`, {
+      event: "recovery_attempt",
+      attempt: attempts,
+      action: "wireDeferredBackendEnv",
+      failed: verify.failed,
+    });
+    await wireDeferredBackendEnv(runId);
+    actions.push("verifyDeployedPlan");
+    verify = await verifyDeployedPlan(runId);
+    if (verify.failed.length === 0) {
+      await logger.log("Recovery succeeded — verification passed after rewiring origins.", {
+        event: "recovery_succeeded",
+        attempts,
+      });
+      return { ok: true, verify, attempts, actions };
+    }
+  }
+
+  if (verify.failed.length > 0) {
+    await logger.warn("Bounded recovery exhausted; leaving run for diagnosis.", {
+      event: "recovery_exhausted",
+      attempts,
+      failed: verify.failed,
+      actions,
+    });
+  }
+
+  return { ok: verify.failed.length === 0, verify, attempts, actions };
 }
 
 /** Legacy finalize stub — deploy mode uses finalizeDeployRun. */

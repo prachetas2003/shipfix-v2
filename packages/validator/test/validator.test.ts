@@ -349,9 +349,17 @@ describe("validatePlan — MVP setup blockers (YELLOW)", () => {
     expect(res.plan.classification).toBe("deployable");
   });
 
-  it("still requires setup for Drizzle migrations (not executed yet)", () => {
+  it("allows Drizzle migrations (ShipFix runs them) without Yellow", () => {
     const plan = makePlan();
     plan.managed[0].migration = "drizzle";
+    const res = validatePlan(plan, makeCtx(), fullCaps);
+    expect(codes(res)).not.toContain("migration_required");
+    expect(res.plan.classification).toBe("deployable");
+  });
+
+  it("still requires setup for alembic migrations (not executed yet)", () => {
+    const plan = makePlan();
+    plan.managed[0].migration = "alembic";
     const res = validatePlan(plan, makeCtx(), fullCaps);
     expect(codes(res)).toContain("migration_required");
     expect(res.plan.classification).toBe("needs_setup");
@@ -363,6 +371,39 @@ describe("validatePlan — MVP setup blockers (YELLOW)", () => {
     const res = validatePlan(plan, makeCtx(), fullCaps);
     expect(codes(res)).toContain("user_secret_required");
     expect(res.plan.classification).toBe("needs_setup");
+  });
+
+  it("clears user_secret issues when the secret question is satisfied (C2)", () => {
+    const plan = makePlan();
+    plan.classification = "needs_setup";
+    plan.services[1].env.push({ name: "STRIPE_KEY", source: "user_secret" });
+    plan.questions.push({
+      id: "secret-api-STRIPE_KEY",
+      prompt: "Stripe key",
+      kind: "secret",
+      blocksServiceIds: ["api"],
+    });
+    // First pass leaves yellow
+    const yellow = validatePlan(plan, makeCtx(), fullCaps);
+    expect(yellow.plan.classification).toBe("needs_setup");
+
+    const green = validatePlan(plan, makeCtx(), fullCaps, {
+      satisfiedSecretQuestionIds: new Set(["secret-api-STRIPE_KEY"]),
+    });
+    expect(codes(green)).not.toContain("user_secret_required");
+    expect(codes(green)).not.toContain("question_needs_secret");
+    expect(green.plan.classification).toBe("deployable");
+  });
+
+  it("clears user_secret when satisfied via project env name (C2)", () => {
+    const plan = makePlan();
+    plan.classification = "needs_setup";
+    plan.services[1].env.push({ name: "STRIPE_KEY", source: "user_secret" });
+    const res = validatePlan(plan, makeCtx(), fullCaps, {
+      satisfiedEnvNames: new Set(["STRIPE_KEY"]),
+    });
+    expect(codes(res)).not.toContain("user_secret_required");
+    expect(res.plan.classification).toBe("deployable");
   });
 
   it("flags a backend whose health path is not grounded (needs_setup)", () => {

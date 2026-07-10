@@ -17,7 +17,7 @@ import {
   workerHeartbeats,
 } from "@shipfix/db";
 import { createSafePostgresSink, createRunLogger } from "@shipfix/observability";
-import { reconcileStuckRuns } from "@shipfix/workflow";
+import { reconcileStuckRuns, revalidatePlanForRun } from "@shipfix/workflow";
 import { preflightProviderCredentials } from "@shipfix/adapter-core";
 import { createSecretVaultFromEnv } from "@shipfix/secrets";
 import { env, shipfixEnvLoad } from "./env";
@@ -36,6 +36,7 @@ import {
   deriveLayers,
   toSnapshotResources,
   verificationFromEvents,
+  diagnosesFromEvents,
   type PlanLite,
   type RawResourceRow,
 } from "./snapshot";
@@ -325,6 +326,7 @@ async function buildRunSnapshot(runId: string): Promise<Record<string, unknown> 
 
   const resources = toSnapshotResources(resourceRows, plan);
   const verification = verificationFromEvents(events);
+  const diagnoses = diagnosesFromEvents(events);
   const layers = deriveLayers(resources, plan, verification);
 
   return {
@@ -342,6 +344,7 @@ async function buildRunSnapshot(runId: string): Promise<Record<string, unknown> 
     plan,
     resources,
     verification,
+    diagnoses,
     layers,
     // Question ids only — never secret values.
     answeredQuestionIds: inputRows.map((r) => r.questionId),
@@ -675,6 +678,21 @@ async function startDeployFromExistingRun(
     };
   }
 
+  // C2: revalidate with answered secrets before copying — may flip Yellow → Green.
+  try {
+    await revalidatePlanForRun(db, sourceRunId);
+  } catch {
+    /* keep source plan if revalidate cannot run (e.g. missing analysis) */
+  }
+
+  const [freshPlan] = await db
+    .select()
+    .from(plans)
+    .where(eq(plans.runId, sourceRunId))
+    .orderBy(desc(plans.version))
+    .limit(1);
+  const planToCopy = freshPlan ?? sourcePlan;
+
   const limits = await checkRunLimits(user.id, source.projectId, "deploy");
   if (!limits.ok) {
     return { ok: false, runId: "", code: limits.code, message: limits.message };
@@ -696,9 +714,9 @@ async function startDeployFromExistingRun(
     .values({
       runId: run.id,
       version: 1,
-      doc: normalizePlanForResponse(sourcePlan.doc),
-      planner: sourcePlan.planner,
-      confidence: sourcePlan.confidence,
+      doc: normalizePlanForResponse(planToCopy.doc),
+      planner: planToCopy.planner,
+      confidence: planToCopy.confidence,
     })
     .returning();
   await db.update(runs).set({ planId: copiedPlan.id }).where(eq(runs.id, run.id));
@@ -1462,6 +1480,100 @@ app.post("/runs/:runId/inputs", async (request, reply) => {
   }
 
   return { ok: true, answered };
+});
+
+/**
+ * Revalidate plan after HITL answers / project env without LLM replan (C2).
+ * Optionally start deploy when the plan becomes deployable.
+ */
+app.post("/runs/:runId/continue", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+
+  const { runId } = request.params as { runId: string };
+  if (!z.string().uuid().safeParse(runId).success) {
+    return reply.status(400).send({ error: "invalid_run_id" });
+  }
+  if (!(await userCanAccessRun(user.id, runId))) {
+    return reply.status(404).send({ error: "run_not_found" });
+  }
+
+  const body = z
+    .object({ startDeploy: z.boolean().optional() })
+    .safeParse(request.body ?? {});
+  if (!body.success) {
+    return reply.status(400).send({ error: "invalid_body", details: body.error.flatten() });
+  }
+
+  let result: Awaited<ReturnType<typeof revalidatePlanForRun>>;
+  try {
+    result = await revalidatePlanForRun(db, runId);
+  } catch (err) {
+    request.log.error(err);
+    return reply.status(500).send({
+      error: "revalidate_failed",
+      message: err instanceof Error ? err.message : "Could not revalidate this plan.",
+    });
+  }
+
+  if (result.changed) {
+    const logger = createRunLogger(runId, createSafePostgresSink(db));
+    await logger.log("Plan revalidated after answers", {
+      event: "plan_revalidated",
+      classification: result.classification,
+      hadRepoContext: result.hadRepoContext,
+    });
+  }
+
+  if (body.data.startDeploy && result.classification === "deployable") {
+    if (!checkIpRateLimit(request.ip)) {
+      await recordRateLimitRejection({ userId: user.id, operation: "deploy", code: "ip_run_start_limit" });
+      return reply.status(429).send({
+        error: "ip_run_start_limit",
+        message: usageLimitMessage({
+          code: "ip_run_start_limit",
+          limit: env.ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW,
+          unit: `run starts per ${env.ALPHA_RATE_LIMIT_WINDOW_MS}ms IP window`,
+          nodeEnv: process.env.NODE_ENV,
+        }),
+      });
+    }
+    const deploy = await startDeployFromExistingRun(user, runId);
+    if (!deploy.ok) {
+      const status =
+        deploy.code === "run_not_found"
+          ? 404
+          : deploy.code === "plan_not_found"
+            ? 400
+            : deploy.runId
+              ? 503
+              : 429;
+      return reply.status(status).send({
+        runId: deploy.runId || undefined,
+        error: deploy.code,
+        message: deploy.message,
+        classification: result.classification,
+        deployable: true,
+        plan: normalizePlanForResponse(result.plan),
+      });
+    }
+    return reply.status(202).send({
+      runId: deploy.runId,
+      mode: "deploy",
+      classification: result.classification,
+      deployable: true,
+      changed: result.changed,
+      plan: normalizePlanForResponse(result.plan),
+    });
+  }
+
+  return {
+    classification: result.classification,
+    deployable: result.classification === "deployable",
+    changed: result.changed,
+    hadRepoContext: result.hadRepoContext,
+    plan: normalizePlanForResponse(result.plan),
+  };
 });
 
 const EnvVarName = z

@@ -209,3 +209,8 @@ export function issueToBlocker(issue: ValidationIssue): Blocker {
     evidence: issue.path ? [issue.path] : [],
   };
 }
+
+/** True when a blocker title was produced by validatePlan (not the planner). */
+export function isValidationBlockerTitle(title: string): boolean {
+  return Object.values(META).some((m) => m.title === title);
+}

@@ -148,8 +148,10 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
     });
     deployOrder.push("db");
     verification.push({ serviceId: "db", check: "db_connect" });
-    // Prisma migrations are executed by ShipFix (A2). Other tools still need setup.
-    if (migrationTool !== "none" && migrationTool !== "prisma") needsSetup = true;
+    // Prisma and Drizzle migrations are executed by ShipFix. Other tools still need setup.
+    if (migrationTool !== "none" && migrationTool !== "prisma" && migrationTool !== "drizzle") {
+      needsSetup = true;
+    }
   }
 
   // ── Backend (Render node_api) ──────────────────────────────────────────────

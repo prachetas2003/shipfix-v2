@@ -83,6 +83,18 @@ export interface VerificationEntry {
   assumedPath: boolean;
 }
 
+export interface SnapshotDiagnosis {
+  code: string;
+  action: string;
+  fromServiceId?: string;
+  toServiceId?: string;
+  serviceId?: string;
+  managedId?: string;
+  fromUrl?: string | null;
+  toUrl?: string | null;
+  evidence?: Record<string, unknown>;
+}
+
 export type LayerState = "live" | "failed" | "provisioning" | "not_attempted";
 
 export interface LayerStatus {
@@ -164,6 +176,42 @@ export function verificationFromEvents(
       statusCode: typeof d.statusCode === "number" ? d.statusCode : null,
       url: d.url ? String(d.url) : null,
       assumedPath: Boolean(d.assumedPath),
+    });
+  }
+  return out;
+}
+
+/** Extract structured diagnoses from run_events data payloads. */
+export function diagnosesFromEvents(
+  events: Array<{ data: unknown }>,
+): SnapshotDiagnosis[] {
+  const out: SnapshotDiagnosis[] = [];
+  const seen = new Set<string>();
+  for (const e of events) {
+    const d = e.data as Record<string, unknown> | null;
+    if (!d) continue;
+    const raw = d.diagnosis;
+    if (!raw || typeof raw !== "object") continue;
+    const diag = raw as Record<string, unknown>;
+    const code = typeof diag.code === "string" ? diag.code : null;
+    const action = typeof diag.action === "string" ? diag.action : null;
+    if (!code || !action) continue;
+    const key = `${code}:${String(diag.serviceId ?? diag.managedId ?? diag.toServiceId ?? "")}:${String(diag.fromServiceId ?? "")}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      code,
+      action,
+      fromServiceId: typeof diag.fromServiceId === "string" ? diag.fromServiceId : undefined,
+      toServiceId: typeof diag.toServiceId === "string" ? diag.toServiceId : undefined,
+      serviceId: typeof diag.serviceId === "string" ? diag.serviceId : undefined,
+      managedId: typeof diag.managedId === "string" ? diag.managedId : undefined,
+      fromUrl: diag.fromUrl == null ? null : String(diag.fromUrl),
+      toUrl: diag.toUrl == null ? null : String(diag.toUrl),
+      evidence:
+        diag.evidence && typeof diag.evidence === "object"
+          ? (diag.evidence as Record<string, unknown>)
+          : undefined,
     });
   }
   return out;

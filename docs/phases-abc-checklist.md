@@ -25,10 +25,10 @@ Check items only when that guide’s **acceptance criteria** pass (tests + behav
 
 ## Phase C — Differentiation depth
 
-- [ ] **C1** Structured diagnosis (`cors_failed` web→api, etc.)
-- [ ] **C2** Yellow HITL → revalidate → Green without blind LLM replan
-- [ ] **C3** Bounded recovery (`verifySystem` real; max 1–2 attempts)
-- [ ] **C4** Drizzle migrate (mirror Prisma; add fixtures)
+- [x] **C1** Structured diagnosis (`cors_failed` web→api, etc.)
+- [x] **C2** Yellow HITL → revalidate → Green without blind LLM replan
+- [x] **C3** Bounded recovery (`verifySystem` real; max 1–2 attempts)
+- [x] **C4** Drizzle migrate (mirror Prisma; add fixtures)
 - [ ] **C5** GitHub App / private repos / push deploys
 
 **Phase C exit:** failures are precise, Yellow can become Green via answers, common verify failures can unstick, Drizzle works, push deploys exist.

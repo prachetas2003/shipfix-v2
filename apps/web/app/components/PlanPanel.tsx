@@ -65,17 +65,20 @@ export function PlanPanel({
   runId,
   answeredQuestionIds = [],
   onAnswersSaved,
+  onPlanRevalidated,
 }: {
   plan: PlanView;
   runId?: string;
   answeredQuestionIds?: string[];
   onAnswersSaved?: (answered: string[]) => void;
+  onPlanRevalidated?: (plan: PlanView) => void;
 }): React.ReactElement {
   const meta = CLASS_META[plan.classification];
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedIds, setSavedIds] = useState<string[]>(answeredQuestionIds);
+  const [revalidateNote, setRevalidateNote] = useState<string | null>(null);
 
   useEffect(() => {
     setSavedIds(answeredQuestionIds);
@@ -91,6 +94,7 @@ export function PlanPanel({
     if (!runId || !canSubmit) return;
     setSaving(true);
     setSaveError(null);
+    setRevalidateNote(null);
     try {
       const answers = unanswered.map((q) => ({
         questionId: q.id,
@@ -99,6 +103,17 @@ export function PlanPanel({
       const result = await api.submitRunInputs(runId, answers);
       setSavedIds((prev) => [...new Set([...prev, ...result.answered])]);
       setDrafts({});
+      try {
+        const continued = await api.continueRun(runId);
+        onPlanRevalidated?.(continued.plan);
+        if (continued.changed && continued.deployable) {
+          setRevalidateNote("Plan is now ready to deploy — secrets are satisfied.");
+        } else if (continued.changed) {
+          setRevalidateNote("Plan rechecked. Some setup items may still be required.");
+        }
+      } catch {
+        /* answers saved; revalidate is best-effort */
+      }
       onAnswersSaved?.(result.answered);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
@@ -133,6 +148,11 @@ export function PlanPanel({
         <p style={{ margin: "0.45rem 0 0", fontSize: "0.86rem", color: meta.color, lineHeight: 1.55 }}>
           {meta.explanation}
         </p>
+        {revalidateNote && (
+          <p style={{ margin: "0.55rem 0 0", fontSize: "0.86rem", color: colors.successText, lineHeight: 1.5 }}>
+            {revalidateNote}
+          </p>
+        )}
       </div>
 
       {plan.questions.length > 0 && (

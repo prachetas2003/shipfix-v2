@@ -54,7 +54,9 @@ export function OutcomeBanner({
       ? { border: colors.errorBorder, bg: colors.errorBg, text: colors.errorText }
       : { border: colors.warnBorder, bg: colors.warnBg, text: colors.warnText };
 
-  const nextAction = computeNextAction(display, status);
+  const nextAction =
+    (!allLive && snapshot.diagnoses?.[0]?.action) ||
+    computeNextAction(display, status);
 
   return (
     <section style={{ marginTop: "1.5rem" }}>
@@ -101,11 +103,56 @@ export function OutcomeBanner({
           </div>
         )}
 
+        {!allLive && (snapshot.diagnoses?.length ?? 0) > 0 && (
+          <ul style={{ listStyle: "none", margin: "1rem 0 0", padding: 0, display: "grid", gap: 8 }}>
+            {snapshot.diagnoses!.map((diag, i) => (
+              <li
+                key={`${diag.code}-${i}`}
+                style={{
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 8,
+                  padding: "0.7rem 0.8rem",
+                  background: "rgba(0,0,0,0.12)",
+                }}
+              >
+                <div style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", color: tone.text, opacity: 0.75 }}>
+                  {diagnosisTitle(diag.code)}
+                  {diag.fromServiceId && diag.toServiceId
+                    ? ` · ${diag.fromServiceId} → ${diag.toServiceId}`
+                    : diag.serviceId
+                      ? ` · ${diag.serviceId}`
+                      : diag.managedId
+                        ? ` · ${diag.managedId}`
+                        : ""}
+                </div>
+                <p style={{ margin: "0.35rem 0 0", color: tone.text, lineHeight: 1.5, fontSize: "0.9rem" }}>{diag.action}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+
         <VerificationChecklist verification={snapshot.verification} plan={snapshot.plan} />
       </div>
       <CurrentState display={display} />
     </section>
   );
+}
+
+function diagnosisTitle(code: string): string {
+  switch (code) {
+    case "cors_failed":
+      return "CORS failed";
+    case "db_unreachable":
+      return "Database unreachable";
+    case "health_failed":
+      return "Health check failed";
+    case "migration_failed":
+      return "Migration failed";
+    case "env_unresolved":
+      return "Env unresolved";
+    default:
+      return code;
+  }
 }
 
 function SummaryItem({ label, value }: { label: string; value: string }): React.ReactElement {

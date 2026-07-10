@@ -64,6 +64,18 @@ export interface VerificationEntry {
   assumedPath: boolean;
 }
 
+export interface SnapshotDiagnosis {
+  code: string;
+  action: string;
+  fromServiceId?: string;
+  toServiceId?: string;
+  serviceId?: string;
+  managedId?: string;
+  fromUrl?: string | null;
+  toUrl?: string | null;
+  evidence?: Record<string, unknown>;
+}
+
 export interface RunMeta {
   id: string;
   mode: string;
@@ -81,6 +93,7 @@ export interface RunSnapshot {
   plan: PlanView | null;
   resources: SnapshotResource[];
   verification: VerificationEntry[];
+  diagnoses?: SnapshotDiagnosis[];
   layers: RunLayers;
   /** Question ids that already have answers stored (never includes values). */
   answeredQuestionIds?: string[];
@@ -268,6 +281,35 @@ export const api = {
     }
     if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
     return body as { ok: boolean; answered: string[] };
+  },
+
+  async continueRun(
+    runId: string,
+    opts?: { startDeploy?: boolean },
+  ): Promise<{
+    classification: string;
+    deployable: boolean;
+    changed: boolean;
+    plan: PlanView;
+    runId?: string;
+  }> {
+    const res = await fetch(`${API_BASE}/runs/${runId}/continue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ startDeploy: opts?.startDeploy ?? false }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return body as {
+      classification: string;
+      deployable: boolean;
+      changed: boolean;
+      plan: PlanView;
+      runId?: string;
+    };
   },
 
   listProjectEnv: (projectId: string) =>

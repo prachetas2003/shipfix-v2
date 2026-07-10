@@ -8,7 +8,7 @@ import type {
 } from "@shipfix/contracts";
 import { redact } from "@shipfix/secrets";
 import type { Capabilities } from "./capabilities";
-import { issueToBlocker, type ValidationIssue } from "./issues";
+import { issueToBlocker, isValidationBlockerTitle, type ValidationIssue } from "./issues";
 import { isManagedSupported, isServiceTypeSupported, MVP_SUPPORT_SUMMARY } from "./mvpSupport";
 import {
   capConfidenceForVerification,
@@ -22,6 +22,22 @@ export interface ValidationResult {
   plan: DeploymentPlan;
   /** Every deterministic finding (for run events / debugging). */
   issues: ValidationIssue[];
+}
+
+/** Optional context for revalidation after HITL answers (C2). */
+export interface ValidatePlanOptions {
+  /**
+   * PlanQuestion ids that already have answers (e.g. `secret-api-STRIPE_KEY`).
+   * When set, matching user_secret / secret-question issues are skipped and
+   * classification is recomputed from remaining issues only.
+   */
+  satisfiedSecretQuestionIds?: ReadonlySet<string>;
+  /** Env var names satisfied via durable project env (B2). */
+  satisfiedEnvNames?: ReadonlySet<string>;
+}
+
+function secretQuestionId(serviceId: string, envName: string): string {
+  return `secret-${serviceId}-${envName}`;
 }
 
 const CLASSES = ["deployable", "needs_setup", "diagnose_only"] as const;
@@ -139,12 +155,25 @@ function wiringKey(edge: WiringEdge): string {
  * blockers; it never removes the planner's blockers or questions.
  */
 export function validatePlan(
-  plan: DeploymentPlan,
+  planInput: DeploymentPlan,
   ctx: RepoContext,
   caps: Capabilities,
+  opts: ValidatePlanOptions = {},
 ): ValidationResult {
+  const recompute =
+    opts.satisfiedSecretQuestionIds != null || opts.satisfiedEnvNames != null;
+  const plan: DeploymentPlan = recompute
+    ? {
+        ...planInput,
+        classification: "deployable",
+        blockers: planInput.blockers.filter((b) => !isValidationBlockerTitle(b.title)),
+      }
+    : planInput;
+
   const issues: ValidationIssue[] = [];
   const add = (i: ValidationIssue): void => void issues.push(i);
+  const satisfiedQs = opts.satisfiedSecretQuestionIds ?? new Set<string>();
+  const satisfiedEnvs = opts.satisfiedEnvNames ?? new Set<string>();
 
   const serviceIds = new Set(plan.services.map((s) => s.id));
   const managedIds = new Set(plan.managed.map((m) => m.id));
@@ -294,30 +323,39 @@ export function validatePlan(
   // ── User secrets / open questions block deploy until answered (YELLOW) ─────
   for (const s of plan.services) {
     for (const e of s.env) {
-      if (e.source === "user_secret") {
-        add({
-          code: "user_secret_required",
-          severity: "needs_input",
-          message: `"${s.id}" needs a secret value for "${e.name}" before it can deploy. ShipFix never sends secrets to the model.`,
-          path: `services.${s.id}.env.${e.name}`,
-        });
-      }
-    }
-  }
-  for (const q of plan.questions) {
-    if (q.kind === "secret") {
+      if (e.source !== "user_secret") continue;
+      const qid = secretQuestionId(s.id, e.name);
+      if (satisfiedQs.has(qid) || satisfiedEnvs.has(e.name)) continue;
       add({
-        code: "question_needs_secret",
+        code: "user_secret_required",
         severity: "needs_input",
-        message: `ShipFix needs an answer before deploying: ${q.prompt}`,
-        path: `questions.${q.id}`,
+        message: `"${s.id}" needs a secret value for "${e.name}" before it can deploy. ShipFix never sends secrets to the model.`,
+        path: `services.${s.id}.env.${e.name}`,
       });
     }
   }
+  for (const q of plan.questions) {
+    if (q.kind !== "secret") continue;
+    if (satisfiedQs.has(q.id)) continue;
+    // Also treat as satisfied when the env name suffix matches a project env.
+    const envSuffix = q.id.includes("-") ? q.id.slice(q.id.lastIndexOf("-") + 1) : "";
+    if (envSuffix && satisfiedEnvs.has(envSuffix)) continue;
+    add({
+      code: "question_needs_secret",
+      severity: "needs_input",
+      message: `ShipFix needs an answer before deploying: ${q.prompt}`,
+      path: `questions.${q.id}`,
+    });
+  }
 
-  // ── Migrations: Prisma is executed by ShipFix; other tools still need setup ─
+  // ── Migrations: Prisma/Drizzle are executed by ShipFix; other tools still need setup ─
   for (const m of plan.managed) {
-    if (!m.migration || m.migration === "none" || m.migration === "prisma") {
+    if (
+      !m.migration ||
+      m.migration === "none" ||
+      m.migration === "prisma" ||
+      m.migration === "drizzle"
+    ) {
       continue;
     }
     add({

@@ -321,6 +321,15 @@ describe("synthesizeDeterministicPlan", () => {
     expect(plan?.classification).toBe("deployable");
     expect(plan?.managed[0]?.migration).toBe("prisma");
   });
+
+  it("keeps Drizzle migration plans deployable (migrations run at deploy time)", () => {
+    const ctx = makeCtx({
+      dataNeeds: [{ kind: "postgres", detectedFrom: "drizzle", migrationTool: "drizzle", evidence: [] }],
+    });
+    const plan = synthesizeDeterministicPlan(ctx);
+    expect(plan?.classification).toBe("deployable");
+    expect(plan?.managed[0]?.migration).toBe("drizzle");
+  });
 });
 
 describe("generatePlan deterministic-first", () => {
