@@ -18,6 +18,8 @@ export interface RawResourceRow {
   status: string; // 'provisioning' | 'live' | 'failed'
   exposesEnv: string | null;
   createdAt: Date | string;
+  /** Non-secret provider metadata (e.g. consoleUrl, resourceName). */
+  meta?: Record<string, unknown> | null;
 }
 
 export interface PlanServiceLite {
@@ -49,6 +51,26 @@ export interface SnapshotResource {
   url: string | null;
   status: string;
   exposesEnv: string | null;
+  /** Provider resource id (safe to expose; used for console deep links). */
+  externalId?: string | null;
+  /** Provider dashboard URL when known (never a secret). */
+  consoleUrl?: string | null;
+}
+
+/** Best-effort provider console URL from external id (non-secret). */
+export function providerConsoleUrl(
+  provider: string,
+  externalId: string | null | undefined,
+  meta?: Record<string, unknown> | null,
+): string | null {
+  const fromMeta = meta?.consoleUrl;
+  if (typeof fromMeta === "string" && /^https?:\/\//i.test(fromMeta)) return fromMeta;
+  if (!externalId) return null;
+  const id = encodeURIComponent(externalId);
+  if (provider === "render") return `https://dashboard.render.com/web/${id}`;
+  if (provider === "neon") return `https://console.neon.tech/app/projects/${id}`;
+  // Vercel needs team slug + project name; prefer meta.consoleUrl written at deploy time.
+  return null;
 }
 
 export interface VerificationEntry {
@@ -121,6 +143,8 @@ export function toSnapshotResources(rows: RawResourceRow[], plan: PlanLite | nul
     url: row.url,
     status: row.status,
     exposesEnv: row.exposesEnv,
+    externalId: row.externalId,
+    consoleUrl: providerConsoleUrl(row.provider, row.externalId, row.meta),
   }));
 }
 

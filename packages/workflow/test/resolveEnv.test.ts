@@ -181,9 +181,59 @@ describe("resolveServiceEnv", () => {
     expect(env.CORS_ORIGIN).toBeUndefined();
   });
 
-  it("reports missing upstream service when not yet deployed", async () => {
+  it("resolves user_secret from run_inputs by question id", async () => {
     const vault = createSecretVault(randomBytes(32));
-    const { issues } = await resolveServiceEnv(webService, plan, [], vault);
-    expect(issues[0]?.code).toBe("missing_service");
+    const apiWithSecret: PlanService = {
+      ...apiService,
+      env: [{ name: "STRIPE_SECRET_KEY", source: "user_secret" }],
+    };
+    const { env, issues } = await resolveServiceEnv(
+      apiWithSecret,
+      plan,
+      [],
+      vault,
+      {
+        runInputValues: new Map([["secret-api-STRIPE_SECRET_KEY", "sk_test_123"]]),
+      },
+    );
+    expect(issues).toHaveLength(0);
+    expect(env.STRIPE_SECRET_KEY).toBe("sk_test_123");
+  });
+
+  it("resolves user_secret from project env when run_inputs are empty", async () => {
+    const vault = createSecretVault(randomBytes(32));
+    const apiWithSecret: PlanService = {
+      ...apiService,
+      env: [{ name: "STRIPE_SECRET_KEY", source: "user_secret" }],
+    };
+    const { env, issues } = await resolveServiceEnv(apiWithSecret, plan, [], vault, {
+      projectEnvValues: new Map([["STRIPE_SECRET_KEY", "sk_project_456"]]),
+    });
+    expect(issues).toHaveLength(0);
+    expect(env.STRIPE_SECRET_KEY).toBe("sk_project_456");
+  });
+
+  it("prefers run_inputs over project env for the same secret", async () => {
+    const vault = createSecretVault(randomBytes(32));
+    const apiWithSecret: PlanService = {
+      ...apiService,
+      env: [{ name: "STRIPE_SECRET_KEY", source: "user_secret" }],
+    };
+    const { env, issues } = await resolveServiceEnv(apiWithSecret, plan, [], vault, {
+      runInputValues: new Map([["secret-api-STRIPE_SECRET_KEY", "sk_run"]]),
+      projectEnvValues: new Map([["STRIPE_SECRET_KEY", "sk_project"]]),
+    });
+    expect(issues).toHaveLength(0);
+    expect(env.STRIPE_SECRET_KEY).toBe("sk_run");
+  });
+
+  it("reports missing_secret when user_secret is unanswered", async () => {
+    const vault = createSecretVault(randomBytes(32));
+    const apiWithSecret: PlanService = {
+      ...apiService,
+      env: [{ name: "STRIPE_SECRET_KEY", source: "user_secret" }],
+    };
+    const { issues } = await resolveServiceEnv(apiWithSecret, plan, [], vault);
+    expect(issues[0]?.code).toBe("missing_secret");
   });
 });

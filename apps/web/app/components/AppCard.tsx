@@ -5,6 +5,8 @@ import type { AppSummary, LayerState, VerificationEntry } from "../lib/api";
 import { buildAppResourceDisplay } from "../lib/resourceDisplay";
 import { runStatusLabel } from "../lib/runLabels";
 import { buttonStyle, card, colors, mono, STATE_COLOR } from "../lib/theme";
+import { VerificationChecklist } from "./VerificationChecklist";
+import { providerConsoleLabel } from "../lib/resourceDisplay";
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: colors.success,
@@ -107,6 +109,8 @@ export function AppCard({
         <MiniStatus label="Database" state={display?.database?.state ?? "not_attempted"} />
       </div>
 
+      {verification.length > 0 && <VerificationChecklist verification={verification} compact />}
+
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: "1rem" }}>
         {display?.frontend?.openAppUrl ? (
           <a
@@ -119,6 +123,16 @@ export function AppCard({
           </a>
         ) : (
           <span style={{ color: colors.dim, fontSize: "0.85rem" }}>Frontend link appears after a verified deploy.</span>
+        )}
+        {display?.frontend?.consoleUrl && (
+          <a
+            href={display.frontend.consoleUrl}
+            target="_blank"
+            rel="noreferrer"
+            style={{ ...buttonStyle("ghost"), textDecoration: "none", display: "inline-block" }}
+          >
+            {providerConsoleLabel(display.frontend.provider)}
+          </a>
         )}
         <Link href={`/apps/${app.projectId}`} style={{ textDecoration: "none" }}>
           <button style={buttonStyle("ghost")}>View deployment details</button>

@@ -22,6 +22,7 @@ const h = vi.hoisted(() => {
     plans: [],
     provider_accounts: [],
     deployed_resources: [],
+    run_inputs: [],
     llm_usage: [],
   };
   const events: Array<{ level: string; message: string; data: Record<string, unknown> }> = [];
@@ -55,6 +56,7 @@ vi.mock("@shipfix/db", () => {
     plans: table("plans"),
     providerAccounts: table("provider_accounts"),
     deployedResources: table("deployed_resources"),
+    runInputs: table("run_inputs"),
     llmUsage: table("llm_usage"),
   };
   const rowsFor = (t: { __table?: string }): FakeRow[] => h.rows[(t as { __table: string }).__table];

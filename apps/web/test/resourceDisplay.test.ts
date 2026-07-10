@@ -3,6 +3,7 @@ import {
   buildAppResourceDisplay,
   safeExternalHref,
   fullStackSummary,
+  providerConsoleHref,
 } from "../app/lib/resourceDisplay";
 import type { RunLayers, SnapshotResource, VerificationEntry } from "../app/lib/api";
 
@@ -32,6 +33,7 @@ const resources: SnapshotResource[] = [
     url: "ep-winter-breeze-afsx6a1g.c-2.us-west-2.aws.neon.tech",
     status: "live",
     exposesEnv: "DATABASE_URL",
+    externalId: "prj-neon-1",
   },
   {
     serviceId: "api",
@@ -41,6 +43,7 @@ const resources: SnapshotResource[] = [
     url: "https://shipfix-b015561e-4a18-491c-998d.onrender.com",
     status: "live",
     exposesEnv: null,
+    externalId: "srv-render-1",
   },
   {
     serviceId: "web",
@@ -50,6 +53,8 @@ const resources: SnapshotResource[] = [
     url: "https://shipfix-b015561e-4a18-491c-998d-b3b.vercel.app",
     status: "live",
     exposesEnv: null,
+    externalId: "prj_vercel_1",
+    consoleUrl: "https://vercel.com/team_abc/shipfix-web",
   },
 ];
 
@@ -76,12 +81,32 @@ describe("safeExternalHref", () => {
   });
 });
 
+describe("providerConsoleHref", () => {
+  it("builds Render and Neon console URLs from external ids", () => {
+    expect(providerConsoleHref("render", "srv-1")).toBe("https://dashboard.render.com/web/srv-1");
+    expect(providerConsoleHref("neon", "proj_1")).toBe("https://console.neon.tech/app/projects/proj_1");
+  });
+
+  it("uses stored Vercel console URL and does not invent a deployments link", () => {
+    expect(providerConsoleHref("vercel", "prj_1")).toBeNull();
+    expect(providerConsoleHref("vercel", "prj_1", "https://vercel.com/team/app")).toBe(
+      "https://vercel.com/team/app",
+    );
+  });
+});
+
 describe("buildAppResourceDisplay", () => {
   const display = buildAppResourceDisplay({ resources, layers, verification })!;
 
   it("renders frontend as primary Open App link", () => {
     expect(display.frontend?.openAppUrl).toBe("https://shipfix-b015561e-4a18-491c-998d-b3b.vercel.app");
     expect(safeExternalHref(display.frontend?.openAppUrl)).toBe(display.frontend?.openAppUrl);
+  });
+
+  it("exposes provider console deep links without secrets", () => {
+    expect(display.frontend?.consoleUrl).toBe("https://vercel.com/team_abc/shipfix-web");
+    expect(display.backend?.consoleUrl).toBe("https://dashboard.render.com/web/srv-render-1");
+    expect(display.database?.consoleUrl).toBe("https://console.neon.tech/app/projects/prj-neon-1");
   });
 
   it("renders backend base URL and verified health check URL separately", () => {

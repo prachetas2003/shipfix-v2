@@ -21,10 +21,35 @@ export function safeExternalHref(url: string | null | undefined): string | null 
   return /^https?:\/\//i.test(trimmed) ? trimmed : null;
 }
 
+/** Best-effort provider console URL from external id or stored meta (non-secret). */
+export function providerConsoleHref(
+  provider: string | null | undefined,
+  externalId: string | null | undefined,
+  storedConsoleUrl?: string | null,
+): string | null {
+  if (storedConsoleUrl && /^https?:\/\//i.test(storedConsoleUrl.trim())) {
+    return storedConsoleUrl.trim();
+  }
+  if (!provider || !externalId) return null;
+  const id = encodeURIComponent(externalId);
+  if (provider === "render") return `https://dashboard.render.com/web/${id}`;
+  if (provider === "neon") return `https://console.neon.tech/app/projects/${id}`;
+  // Vercel needs team slug + project name — use storedConsoleUrl from deploy meta.
+  return null;
+}
+
+export function providerConsoleLabel(provider: string | null | undefined): string {
+  if (provider === "vercel") return "Open in Vercel";
+  if (provider === "render") return "Open in Render";
+  if (provider === "neon") return "Open in Neon";
+  return "Open in provider";
+}
+
 export interface FrontendDisplay {
   state: LayerState;
   openAppUrl: string | null;
   provider: string | null;
+  consoleUrl: string | null;
 }
 
 export interface BackendDisplay {
@@ -34,6 +59,7 @@ export interface BackendDisplay {
   healthCheckUrl: string | null;
   healthCheckPassed: boolean;
   provider: string | null;
+  consoleUrl: string | null;
 }
 
 export interface DatabaseDisplay {
@@ -42,6 +68,7 @@ export interface DatabaseDisplay {
   host: string | null;
   provider: string | null;
   exposesEnv: string | null;
+  consoleUrl: string | null;
 }
 
 export interface AppResourceDisplay {
@@ -115,6 +142,11 @@ export function buildAppResourceDisplay(input: {
         state: layerState(layers.frontend),
         openAppUrl: safeExternalHref(layers.frontend.url ?? frontendRes?.url),
         provider: layers.frontend.provider ?? frontendRes?.provider ?? null,
+        consoleUrl: providerConsoleHref(
+          layers.frontend.provider ?? frontendRes?.provider,
+          frontendRes?.externalId,
+          frontendRes?.consoleUrl,
+        ),
       }
     : null;
 
@@ -125,6 +157,11 @@ export function buildAppResourceDisplay(input: {
         healthCheckUrl: safeExternalHref(health?.url),
         healthCheckPassed: Boolean(health?.ok),
         provider: layers.backend.provider ?? backendRes?.provider ?? null,
+        consoleUrl: providerConsoleHref(
+          layers.backend.provider ?? backendRes?.provider,
+          backendRes?.externalId,
+          backendRes?.consoleUrl,
+        ),
       }
     : null;
 
@@ -134,6 +171,11 @@ export function buildAppResourceDisplay(input: {
         host: dbRes?.url ?? layers.database.url ?? null,
         provider: layers.database.provider ?? dbRes?.provider ?? null,
         exposesEnv: dbRes?.exposesEnv ?? null,
+        consoleUrl: providerConsoleHref(
+          layers.database.provider ?? dbRes?.provider,
+          dbRes?.externalId,
+          dbRes?.consoleUrl,
+        ),
       }
     : null;
 

@@ -165,19 +165,47 @@ export const deployedResources = pgTable("deployed_resources", {
 });
 
 // ── Answers to human-in-the-loop questions (secret answers encrypted) ────────
-export const runInputs = pgTable("run_inputs", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  runId: uuid("run_id")
-    .notNull()
-    .references(() => runs.id, { onDelete: "cascade" }),
-  questionId: text("question_id").notNull(),
-  isSecret: boolean("is_secret").notNull().default(false),
-  valuePlain: text("value_plain"), // only for non-secret answers
-  encBlob: bytea("enc_blob"),
-  encIv: bytea("enc_iv"),
-  encDek: bytea("enc_dek"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const runInputs = pgTable(
+  "run_inputs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    questionId: text("question_id").notNull(),
+    isSecret: boolean("is_secret").notNull().default(false),
+    valuePlain: text("value_plain"), // only for non-secret answers
+    encBlob: bytea("enc_blob"),
+    encIv: bytea("enc_iv"),
+    encDek: bytea("enc_dek"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqQuestion: uniqueIndex("run_inputs_run_question_unique").on(t.runId, t.questionId),
+  }),
+);
+
+// ── Durable per-project production env (single environment for MVP) ──────────
+export const projectEnvVars = pgTable(
+  "project_env_vars",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    isSecret: boolean("is_secret").notNull().default(true),
+    valuePlain: text("value_plain"),
+    encBlob: bytea("enc_blob"),
+    encIv: bytea("enc_iv"),
+    encDek: bytea("enc_dek"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqName: uniqueIndex("project_env_vars_project_name_unique").on(t.projectId, t.name),
+  }),
+);
 
 // Alpha safety ledger for backend-only LLM usage. Stores metadata only: no
 // prompts, no provider keys, no repo secrets, no model output.
@@ -217,6 +245,7 @@ export const schema = {
   plans,
   deployedResources,
   runInputs,
+  projectEnvVars,
   llmUsage,
   workerHeartbeats,
 };

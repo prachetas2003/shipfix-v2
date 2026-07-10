@@ -15,11 +15,11 @@ Check items only when that guide’s **acceptance criteria** pass (tests + behav
 
 ## Phase B — Daily utility
 
-- [ ] **B1** `POST /runs/:id/inputs` + question UI + `resolveEnv` reads `run_inputs`
-- [ ] **B2** Project-level production env/secrets
-- [ ] **B3** Redeploy latest default-branch SHA (keep same-SHA retry secondary)
-- [ ] **B4** Expose `externalId` / console URLs → Open in Vercel/Render/Neon
-- [ ] **B5** App-home verification summary + light polling
+- [x] **B1** `POST /runs/:id/inputs` + question UI + `resolveEnv` reads `run_inputs`
+- [x] **B2** Project-level production env/secrets
+- [x] **B3** Redeploy latest default-branch SHA (keep same-SHA retry secondary)
+- [x] **B4** Expose `externalId` / console URLs → Open in Vercel/Render/Neon
+- [x] **B5** App-home verification summary + light polling
 
 **Phase B exit:** users return to manage env, redeploy latest, open providers, watch health.
 

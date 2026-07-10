@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import type { AppResourceDisplay } from "../lib/resourceDisplay";
-import { fullStackSummary } from "../lib/resourceDisplay";
+import { fullStackSummary, providerConsoleLabel } from "../lib/resourceDisplay";
 import { buttonStyle, card, colors, h2, mono, STATE_COLOR } from "../lib/theme";
 
 const STATE_LABEL: Record<string, string> = {
@@ -116,8 +116,18 @@ export function CurrentState({ display }: { display: AppResourceDisplay }): Reac
                   rel="noreferrer"
                   style={{ ...buttonStyle("success"), textDecoration: "none", display: "inline-block" }}
                 >
-                  Open app
+                    Open app
                 </a>
+                {frontend.consoleUrl && (
+                  <a
+                    href={frontend.consoleUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ ...buttonStyle("ghost"), textDecoration: "none", display: "inline-block", marginLeft: 8 }}
+                  >
+                    {providerConsoleLabel(frontend.provider)}
+                  </a>
+                )}
                 <p style={{ margin: "0.55rem 0 0", fontSize: "0.78rem", fontFamily: mono, color: colors.dim, wordBreak: "break-all" }}>
                   {frontend.openAppUrl}
                 </p>
@@ -158,21 +168,45 @@ export function CurrentState({ display }: { display: AppResourceDisplay }): Reac
             ) : backend.state === "live" ? (
               <p style={{ margin: 0, color: colors.dim, fontSize: "0.84rem" }}>Health check URL was not recorded for this run.</p>
             ) : null}
-          </ServicePanel>
-        )}
+            {backend.consoleUrl && (
+              <p style={{ margin: "0.55rem 0 0" }}>
+                <a
+                  href={backend.consoleUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ ...buttonStyle("ghost"), textDecoration: "none", display: "inline-block" }}
+                  >
+                    {providerConsoleLabel(backend.provider)}
+                  </a>
+                </p>
+              )}
+            </ServicePanel>
+          )}
 
-        {database && (
-          <ServicePanel
-            title="Database"
-            provider={database.provider}
-            state={database.state}
-            description="This is infrastructure for your backend, not a website. ShipFix stores the connection string securely and only shows safe metadata."
-          >
-            {database.host && <MetaLine label="Host" value={database.host} />}
-            {database.exposesEnv && <MetaLine label="Backend env" value={database.exposesEnv} />}
-            <p style={{ margin: "0.35rem 0 0", fontSize: "0.82rem", color: colors.dim }}>
-              Connection string is sealed and never shown in the browser.
-            </p>
+          {database && (
+            <ServicePanel
+              title="Database"
+              provider={database.provider}
+              state={database.state}
+              description="This is infrastructure for your backend, not a website. ShipFix stores the connection string securely and only shows safe metadata."
+            >
+              {database.host && <MetaLine label="Host" value={database.host} />}
+              {database.exposesEnv && <MetaLine label="Backend env" value={database.exposesEnv} />}
+              <p style={{ margin: "0.35rem 0 0", fontSize: "0.82rem", color: colors.dim }}>
+                Connection string is sealed and never shown in the browser.
+              </p>
+              {database.consoleUrl && (
+                <p style={{ margin: "0.55rem 0 0" }}>
+                  <a
+                    href={database.consoleUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ ...buttonStyle("ghost"), textDecoration: "none", display: "inline-block" }}
+                  >
+                    {providerConsoleLabel(database.provider)}
+                  </a>
+                </p>
+              )}
           </ServicePanel>
         )}
       </div>

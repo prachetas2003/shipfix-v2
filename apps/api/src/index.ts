@@ -11,6 +11,8 @@ import {
   providerAccounts,
   llmUsage,
   runEvents,
+  runInputs,
+  projectEnvVars,
   runs,
   workerHeartbeats,
 } from "@shipfix/db";
@@ -171,7 +173,7 @@ function normalizePlanForResponse(doc: unknown): unknown {
 
 /** Non-secret deployed resource rows for a run (never selects enc_* columns). */
 async function loadResourceRows(runId: string): Promise<RawResourceRow[]> {
-  return db
+  const rows = await db
     .select({
       serviceId: deployedResources.serviceId,
       kind: deployedResources.kind,
@@ -181,9 +183,14 @@ async function loadResourceRows(runId: string): Promise<RawResourceRow[]> {
       status: deployedResources.status,
       exposesEnv: deployedResources.exposesEnv,
       createdAt: deployedResources.createdAt,
+      meta: deployedResources.meta,
     })
     .from(deployedResources)
     .where(eq(deployedResources.runId, runId));
+  return rows.map((r) => ({
+    ...r,
+    meta: (r.meta as Record<string, unknown> | null) ?? null,
+  }));
 }
 
 async function loadVerificationForRun(runId: string) {
@@ -302,7 +309,7 @@ async function buildRunSnapshot(runId: string): Promise<Record<string, unknown> 
     .where(eq(projects.id, run.projectId))
     .limit(1);
 
-  const [plan, resourceRows, events] = await Promise.all([
+  const [plan, resourceRows, events, inputRows] = await Promise.all([
     loadPlanDoc(runId),
     loadResourceRows(runId),
     db
@@ -310,6 +317,10 @@ async function buildRunSnapshot(runId: string): Promise<Record<string, unknown> 
       .from(runEvents)
       .where(eq(runEvents.runId, runId))
       .orderBy(asc(runEvents.seq)),
+    db
+      .select({ questionId: runInputs.questionId })
+      .from(runInputs)
+      .where(eq(runInputs.runId, runId)),
   ]);
 
   const resources = toSnapshotResources(resourceRows, plan);
@@ -332,6 +343,8 @@ async function buildRunSnapshot(runId: string): Promise<Record<string, unknown> 
     resources,
     verification,
     layers,
+    // Question ids only — never secret values.
+    answeredQuestionIds: inputRows.map((r) => r.questionId),
   };
 }
 
@@ -584,6 +597,47 @@ async function startRun(
   return startTemporalWorkflowForRun(run.id, mode, logger);
 }
 
+async function resolveGithubBranchSha(
+  repoFullName: string,
+  branch: string,
+): Promise<{ sha: string } | { error: string; message: string }> {
+  const endpoint = `https://api.github.com/repos/${repoFullName}/commits/${encodeURIComponent(branch)}`;
+  try {
+    const res = await fetch(endpoint, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "shipfix",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+    if (res.status === 404) {
+      return {
+        error: "repo_or_branch_not_found",
+        message: `Could not find ${repoFullName}@${branch} on GitHub. Confirm the repo is public and the default branch is correct.`,
+      };
+    }
+    if (!res.ok) {
+      return {
+        error: "github_lookup_failed",
+        message: `GitHub returned ${res.status} while resolving the latest commit. Try again in a minute.`,
+      };
+    }
+    const json = (await res.json()) as { sha?: string };
+    if (!json.sha || !/^[0-9a-f]{7,40}$/i.test(json.sha)) {
+      return {
+        error: "github_lookup_failed",
+        message: "GitHub did not return a commit SHA for this branch.",
+      };
+    }
+    return { sha: json.sha };
+  } catch {
+    return {
+      error: "github_lookup_failed",
+      message: "Could not reach GitHub to resolve the latest commit.",
+    };
+  }
+}
+
 async function startDeployFromExistingRun(
   user: AuthenticatedUser,
   sourceRunId: string,
@@ -648,6 +702,22 @@ async function startDeployFromExistingRun(
     })
     .returning();
   await db.update(runs).set({ planId: copiedPlan.id }).where(eq(runs.id, run.id));
+
+  // Carry answered plan questions onto the deploy run (sealed blobs copied as-is).
+  const sourceInputs = await db.select().from(runInputs).where(eq(runInputs.runId, sourceRunId));
+  if (sourceInputs.length > 0) {
+    await db.insert(runInputs).values(
+      sourceInputs.map((row) => ({
+        runId: run.id,
+        questionId: row.questionId,
+        isSecret: row.isSecret,
+        valuePlain: row.valuePlain,
+        encBlob: row.encBlob,
+        encIv: row.encIv,
+        encDek: row.encDek,
+      })),
+    );
+  }
 
   const logger = createRunLogger(run.id, createSafePostgresSink(db));
   await logger.stage("queued", `Deploy queued for ${source.repoFullName}`);
@@ -772,6 +842,70 @@ app.post("/runs/:runId/deploy", async (request, reply) => {
     return reply.status(status).send({ runId: result.runId || undefined, error: result.code, message: result.message });
   }
   return reply.status(202).send({ runId: result.runId, mode: "deploy" });
+});
+
+/**
+ * Redeploy latest tip of the project's default branch (re-analyze + plan + deploy).
+ * Same-SHA plan retry remains available via POST /runs/:runId/deploy.
+ */
+app.post("/apps/:projectId/redeploy", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) {
+    return reply.status(400).send({ error: "invalid_project_id" });
+  }
+  if (!checkIpRateLimit(request.ip)) {
+    await recordRateLimitRejection({ userId: user.id, operation: "deploy", code: "ip_run_start_limit" });
+    return reply.status(429).send({
+      error: "ip_run_start_limit",
+      message: usageLimitMessage({
+        code: "ip_run_start_limit",
+        limit: env.ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW,
+        unit: `run starts per ${env.ALPHA_RATE_LIMIT_WINDOW_MS}ms IP window`,
+        nodeEnv: process.env.NODE_ENV,
+      }),
+    });
+  }
+
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.userId, user.id)))
+    .limit(1);
+  if (!project) return reply.status(404).send({ error: "project_not_found" });
+
+  const resolved = await resolveGithubBranchSha(project.repoFullName, project.defaultBranch);
+  if ("error" in resolved) {
+    return reply.status(502).send({ error: resolved.error, message: resolved.message });
+  }
+
+  try {
+    const result = await startRun("deploy", user, {
+      repoFullName: project.repoFullName,
+      branch: project.defaultBranch,
+      commitSha: resolved.sha,
+    });
+    if (!result.ok) {
+      if (!result.runId) {
+        return reply.status(429).send({ error: result.code, message: result.message });
+      }
+      return reply.status(503).send({ runId: result.runId, error: result.code, message: result.message });
+    }
+    return reply.status(202).send({
+      runId: result.runId,
+      mode: "deploy",
+      commitSha: resolved.sha,
+      branch: project.defaultBranch,
+    });
+  } catch (err) {
+    request.log.error(err);
+    return reply.status(500).send({
+      error: "internal",
+      message: "ShipFix hit an internal error starting this redeploy. Try again in a minute.",
+    });
+  }
 });
 
 // ── Provider credentials ───────────────────────────────────────────────────
@@ -1195,8 +1329,320 @@ app.get("/apps/:projectId", async (request, reply) => {
   };
 });
 
-// TODO: POST /runs/:id/inputs — answer PlanQuestions (signal the workflow); lands
-//       with the human-in-the-loop deploy slice, not analyze_only.
+// Answer PlanQuestions (secrets sealed). Approach A: answer before Deploy.
+const RunInputsBody = z.object({
+  answers: z
+    .array(
+      z.object({
+        questionId: z.string().min(1),
+        value: z.string().min(1),
+      }),
+    )
+    .min(1),
+});
+
+app.post("/runs/:runId/inputs", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+
+  const { runId } = request.params as { runId: string };
+  if (!z.string().uuid().safeParse(runId).success) {
+    return reply.status(400).send({ error: "invalid_run_id" });
+  }
+  if (!(await userCanAccessRun(user.id, runId))) {
+    return reply.status(404).send({ error: "run_not_found" });
+  }
+
+  const parsed = RunInputsBody.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "invalid_body", details: parsed.error.flatten() });
+  }
+
+  const planRow = await db
+    .select({ doc: plans.doc })
+    .from(plans)
+    .where(eq(plans.runId, runId))
+    .orderBy(desc(plans.version))
+    .limit(1);
+  const planDoc = planRow[0]?.doc as {
+    questions?: Array<{ id: string; kind?: string }>;
+  } | null;
+  if (!planDoc) {
+    return reply.status(404).send({
+      error: "plan_not_found",
+      message: "No plan found for this run yet. Wait for planning to finish.",
+    });
+  }
+
+  const questionsById = new Map(
+    (planDoc.questions ?? []).map((q) => [q.id, q]),
+  );
+  for (const answer of parsed.data.answers) {
+    if (!questionsById.has(answer.questionId)) {
+      return reply.status(400).send({
+        error: "unknown_question",
+        message: `Question "${answer.questionId}" is not on this plan.`,
+      });
+    }
+  }
+
+  let vault: ReturnType<typeof createSecretVaultFromEnv>;
+  try {
+    vault = createSecretVaultFromEnv();
+  } catch (e) {
+    request.log.error(e);
+    return reply.status(500).send({
+      error: "vault_unconfigured",
+      message: "ShipFix's secret storage is not configured on the server.",
+    });
+  }
+
+  const answered: string[] = [];
+  try {
+    for (const answer of parsed.data.answers) {
+      const question = questionsById.get(answer.questionId)!;
+      const isSecret = question.kind === "secret";
+      const existing = await db
+        .select()
+        .from(runInputs)
+        .where(and(eq(runInputs.runId, runId), eq(runInputs.questionId, answer.questionId)))
+        .limit(1);
+
+      if (isSecret) {
+        const sealed = await vault.seal(answer.value);
+        if (existing[0]) {
+          await db
+            .update(runInputs)
+            .set({
+              isSecret: true,
+              valuePlain: null,
+              encBlob: sealed.encBlob,
+              encIv: sealed.encIv,
+              encDek: sealed.encDek,
+            })
+            .where(eq(runInputs.id, existing[0].id));
+        } else {
+          await db.insert(runInputs).values({
+            runId,
+            questionId: answer.questionId,
+            isSecret: true,
+            valuePlain: null,
+            encBlob: sealed.encBlob,
+            encIv: sealed.encIv,
+            encDek: sealed.encDek,
+          });
+        }
+      } else if (existing[0]) {
+        await db
+          .update(runInputs)
+          .set({
+            isSecret: false,
+            valuePlain: answer.value,
+            encBlob: null,
+            encIv: null,
+            encDek: null,
+          })
+          .where(eq(runInputs.id, existing[0].id));
+      } else {
+        await db.insert(runInputs).values({
+          runId,
+          questionId: answer.questionId,
+          isSecret: false,
+          valuePlain: answer.value,
+        });
+      }
+      answered.push(answer.questionId);
+    }
+  } catch (err) {
+    request.log.error(err);
+    return reply.status(500).send({
+      error: "internal",
+      message: "Could not save answers. Try again in a minute.",
+    });
+  }
+
+  return { ok: true, answered };
+});
+
+const EnvVarName = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Invalid env var name");
+
+const ProjectEnvPutBody = z.object({
+  vars: z
+    .array(
+      z.object({
+        name: EnvVarName,
+        value: z.string().min(1),
+        isSecret: z.boolean().default(true),
+      }),
+    )
+    .min(1),
+});
+
+async function userOwnsProject(userId: string, projectId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.userId, userId)))
+    .limit(1);
+  return Boolean(row);
+}
+
+/** List durable project env vars (secret values never returned). */
+app.get("/apps/:projectId/env", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) {
+    return reply.status(400).send({ error: "invalid_project_id" });
+  }
+  if (!(await userOwnsProject(user.id, projectId))) {
+    return reply.status(404).send({ error: "project_not_found" });
+  }
+
+  const rows = await db
+    .select({
+      name: projectEnvVars.name,
+      isSecret: projectEnvVars.isSecret,
+      valuePlain: projectEnvVars.valuePlain,
+      updatedAt: projectEnvVars.updatedAt,
+    })
+    .from(projectEnvVars)
+    .where(eq(projectEnvVars.projectId, projectId))
+    .orderBy(asc(projectEnvVars.name));
+
+  return {
+    vars: rows.map((r) => ({
+      name: r.name,
+      isSecret: r.isSecret,
+      value: r.isSecret ? null : r.valuePlain,
+      updatedAt: r.updatedAt,
+    })),
+  };
+});
+
+/** Upsert durable project env vars. Secrets are sealed; never echoed back. */
+app.put("/apps/:projectId/env", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) {
+    return reply.status(400).send({ error: "invalid_project_id" });
+  }
+  if (!(await userOwnsProject(user.id, projectId))) {
+    return reply.status(404).send({ error: "project_not_found" });
+  }
+
+  const parsed = ProjectEnvPutBody.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "invalid_body", details: parsed.error.flatten() });
+  }
+
+  let vault: ReturnType<typeof createSecretVaultFromEnv>;
+  try {
+    vault = createSecretVaultFromEnv();
+  } catch (e) {
+    request.log.error(e);
+    return reply.status(500).send({
+      error: "vault_unconfigured",
+      message: "ShipFix's secret storage is not configured on the server.",
+    });
+  }
+
+  const saved: string[] = [];
+  try {
+    for (const item of parsed.data.vars) {
+      const existing = await db
+        .select()
+        .from(projectEnvVars)
+        .where(and(eq(projectEnvVars.projectId, projectId), eq(projectEnvVars.name, item.name)))
+        .limit(1);
+
+      const now = new Date();
+      if (item.isSecret) {
+        const sealed = await vault.seal(item.value);
+        if (existing[0]) {
+          await db
+            .update(projectEnvVars)
+            .set({
+              isSecret: true,
+              valuePlain: null,
+              encBlob: sealed.encBlob,
+              encIv: sealed.encIv,
+              encDek: sealed.encDek,
+              updatedAt: now,
+            })
+            .where(eq(projectEnvVars.id, existing[0].id));
+        } else {
+          await db.insert(projectEnvVars).values({
+            projectId,
+            name: item.name,
+            isSecret: true,
+            valuePlain: null,
+            encBlob: sealed.encBlob,
+            encIv: sealed.encIv,
+            encDek: sealed.encDek,
+          });
+        }
+      } else if (existing[0]) {
+        await db
+          .update(projectEnvVars)
+          .set({
+            isSecret: false,
+            valuePlain: item.value,
+            encBlob: null,
+            encIv: null,
+            encDek: null,
+            updatedAt: now,
+          })
+          .where(eq(projectEnvVars.id, existing[0].id));
+      } else {
+        await db.insert(projectEnvVars).values({
+          projectId,
+          name: item.name,
+          isSecret: false,
+          valuePlain: item.value,
+        });
+      }
+      saved.push(item.name);
+    }
+  } catch (err) {
+    request.log.error(err);
+    return reply.status(500).send({
+      error: "internal",
+      message: "Could not save environment variables. Try again in a minute.",
+    });
+  }
+
+  return { ok: true, saved };
+});
+
+app.delete("/apps/:projectId/env/:name", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+
+  const { projectId, name } = request.params as { projectId: string; name: string };
+  if (!z.string().uuid().safeParse(projectId).success) {
+    return reply.status(400).send({ error: "invalid_project_id" });
+  }
+  if (!EnvVarName.safeParse(name).success) {
+    return reply.status(400).send({ error: "invalid_env_name" });
+  }
+  if (!(await userOwnsProject(user.id, projectId))) {
+    return reply.status(404).send({ error: "project_not_found" });
+  }
+
+  await db
+    .delete(projectEnvVars)
+    .where(and(eq(projectEnvVars.projectId, projectId), eq(projectEnvVars.name, name)));
+
+  return { ok: true };
+});
 
 const start = async (): Promise<void> => {
   try {

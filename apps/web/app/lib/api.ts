@@ -35,6 +35,9 @@ export interface SnapshotResource {
   url: string | null;
   status: string;
   exposesEnv: string | null;
+  externalId?: string | null;
+  /** Provider dashboard URL when known (never a secret). */
+  consoleUrl?: string | null;
 }
 
 export interface LayerStatus {
@@ -79,6 +82,8 @@ export interface RunSnapshot {
   resources: SnapshotResource[];
   verification: VerificationEntry[];
   layers: RunLayers;
+  /** Question ids that already have answers stored (never includes values). */
+  answeredQuestionIds?: string[];
 }
 
 export interface AppSummary {
@@ -228,6 +233,75 @@ export const api = {
     }
     if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
     return body.runId as string;
+  },
+
+  async redeployLatest(projectId: string): Promise<{ runId: string; commitSha: string; branch: string }> {
+    const res = await fetch(`${API_BASE}/apps/${projectId}/redeploy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return {
+      runId: body.runId as string,
+      commitSha: body.commitSha as string,
+      branch: body.branch as string,
+    };
+  },
+
+  async submitRunInputs(
+    runId: string,
+    answers: Array<{ questionId: string; value: string }>,
+  ): Promise<{ ok: boolean; answered: string[] }> {
+    const res = await fetch(`${API_BASE}/runs/${runId}/inputs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ answers }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return body as { ok: boolean; answered: string[] };
+  },
+
+  listProjectEnv: (projectId: string) =>
+    getJson<{
+      vars: Array<{ name: string; isSecret: boolean; value: string | null; updatedAt: string }>;
+    }>(`/apps/${projectId}/env`),
+
+  async upsertProjectEnv(
+    projectId: string,
+    vars: Array<{ name: string; value: string; isSecret: boolean }>,
+  ): Promise<{ ok: boolean; saved: string[] }> {
+    const res = await fetch(`${API_BASE}/apps/${projectId}/env`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ vars }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return body as { ok: boolean; saved: string[] };
+  },
+
+  async deleteProjectEnv(projectId: string, name: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/apps/${projectId}/env/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+      headers: { ...(await authHeaders()) },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
   },
 
   async connectProvider(provider: string, values: Record<string, string>): Promise<void> {

@@ -55,6 +55,8 @@ import {
   plans,
   providerAccounts,
   deployedResources,
+  runInputs,
+  projectEnvVars,
   type Database,
 } from "@shipfix/db";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
@@ -276,6 +278,44 @@ function resourceKind(kind: ManagedKind): string {
   return "managed_db";
 }
 
+/** Non-secret provider dashboard URL for UI deep links. */
+function providerConsoleUrl(
+  provider: string,
+  externalId: string | null | undefined,
+  opts?: { resourceName?: string; teamId?: string },
+): string | null {
+  if (!externalId) return null;
+  const id = encodeURIComponent(externalId);
+  if (provider === "render") return `https://dashboard.render.com/web/${id}`;
+  if (provider === "neon") return `https://console.neon.tech/app/projects/${id}`;
+  if (provider === "vercel") {
+    const team = opts?.teamId?.trim();
+    const name = opts?.resourceName?.trim();
+    if (team && name) {
+      return `https://vercel.com/${encodeURIComponent(team)}/${encodeURIComponent(name)}`;
+    }
+  }
+  return null;
+}
+
+function resourceMeta(args: {
+  provider: string;
+  externalId: string | null | undefined;
+  resourceName?: string;
+  teamId?: string;
+  extra?: Record<string, unknown>;
+}): Record<string, unknown> {
+  const consoleUrl = providerConsoleUrl(args.provider, args.externalId, {
+    resourceName: args.resourceName,
+    teamId: args.teamId,
+  });
+  return {
+    ...(args.resourceName ? { resourceName: args.resourceName } : {}),
+    ...(consoleUrl ? { consoleUrl } : {}),
+    ...(args.extra ?? {}),
+  };
+}
+
 function neonOrgIdFromEnv(): string | null {
   return process.env.NEON_ORG_ID?.trim() || process.env.NEON_ORGANIZATION_ID?.trim() || null;
 }
@@ -344,6 +384,54 @@ async function loadDeployedRows(db: Database, runId: string): Promise<DeployedRe
     encIv: r.encIv,
     encDek: r.encDek,
   }));
+}
+
+/** Open run_inputs for env resolution. Values must never be logged. */
+async function loadRunInputValues(
+  db: Database,
+  runId: string,
+  vault: SecretVault,
+): Promise<Map<string, string>> {
+  const rows = await db.select().from(runInputs).where(eq(runInputs.runId, runId));
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    if (row.isSecret) {
+      if (!row.encBlob || !row.encIv || !row.encDek) continue;
+      const value = await vault.open({
+        encBlob: row.encBlob,
+        encIv: row.encIv,
+        encDek: row.encDek,
+      });
+      if (value) map.set(row.questionId, value);
+    } else if (row.valuePlain) {
+      map.set(row.questionId, row.valuePlain);
+    }
+  }
+  return map;
+}
+
+/** Open durable project env vars keyed by name. Values must never be logged. */
+async function loadProjectEnvValues(
+  db: Database,
+  projectId: string,
+  vault: SecretVault,
+): Promise<Map<string, string>> {
+  const rows = await db.select().from(projectEnvVars).where(eq(projectEnvVars.projectId, projectId));
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    if (row.isSecret) {
+      if (!row.encBlob || !row.encIv || !row.encDek) continue;
+      const value = await vault.open({
+        encBlob: row.encBlob,
+        encIv: row.encIv,
+        encDek: row.encDek,
+      });
+      if (value) map.set(row.name, value);
+    } else if (row.valuePlain) {
+      map.set(row.name, row.valuePlain);
+    }
+  }
+  return map;
 }
 
 /**
@@ -886,6 +974,7 @@ export async function provisionManagedServices(runId: string): Promise<Provision
         url: result.host,
         status: "failed",
         exposesEnv: m.exposesEnv,
+        meta: resourceMeta({ provider: m.provider, externalId: result.externalId }),
       });
       await logger.error(`Provisioning failed for "${m.id}".`, {
         event: "provision_failed",
@@ -915,6 +1004,7 @@ export async function provisionManagedServices(runId: string): Promise<Provision
         url: result.host,
         status: "failed",
         exposesEnv: m.exposesEnv,
+        meta: resourceMeta({ provider: m.provider, externalId: result.externalId }),
       });
       await logger.error(`Database verification failed for "${m.id}".`, verifyPayload);
       continue;
@@ -936,6 +1026,7 @@ export async function provisionManagedServices(runId: string): Promise<Provision
       encBlob: sealed.encBlob,
       encIv: sealed.encIv,
       encDek: sealed.encDek,
+      meta: resourceMeta({ provider: m.provider, externalId: result.externalId }),
     });
 
     summary.provisioned.push(m.id);
@@ -1136,6 +1227,8 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
     .where(eq(providerAccounts.userId, run.userId));
   const accountByProvider = new Map(accounts.map((a) => [a.provider, a]));
   const deployedRows = await loadDeployedRows(db, runId);
+  const runInputValues = await loadRunInputValues(db, runId, vault);
+  const projectEnvValues = await loadProjectEnvValues(db, run.projectId, vault);
 
   if (!adapters.has("render") || !accountByProvider.has("render")) {
     for (const s of backendTargets) {
@@ -1168,6 +1261,8 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
 
     const { env, issues, deferred } = await resolveServiceEnv(svc, plan, deployedRows, vault, {
       deferFrontendOrigins: true,
+      runInputValues,
+      projectEnvValues,
     });
     if (issues.length > 0) {
       summary.skipped.push({ id: svc.id, reason: issues[0]?.code ?? "env_unresolved" });
@@ -1217,7 +1312,11 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
         externalId: result.externalId,
         url: result.publicUrl,
         status: "failed",
-        meta: { resourceName: deployTarget.resourceName },
+        meta: resourceMeta({
+          provider: "render",
+          externalId: result.externalId,
+          resourceName: deployTarget.resourceName,
+        }),
       });
       await logger.error(`Deploy failed for "${svc.id}".`, {
         event: kind === "setup_blocker" ? "deploy_setup_blocker" : "deploy_failed",
@@ -1243,10 +1342,12 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
       externalId: result.externalId,
       url: result.publicUrl,
       status: "live",
-      meta: {
+      meta: resourceMeta({
+        provider: "render",
+        externalId: result.externalId,
         resourceName: deployTarget.resourceName,
-        ...(deferred.length > 0 ? { deferredEnv: deferred } : {}),
-      },
+        extra: deferred.length > 0 ? { deferredEnv: deferred } : undefined,
+      }),
     });
 
     summary.deployed.push(svc.id);
@@ -1326,7 +1427,12 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
     }
 
     const deployedRows = await loadDeployedRows(db, runId);
-    const { env, issues } = await resolveServiceEnv(svc, plan, deployedRows, vault);
+    const runInputValues = await loadRunInputValues(db, runId, vault);
+    const projectEnvValues = await loadProjectEnvValues(db, run.projectId, vault);
+    const { env, issues } = await resolveServiceEnv(svc, plan, deployedRows, vault, {
+      runInputValues,
+      projectEnvValues,
+    });
     if (issues.length > 0) {
       summary.skipped.push({ id: svc.id, reason: issues[0]?.code ?? "env_unresolved" });
       await logger.warn(`Cannot deploy "${svc.id}": env resolution blocked.`, {
@@ -1369,7 +1475,12 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
         externalId: result.externalId,
         url: result.publicUrl,
         status: "failed",
-        meta: { resourceName: deployTarget.resourceName },
+        meta: resourceMeta({
+          provider: "vercel",
+          externalId: result.externalId,
+          resourceName: deployTarget.resourceName,
+          teamId: credValues.teamId,
+        }),
       });
       const setupMsg =
         kind === "provider_limit"
@@ -1416,7 +1527,12 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
       externalId: result.externalId,
       url: result.publicUrl,
       status: "live",
-      meta: { resourceName: deployTarget.resourceName },
+      meta: resourceMeta({
+        provider: "vercel",
+        externalId: result.externalId,
+        resourceName: deployTarget.resourceName,
+        teamId: credValues.teamId,
+      }),
     });
 
     summary.deployed.push(svc.id);
@@ -1513,7 +1629,10 @@ export async function wireDeferredBackendEnv(runId: string): Promise<WireDeferre
       continue;
     }
 
-    const { env, issues } = await resolveServiceEnv(svc, plan, deployedRows, vault);
+    const { env, issues } = await resolveServiceEnv(svc, plan, deployedRows, vault, {
+      runInputValues: await loadRunInputValues(db, runId, vault),
+      projectEnvValues: await loadProjectEnvValues(db, run.projectId, vault),
+    });
     if (issues.length > 0) {
       summary.failed.push(backendId);
       await logger.error(`Cannot wire origins for "${backendId}": env still unresolved.`, {

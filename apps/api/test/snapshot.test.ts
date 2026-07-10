@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   deriveLayers,
   latestResourceRows,
+  providerConsoleUrl,
   roleForResource,
   toSnapshotResources,
   verificationFromEvents,
@@ -49,16 +50,43 @@ describe("roleForResource", () => {
   });
 });
 
-describe("latestResourceRows", () => {
-  it("prefers a live row over an earlier failed row for the same service", () => {
+describe("toSnapshotResources", () => {
+  it("includes console deep links from externalId / meta", () => {
     const rows = [
-      row({ status: "failed", url: null, createdAt: "2026-06-03T00:00:00Z" }),
-      row({ status: "live", url: "https://web.vercel.app", createdAt: "2026-06-03T00:01:00Z" }),
+      row({
+        serviceId: "db",
+        kind: "managed_db",
+        provider: "neon",
+        externalId: "neon-1",
+        url: "db-host",
+        exposesEnv: "DATABASE_URL",
+      }),
+      row({ serviceId: "api", provider: "render", externalId: "srv-1", url: "https://api.onrender.com" }),
+      row({
+        serviceId: "web",
+        provider: "vercel",
+        externalId: "prj_1",
+        url: "https://web.vercel.app",
+        meta: { consoleUrl: "https://vercel.com/team/app" },
+      }),
     ];
-    const latest = latestResourceRows(rows);
-    expect(latest).toHaveLength(1);
-    expect(latest[0].status).toBe("live");
-    expect(latest[0].url).toBe("https://web.vercel.app");
+    const resources = toSnapshotResources(rows, plan);
+    expect(resources.find((r) => r.serviceId === "db")?.consoleUrl).toBe(
+      "https://console.neon.tech/app/projects/neon-1",
+    );
+    expect(resources.find((r) => r.serviceId === "api")?.consoleUrl).toBe(
+      "https://dashboard.render.com/web/srv-1",
+    );
+    expect(resources.find((r) => r.serviceId === "web")?.consoleUrl).toBe("https://vercel.com/team/app");
+  });
+});
+
+describe("providerConsoleUrl", () => {
+  it("prefers meta.consoleUrl over heuristics", () => {
+    expect(providerConsoleUrl("vercel", "prj_1", { consoleUrl: "https://vercel.com/t/p" })).toBe(
+      "https://vercel.com/t/p",
+    );
+    expect(providerConsoleUrl("vercel", "prj_1")).toBeNull();
   });
 });
 
@@ -106,7 +134,7 @@ describe("deriveLayers", () => {
     expect(layers.fullStack.detail).toContain("verification failed");
   });
 
-  it("reports full-stack live when required checks pass and cors_from fails", () => {
+  it("does not report full-stack live when required cors_from fails", () => {
     const fullPlan: PlanLite = {
       ...plan,
       verification: [
@@ -126,7 +154,8 @@ describe("deriveLayers", () => {
       { serviceId: "web", check: "frontend_loads", ok: true, skipped: false, statusCode: 200, url: "https://web.vercel.app/", assumedPath: false },
       { serviceId: "api", check: "cors_from", ok: false, skipped: false, statusCode: 200, url: "https://api.onrender.com/health", assumedPath: false },
     ]);
-    expect(layers.fullStack.live).toBe(true);
+    expect(layers.fullStack.live).toBe(false);
+    expect(layers.fullStack.detail).toContain("verification failed");
   });
 
   it("maps frontend_ssr to the frontend layer", () => {

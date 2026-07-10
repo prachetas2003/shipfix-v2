@@ -10,6 +10,8 @@ import { runModeLabel, runStatusLabel } from "../../lib/runLabels";
 import { buttonStyle, card, colors, h2, mono } from "../../lib/theme";
 import { CurrentState } from "../../components/CurrentState";
 import { ProviderRequirements } from "../../components/ProviderRequirements";
+import { VerificationChecklist } from "../../components/VerificationChecklist";
+import { ProjectEnvPanel } from "../../components/ProjectEnvPanel";
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: colors.success,
@@ -34,6 +36,7 @@ export default function AppDetailPage({
   const [connected, setConnected] = useState<string[]>([]);
   const [showConnect, setShowConnect] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [redeploying, setRedeploying] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -48,6 +51,16 @@ export default function AppDetailPage({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Light polling while a deploy is in progress.
+  useEffect(() => {
+    const latest = detail?.history[0];
+    if (!latest) return;
+    const active = !["succeeded", "diagnosed", "failed"].includes(latest.status);
+    if (!active) return;
+    const timer = setInterval(() => void load(), 8000);
+    return () => clearInterval(timer);
+  }, [detail?.history, load]);
 
   const visibleDeployment = detail?.latestLiveDeployment ?? detail?.current;
   const display =
@@ -87,6 +100,19 @@ export default function AppDetailPage({
     }
   };
 
+  const redeployLatest = async () => {
+    setErr(null);
+    setRedeploying(true);
+    try {
+      const { runId } = await api.redeployLatest(projectId);
+      router.push(`/runs/${runId}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRedeploying(false);
+    }
+  };
+
   return (
     <main style={{ maxWidth: 980, margin: "0 auto", padding: "2.5rem 1.5rem 6rem" }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: "1rem", flexWrap: "wrap" }}>
@@ -105,9 +131,19 @@ export default function AppDetailPage({
                 : "Deployment state and history for this repository."}
           </p>
         </div>
-        <Link href="/new" style={{ marginLeft: "auto", textDecoration: "none" }}>
-          <button style={buttonStyle("primary")}>New deployment</button>
-        </Link>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => void redeployLatest()}
+            disabled={redeploying}
+            style={buttonStyle("primary", redeploying)}
+          >
+            {redeploying ? "Starting..." : "Redeploy latest"}
+          </button>
+          <Link href="/new" style={{ textDecoration: "none" }}>
+            <button style={buttonStyle("ghost")}>New deployment</button>
+          </Link>
+        </div>
       </div>
 
       {err && <div style={{ ...card, borderColor: colors.errorBorder, background: colors.errorBg, color: colors.errorText }}>{err}</div>}
@@ -140,14 +176,20 @@ export default function AppDetailPage({
           <p style={{ color: colors.warnText, fontWeight: 800, margin: 0 }}>
             {latestRunNeedsDeployAction
               ? "Latest deploy needs attention. Previous live links are preserved below."
-              : "Plan ready, but app is not deployed yet."}
+              : "Plan ready, but the app is not deployed yet."}
           </p>
           <p style={{ color: colors.warnText, opacity: 0.92, margin: "0.45rem 0 0.9rem", lineHeight: 1.55 }}>
-            Continue from the existing plan. You do not need to paste the repo again.
+            Retry this validated plan at the same commit, or use Redeploy latest to pull the tip of{" "}
+            <code style={{ fontFamily: mono }}>{detail?.project.defaultBranch ?? "main"}</code>.
           </p>
-          <button onClick={() => void startDeploy()} disabled={starting} style={buttonStyle("primary", starting)}>
-            {starting ? "Starting deploy..." : action.label}
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => void startDeploy()} disabled={starting} style={buttonStyle("ghost", starting)}>
+              {starting ? "Starting..." : action.label}
+            </button>
+            <button onClick={() => void redeployLatest()} disabled={redeploying} style={buttonStyle("primary", redeploying)}>
+              {redeploying ? "Starting..." : "Redeploy latest"}
+            </button>
+          </div>
           {showConnect && (
             <ProviderRequirements plan={action.plan} connected={connected} onConnected={() => void load()} />
           )}
@@ -162,8 +204,18 @@ export default function AppDetailPage({
             </p>
           )}
           <CurrentState display={display} />
+          {visibleDeployment.verification.length > 0 && (
+            <section style={{ ...card, marginTop: "1rem" }}>
+              <VerificationChecklist
+                verification={visibleDeployment.verification}
+                plan={action?.plan ?? null}
+              />
+            </section>
+          )}
         </div>
       )}
+
+      <ProjectEnvPanel projectId={projectId} />
 
       <section>
         <h2 style={h2}>Deployment history</h2>

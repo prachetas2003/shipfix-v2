@@ -201,7 +201,12 @@ export default function NewDeploymentPage(): React.ReactElement {
 
       {step === 2 && capturedPlan && (
         <section>
-          <PlanPanel plan={capturedPlan} />
+          <PlanPanel
+            plan={capturedPlan}
+            runId={planRunId ?? undefined}
+            answeredQuestionIds={run.snapshot?.answeredQuestionIds ?? []}
+            onAnswersSaved={() => void run.refreshSnapshot()}
+          />
           <ProviderRequirements plan={capturedPlan} connected={connected} onConnected={refreshProviders} />
           <div style={{ display: "flex", gap: 10, marginTop: "1.5rem", flexWrap: "wrap" }}>
             <button

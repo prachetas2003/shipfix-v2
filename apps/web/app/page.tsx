@@ -12,8 +12,8 @@ export default function DashboardPage(): React.ReactElement {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setLoading(true);
     setErr(null);
     try {
       const { apps } = await api.listApps();
@@ -21,12 +21,22 @@ export default function DashboardPage(): React.ReactElement {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (!opts?.quiet) setLoading(false);
     }
   }, []);
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Light polling while any app has a non-terminal latest run.
+  useEffect(() => {
+    const active = apps.some(
+      (a) => a.latestRun && !["succeeded", "diagnosed", "failed"].includes(a.latestRun.status),
+    );
+    if (!active) return;
+    const timer = setInterval(() => void load({ quiet: true }), 8000);
+    return () => clearInterval(timer);
+  }, [apps, load]);
 
   return (
     <main style={{ maxWidth: 1080, margin: "0 auto", padding: "3rem 1.5rem 6rem" }}>

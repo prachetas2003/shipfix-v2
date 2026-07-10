@@ -1,7 +1,8 @@
 "use client";
 
-import type { PlanView } from "../lib/api";
-import { card, colors, h2, mono } from "../lib/theme";
+import { useEffect, useState } from "react";
+import { api, type PlanView } from "../lib/api";
+import { buttonStyle, card, colors, h2, mono } from "../lib/theme";
 
 const CLASS_META: Record<PlanView["classification"], { label: string; color: string; explanation: string }> = {
   deployable: {
@@ -59,8 +60,52 @@ function CommandRow({ label, value }: { label: string; value: string | null }): 
   );
 }
 
-export function PlanPanel({ plan }: { plan: PlanView }): React.ReactElement {
+export function PlanPanel({
+  plan,
+  runId,
+  answeredQuestionIds = [],
+  onAnswersSaved,
+}: {
+  plan: PlanView;
+  runId?: string;
+  answeredQuestionIds?: string[];
+  onAnswersSaved?: (answered: string[]) => void;
+}): React.ReactElement {
   const meta = CLASS_META[plan.classification];
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedIds, setSavedIds] = useState<string[]>(answeredQuestionIds);
+
+  useEffect(() => {
+    setSavedIds(answeredQuestionIds);
+  }, [answeredQuestionIds]);
+
+  const unanswered = plan.questions.filter((q) => !savedIds.includes(q.id));
+  const canSubmit =
+    Boolean(runId) &&
+    unanswered.length > 0 &&
+    unanswered.every((q) => (drafts[q.id] ?? "").trim().length > 0);
+
+  async function submitAnswers(): Promise<void> {
+    if (!runId || !canSubmit) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const answers = unanswered.map((q) => ({
+        questionId: q.id,
+        value: (drafts[q.id] ?? "").trim(),
+      }));
+      const result = await api.submitRunInputs(runId, answers);
+      setSavedIds((prev) => [...new Set([...prev, ...result.answered])]);
+      setDrafts({});
+      onAnswersSaved?.(result.answered);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <section style={{ marginTop: "2rem" }}>
@@ -92,17 +137,62 @@ export function PlanPanel({ plan }: { plan: PlanView }): React.ReactElement {
 
       {plan.questions.length > 0 && (
         <div style={{ marginTop: "1rem" }}>
-          <h3 style={{ ...h2, fontSize: "0.75rem" }}>Setup checklist</h3>
-          {plan.questions.map((q) => (
-            <div key={q.id} style={{ ...card, marginTop: 8, fontSize: "0.86rem" }}>
-              <strong>{q.prompt}</strong>
-              {q.options && q.options.length > 0 && (
-                <p style={{ margin: "0.35rem 0 0", color: colors.dim }}>
-                  Options: {q.options.join(", ")}
-                </p>
-              )}
+          <h3 style={{ ...h2, fontSize: "0.75rem" }}>Setup answers</h3>
+          {plan.questions.map((q) => {
+            const answered = savedIds.includes(q.id);
+            const isSecret = q.kind === "secret";
+            return (
+              <div key={q.id} style={{ ...card, marginTop: 8, fontSize: "0.86rem" }}>
+                <strong>{q.prompt}</strong>
+                {q.options && q.options.length > 0 && (
+                  <p style={{ margin: "0.35rem 0 0", color: colors.dim }}>
+                    Options: {q.options.join(", ")}
+                  </p>
+                )}
+                {answered ? (
+                  <p style={{ margin: "0.55rem 0 0", color: colors.successText, fontWeight: 700 }}>
+                    Saved{isSecret ? " (secret sealed)" : ""}
+                  </p>
+                ) : runId ? (
+                  <input
+                    type={isSecret ? "password" : "text"}
+                    autoComplete="off"
+                    placeholder={isSecret ? "Enter secret value" : "Enter answer"}
+                    value={drafts[q.id] ?? ""}
+                    onChange={(e) => setDrafts((d) => ({ ...d, [q.id]: e.target.value }))}
+                    style={{
+                      marginTop: 10,
+                      width: "100%",
+                      boxSizing: "border-box",
+                      background: colors.panelSoft,
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: 8,
+                      color: colors.text,
+                      padding: "0.55rem 0.7rem",
+                      fontFamily: mono,
+                    }}
+                  />
+                ) : (
+                  <p style={{ margin: "0.55rem 0 0", color: colors.dim }}>
+                    Answer this after the plan run is ready.
+                  </p>
+                )}
+              </div>
+            );
+          })}
+          {runId && unanswered.length > 0 && (
+            <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={!canSubmit || saving}
+                onClick={() => void submitAnswers()}
+                style={buttonStyle(canSubmit && !saving ? "primary" : "ghost")}
+              >
+                {saving ? "Saving…" : "Save answers"}
+              </button>
+              {saveError && <span style={{ color: colors.errorText, fontSize: "0.85rem" }}>{saveError}</span>}
             </div>
-          ))}
+          )}
         </div>
       )}
 

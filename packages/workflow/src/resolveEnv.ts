@@ -42,6 +42,21 @@ export interface ResolveServiceEnvOptions {
    * backend deploy pass before the frontend URL exists.
    */
   deferFrontendOrigins?: boolean;
+  /**
+   * Opened run_inputs values keyed by PlanQuestion id
+   * (e.g. `secret-api-STRIPE_SECRET_KEY`). Never log these.
+   */
+  runInputValues?: ReadonlyMap<string, string>;
+  /**
+   * Durable project env values keyed by env var name (e.g. `STRIPE_SECRET_KEY`).
+   * Used after run_inputs for `user_secret`. Never log these.
+   */
+  projectEnvValues?: ReadonlyMap<string, string>;
+}
+
+/** Question id synthesizer uses for user_secret env vars. */
+export function secretQuestionId(serviceId: string, envName: string): string {
+  return `secret-${serviceId}-${envName}`;
 }
 
 function parseRef(ref: string): { id: string; field: string } | null {
@@ -84,9 +99,12 @@ export async function openManagedConnectionUrls(
 
 async function resolveEnvVar(
   env: EnvVar,
+  serviceId: string,
   managedById: Map<string, DeployedResourceRow>,
   servicesById: Map<string, DeployedResourceRow>,
   vault: SecretVault,
+  runInputValues: ReadonlyMap<string, string> | undefined,
+  projectEnvValues: ReadonlyMap<string, string> | undefined,
 ): Promise<{ name: string; value?: string; issue?: ResolveEnvIssue }> {
   if (env.source === "literal") {
     if (env.value == null || env.value === "") {
@@ -98,6 +116,22 @@ async function resolveEnvVar(
     return { name: env.name };
   }
   if (env.source === "user_secret") {
+    const fromQuestion = runInputValues?.get(secretQuestionId(serviceId, env.name));
+    if (fromQuestion != null && fromQuestion !== "") {
+      return { name: env.name, value: fromQuestion };
+    }
+    // Fallback: any answered question whose id ends with -ENV_NAME
+    if (runInputValues) {
+      for (const [qid, value] of runInputValues) {
+        if (qid.endsWith(`-${env.name}`) && value) {
+          return { name: env.name, value };
+        }
+      }
+    }
+    const fromProject = projectEnvValues?.get(env.name);
+    if (fromProject != null && fromProject !== "") {
+      return { name: env.name, value: fromProject };
+    }
     return { name: env.name, issue: { code: "missing_secret", envName: env.name } };
   }
   if (env.source === "generated_from_service") {
@@ -190,7 +224,15 @@ export async function resolveServiceEnv(
   const deferred: string[] = [];
 
   for (const v of service.env) {
-    const r = await resolveEnvVar(v, managedById, servicesById, vault);
+    const r = await resolveEnvVar(
+      v,
+      service.id,
+      managedById,
+      servicesById,
+      vault,
+      opts.runInputValues,
+      opts.projectEnvValues,
+    );
     if (
       opts.deferFrontendOrigins &&
       r.issue &&

@@ -44,6 +44,8 @@ export function useRun(runId: string | null): {
   workerStalled: boolean;
   /** True when the worker could not find this run in its database. */
   controlPlaneMismatch: boolean;
+  /** Re-fetch snapshot (e.g. after saving plan answers). */
+  refreshSnapshot: () => Promise<void>;
 } {
   const [status, setStatus] = useState<LiveStatus>("loading");
   const [events, setEvents] = useState<RunEventRow[]>([]);
@@ -175,5 +177,18 @@ export function useRun(runId: string | null): {
     };
   }, [runId, loadSnapshot]);
 
-  return { status, events, plan, repoContext, snapshot, error, workerStalled, controlPlaneMismatch };
+  return {
+    status,
+    events,
+    plan,
+    repoContext,
+    snapshot,
+    error,
+    workerStalled,
+    controlPlaneMismatch,
+    refreshSnapshot: async () => {
+      if (!runId) return;
+      await loadSnapshot(runId);
+    },
+  };
 }

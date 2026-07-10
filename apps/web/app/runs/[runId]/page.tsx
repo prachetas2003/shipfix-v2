@@ -139,7 +139,14 @@ export default function RunPage({
       <ControlPlaneConsistencyNotice show={run.controlPlaneMismatch} />
       <OutcomeBanner status={snap?.run.status ?? run.status} snapshot={snap} />
       <FixGuidance events={run.events} />
-      {run.plan && <PlanPanel plan={run.plan} />}
+      {run.plan && (
+        <PlanPanel
+          plan={run.plan}
+          runId={runId}
+          answeredQuestionIds={snap?.answeredQuestionIds ?? []}
+          onAnswersSaved={() => void run.refreshSnapshot()}
+        />
+      )}
       <Timeline events={run.events} />
 
       {snap?.run.projectId && (
