@@ -7,6 +7,12 @@ import type {
   ProvisionerCredentials,
   VerifyResult,
 } from "./types";
+import {
+  parseNeonConnectionSecret,
+  runtimeConnectionUrl,
+  selectNeonConnectionUrls,
+  serializeNeonConnectionSecret,
+} from "./neonConnections";
 
 const NEON_API = "https://console.neon.tech/api/v2";
 
@@ -68,8 +74,9 @@ async function neonFetch(
 
 /**
  * Real Neon (managed Postgres) provisioner using the Neon REST API. No CLI, no
- * stdout scraping. Returns the connection URI as a SECRET `exposed` env that the
- * caller seals; only the hostname is ever treated as non-secret.
+ * stdout scraping. Returns pooled+direct connection URIs as a SECRET JSON
+ * `exposed` env that the caller seals; only the hostname is ever treated as
+ * non-secret.
  */
 export function createNeonProvisioner(opts: NeonOptions = {}): ManagedProvisioner {
   const doFetch = opts.fetchImpl ?? fetch;
@@ -118,25 +125,38 @@ export function createNeonProvisioner(opts: NeonOptions = {}): ManagedProvisione
 
       const json = (await res.json()) as NeonCreateResponse;
       const projectId = json.project?.id ?? null;
-      const uri = json.connection_uris?.[0]?.connection_uri ?? null;
-      if (!projectId || !uri) {
+      const rawUris = (json.connection_uris ?? [])
+        .map((u) => u.connection_uri)
+        .filter((u): u is string => typeof u === "string" && u.length > 0);
+      const urls = selectNeonConnectionUrls(rawUris);
+      if (!projectId || !urls) {
         return fail(projectId, "Neon response did not include a project id and connection URI.");
       }
 
-      onLog?.(`Neon project ${projectId} created.`);
+      if (urls.singleUri) {
+        onLog?.(`Neon project ${projectId} created (single connection URI — pooled and direct share it).`);
+      } else {
+        onLog?.(`Neon project ${projectId} created (pooled + direct connection URIs).`);
+      }
+
       return {
         ok: true,
         externalId: projectId,
-        host: safeHost(uri),
-        exposed: { name: managed.exposesEnv || "DATABASE_URL", value: uri },
+        host: safeHost(urls.pooled) ?? safeHost(urls.direct),
+        exposed: {
+          name: managed.exposesEnv || "DATABASE_URL",
+          value: serializeNeonConnectionSecret(urls),
+        },
         status: "live",
         logs: "",
       };
     },
 
     async verify(exposed: ExposedEnv): Promise<VerifyResult> {
+      const urls = parseNeonConnectionSecret(exposed.value);
+      const connectionString = runtimeConnectionUrl(urls);
       const client = new pg.Client({
-        connectionString: exposed.value,
+        connectionString,
         ssl: { rejectUnauthorized: false },
       });
       try {

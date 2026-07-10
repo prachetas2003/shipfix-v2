@@ -88,8 +88,12 @@ export async function deploymentWorkflow(
     if (!gate.allow) return;
 
     const provision = await deployActs.provisionManagedServices(input.runId);
+    // Prisma migrate (direct URL) before services get the pooled runtime URL.
+    await deployActs.runManagedMigrations(input.runId);
     const backendDeploy = await deployActs.deployBackendServices(input.runId);
     const frontendDeploy = await deployActs.deployFrontendServices(input.runId);
+    // Apply deferred CORS/origin env now that the frontend URL exists.
+    await deployActs.wireDeferredBackendEnv(input.runId);
     let verify: Awaited<ReturnType<typeof deployActs.verifyDeployedPlan>> = {
       passed: [],
       failed: [],

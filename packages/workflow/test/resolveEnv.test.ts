@@ -72,6 +72,35 @@ describe("resolveServiceEnv", () => {
     expect(env.DATABASE_URL).toBe(secret);
   });
 
+  it("resolves pooled URL from sealed Neon JSON payload", async () => {
+    const vault = createSecretVault(randomBytes(32));
+    const payload = JSON.stringify({
+      pooled: "postgres://u:p@ep-pooler.neon.tech/db",
+      direct: "postgres://u:p@ep.neon.tech/db",
+    });
+    const sealed = await vault.seal(payload);
+
+    const { env, issues } = await resolveServiceEnv(
+      apiService,
+      plan,
+      [
+        {
+          serviceId: "db",
+          status: "live",
+          url: null,
+          exposesEnv: "DATABASE_URL",
+          encBlob: sealed.encBlob,
+          encIv: sealed.encIv,
+          encDek: sealed.encDek,
+        },
+      ],
+      vault,
+    );
+
+    expect(issues).toHaveLength(0);
+    expect(env.DATABASE_URL).toBe("postgres://u:p@ep-pooler.neon.tech/db");
+  });
+
   it("reports missing managed resource without exposing secrets", async () => {
     const vault = createSecretVault(randomBytes(32));
     const { env, issues } = await resolveServiceEnv(apiService, plan, [], vault);
@@ -125,6 +154,31 @@ describe("resolveServiceEnv", () => {
     );
     expect(issues).toHaveLength(0);
     expect(env.API_ORIGIN).toBe("https://api.onrender.com");
+  });
+
+  it("defers frontend origin refs when the frontend is not live yet", async () => {
+    const vault = createSecretVault(randomBytes(32));
+    const apiWithCors: PlanService = {
+      ...apiService,
+      env: [
+        ...apiService.env,
+        { name: "CORS_ORIGIN", source: "generated_from_service", ref: "web.origin" },
+      ],
+    };
+    const planWithCors: DeploymentPlan = {
+      ...plan,
+      services: [apiWithCors, webService],
+    };
+    const { env, issues, deferred } = await resolveServiceEnv(
+      apiWithCors,
+      planWithCors,
+      [],
+      vault,
+      { deferFrontendOrigins: true },
+    );
+    expect(issues.some((i) => i.envName === "CORS_ORIGIN")).toBe(false);
+    expect(deferred).toContain("CORS_ORIGIN");
+    expect(env.CORS_ORIGIN).toBeUndefined();
   });
 
   it("reports missing upstream service when not yet deployed", async () => {

@@ -6,14 +6,14 @@ import {
 } from "../src/verificationOutcome";
 
 describe("verificationOutcome", () => {
-  it("treats cors_from and db_connect as optional", () => {
-    expect(isOptionalVerificationCheck("cors_from")).toBe(true);
-    expect(isOptionalVerificationCheck("db_connect")).toBe(true);
+  it("treats cors_from and db_connect as required when present", () => {
+    expect(isOptionalVerificationCheck("cors_from")).toBe(false);
+    expect(isOptionalVerificationCheck("db_connect")).toBe(false);
     expect(isOptionalVerificationCheck("health_path")).toBe(false);
     expect(isOptionalVerificationCheck("frontend_loads")).toBe(false);
   });
 
-  it("does not block success when only optional checks fail", () => {
+  it("blocks success when cors_from fails", () => {
     const plan = {
       verification: [
         { serviceId: "api", check: "health_path", target: "/health" },
@@ -29,8 +29,8 @@ describe("verificationOutcome", () => {
       failed: [{ serviceId: "api", check: "cors_from" }],
       skipped: [],
     });
-    expect(summary.allRequiredPassed).toBe(true);
-    expect(summary.optionalFailed).toEqual(["api.cors_from"]);
+    expect(summary.allRequiredPassed).toBe(false);
+    expect(summary.requiredFailed).toEqual(["api.cors_from"]);
   });
 
   it("uses the latest verification event per check", () => {

@@ -341,9 +341,17 @@ describe("validatePlan — MVP support boundary", () => {
 });
 
 describe("validatePlan — MVP setup blockers (YELLOW)", () => {
-  it("requires migrations to be acknowledged (needs_setup)", () => {
+  it("allows Prisma migrations (ShipFix runs them) without Yellow", () => {
     const plan = makePlan();
     plan.managed[0].migration = "prisma";
+    const res = validatePlan(plan, makeCtx(), fullCaps);
+    expect(codes(res)).not.toContain("migration_required");
+    expect(res.plan.classification).toBe("deployable");
+  });
+
+  it("still requires setup for Drizzle migrations (not executed yet)", () => {
+    const plan = makePlan();
+    plan.managed[0].migration = "drizzle";
     const res = validatePlan(plan, makeCtx(), fullCaps);
     expect(codes(res)).toContain("migration_required");
     expect(res.plan.classification).toBe("needs_setup");

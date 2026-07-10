@@ -114,28 +114,32 @@ describe("computeFinalizeDeployOutcome", () => {
     expect(result.message).toContain("NOT live");
   });
 
-  it("a stubbed db_connect skip does not block success", () => {
+  it("requires db_connect when present in the plan", () => {
     const planWithDbCheck: DeploymentPlan = {
       ...fullStackPlan,
       verification: [
         { serviceId: "api", check: "health_path", target: "/health" },
-        { serviceId: "api", check: "db_connect" },
+        { serviceId: "web", check: "frontend_loads" },
+        { serviceId: "db", check: "db_connect" },
       ],
     };
     const outcome = emptyOutcome();
     outcome.provision.provisioned = ["db"];
     outcome.backendDeploy.deployed = ["api"];
     outcome.frontendDeploy.deployed = ["web"];
-    outcome.verify.passed = [{ serviceId: "api", check: "health_path" }];
+    outcome.verify.passed = [
+      { serviceId: "api", check: "health_path" },
+      { serviceId: "web", check: "frontend_loads" },
+    ];
     outcome.verify.skipped = [
-      { serviceId: "api", check: "db_connect", reason: "db_connect not implemented in this build" },
+      { serviceId: "db", check: "db_connect", reason: "database connection not available" },
     ];
 
     const result = computeFinalizeDeployOutcome(planWithDbCheck, outcome, caps);
-    expect(result.status).toBe("succeeded");
+    expect(result.status).not.toBe("succeeded");
   });
 
-  it("returns succeeded when required checks pass even if cors_from fails", () => {
+  it("does not succeed when cors_from fails", () => {
     const planWithCors: DeploymentPlan = {
       ...fullStackPlan,
       verification: [
@@ -155,8 +159,7 @@ describe("computeFinalizeDeployOutcome", () => {
     outcome.verify.failed = [{ serviceId: "api", check: "cors_from" }];
 
     const result = computeFinalizeDeployOutcome(planWithCors, outcome, caps);
-    expect(result.status).toBe("succeeded");
-    expect(result.message.toLowerCase()).toContain("required checks passed");
+    expect(result.status).not.toBe("succeeded");
   });
 });
 

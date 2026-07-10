@@ -6,6 +6,16 @@ export interface HttpVerifyOptions {
   timeoutMs?: number;
 }
 
+export interface PlanVerifyOptions extends HttpVerifyOptions {
+  /**
+   * Sealed-at-rest connection strings opened by the worker, keyed by managed
+   * service id (e.g. `db`). Never log these values.
+   */
+  dbConnections?: Record<string, string>;
+  /** Injectable DB probe (defaults to a no-op failure if connections missing). */
+  verifyDbConnect?: (connectionString: string) => Promise<{ ok: boolean; detail: string }>;
+}
+
 export interface HttpVerifyResult {
   ok: boolean;
   statusCode: number | null;
@@ -282,7 +292,7 @@ function pathIsUnverified(plan: DeploymentPlan, serviceId: string, path: string 
 export async function verifyFromPlan(
   plan: DeploymentPlan,
   resources: DeployedResource[],
-  opts: HttpVerifyOptions = {},
+  opts: PlanVerifyOptions = {},
 ): Promise<PlanVerifyOutcome[]> {
   const byId = new Map(resources.map((r) => [r.serviceId, r.publicUrl]));
   const outcomes: PlanVerifyOutcome[] = [];
@@ -291,13 +301,39 @@ export async function verifyFromPlan(
 
   for (const check of plan.verification) {
     if (check.check === "db_connect") {
+      const connectionString = opts.dbConnections?.[check.serviceId];
+      if (!connectionString) {
+        outcomes.push({
+          serviceId: check.serviceId,
+          check: check.check,
+          ok: false,
+          skipped: true,
+          skipReason: "database connection not available",
+          results: [],
+        });
+        continue;
+      }
+      const probe =
+        opts.verifyDbConnect ??
+        (async () => ({
+          ok: false,
+          detail: "db_connect probe not configured",
+        }));
+      const verdict = await probe(connectionString);
       outcomes.push({
         serviceId: check.serviceId,
         check: check.check,
-        ok: false,
-        skipped: true,
-        skipReason: "db_connect not implemented in this build",
-        results: [],
+        ok: verdict.ok,
+        results: [
+          {
+            ok: verdict.ok,
+            statusCode: null,
+            url: `db://${check.serviceId}`,
+            check: "db_connect",
+            // Host-only detail — never include the connection string.
+            detail: verdict.ok ? "Connected and ran SELECT 1." : verdict.detail.slice(0, 300),
+          },
+        ],
       });
       continue;
     }

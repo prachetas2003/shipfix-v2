@@ -129,14 +129,24 @@ describe("synthesizeDeterministicPlan", () => {
     expect(plan?.questions.some((q) => q.prompt.includes("STRIPE_SECRET_KEY"))).toBe(true);
   });
 
-  it("treats backend CORS/frontend-origin refs as honest user input", () => {
+  it("wires backend CORS/frontend-origin refs from web.origin (deferred until frontend is live)", () => {
     const ctx = makeCtx({
       envRefs: [...makeCtx().envRefs, { name: "CORS_ORIGIN", service: "server", required: true }],
     });
     const plan = synthesizeDeterministicPlan(ctx);
-    expect(plan?.classification).toBe("needs_setup");
+    expect(plan?.classification).toBe("deployable");
     const api = plan?.services.find((s) => s.id === "api");
-    expect(api?.env).toContainEqual({ name: "CORS_ORIGIN", source: "user_secret" });
+    expect(api?.env).toContainEqual({
+      name: "CORS_ORIGIN",
+      source: "generated_from_service",
+      ref: "web.origin",
+    });
+    expect(plan?.wiring).toContainEqual({
+      fromServiceId: "web",
+      fromField: "origin",
+      toServiceId: "api",
+      toEnvName: "CORS_ORIGIN",
+    });
   });
 
   it("returns null for non-Next SSR repos (Nuxt fullstack)", () => {
@@ -230,12 +240,66 @@ describe("synthesizeDeterministicPlan", () => {
     expect(plan?.verification).toEqual([{ serviceId: "web", check: "frontend_loads" }]);
   });
 
-  it("returns null for a Next app alongside a separate backend (LLM decides)", () => {
+  it("builds a deterministic Next+API plan (primary topology)", () => {
     const ctx = makeCtx({
       services: [
-        frontendSignal({ rootDir: "web", framework: "next", role: "fullstack", scripts: { build: "next build" } }),
-        backendSignal(),
+        frontendSignal({
+          rootDir: "apps/web",
+          framework: "next",
+          role: "fullstack",
+          packageManager: "pnpm",
+          scripts: { build: "next build" },
+          routeCandidates: [],
+          evidence: ["apps/web/package.json"],
+        }),
+        backendSignal({
+          rootDir: "apps/api",
+          packageManager: "pnpm",
+          evidence: ["apps/api/package.json"],
+        }),
       ],
+      envRefs: [
+        { name: "DATABASE_URL", service: "apps/api", required: true },
+        { name: "PORT", service: "apps/api", required: true },
+        { name: "NEXT_PUBLIC_API_URL", service: "apps/web", required: true },
+      ],
+      monorepoTool: "pnpm_workspace",
+    });
+    const plan = synthesizeDeterministicPlan(ctx);
+    expect(plan).not.toBeNull();
+    expect(() => DeploymentPlan.parse(plan)).not.toThrow();
+    expect(plan?.planSource).toBe("deterministic");
+    expect(plan?.classification).toBe("deployable");
+    expect(plan?.deployOrder).toEqual(["db", "api", "web"]);
+
+    const web = plan?.services.find((s) => s.id === "web");
+    expect(web?.type).toBe("frontend_ssr");
+    expect(web?.provider).toBe("vercel");
+    expect(web?.rootDir).toBe("apps/web");
+    expect(web?.env).toContainEqual({
+      name: "NEXT_PUBLIC_API_URL",
+      source: "generated_from_service",
+      ref: "api.publicUrl",
+    });
+
+    const api = plan?.services.find((s) => s.id === "api");
+    expect(api?.type).toBe("node_api");
+    expect(api?.rootDir).toBe("apps/api");
+    expect(plan?.verification).toContainEqual({
+      serviceId: "api",
+      check: "cors_from",
+      target: "web",
+    });
+  });
+
+  it("returns null for a Next app alongside a separate Vite frontend (ambiguous)", () => {
+    const ctx = makeCtx({
+      services: [
+        frontendSignal({ rootDir: "apps/web", framework: "next", role: "fullstack", scripts: { build: "next build" } }),
+        frontendSignal({ rootDir: "apps/spa", framework: "vite", role: "frontend", scripts: { build: "vite build" } }),
+      ],
+      dataNeeds: [],
+      envRefs: [],
     });
     expect(synthesizeDeterministicPlan(ctx)).toBeNull();
   });
@@ -249,12 +313,12 @@ describe("synthesizeDeterministicPlan", () => {
     expect(synthesizeDeterministicPlan(ctx)).toBeNull();
   });
 
-  it("marks prisma migrations as needs_setup honestly", () => {
+  it("keeps Prisma migration plans deployable (migrations run at deploy time)", () => {
     const ctx = makeCtx({
       dataNeeds: [{ kind: "postgres", detectedFrom: "prisma", migrationTool: "prisma", evidence: [] }],
     });
     const plan = synthesizeDeterministicPlan(ctx);
-    expect(plan?.classification).toBe("needs_setup");
+    expect(plan?.classification).toBe("deployable");
     expect(plan?.managed[0]?.migration).toBe("prisma");
   });
 });

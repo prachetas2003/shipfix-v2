@@ -1,7 +1,8 @@
 /**
  * @shipfix/verifier — live verification against deployed resources.
  *
- * Plan-driven checks: backend health, frontend loads, CORS/wiring evidence.
+ * Plan-driven checks: backend health, frontend loads, CORS/wiring evidence,
+ * and database connectivity.
  */
 export {
   verifyHttpHealth,
@@ -11,6 +12,7 @@ export {
   verifyFromPlan,
   resolveHealthPath,
   type HttpVerifyOptions,
+  type PlanVerifyOptions,
   type HttpVerifyResult,
   type BackendResource,
   type DeployedResource,

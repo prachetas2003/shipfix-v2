@@ -54,7 +54,10 @@ describe("createNeonProvisioner", () => {
     expect(result.host).toBe("ep-x.neon.tech");
     expect(result.exposed).toEqual({
       name: "DATABASE_URL",
-      value: "postgres://u:p@ep-x.neon.tech/db?sslmode=require",
+      value: JSON.stringify({
+        pooled: "postgres://u:p@ep-x.neon.tech/db?sslmode=require",
+        direct: "postgres://u:p@ep-x.neon.tech/db?sslmode=require",
+      }),
     });
 
     expect(calls).toHaveLength(1);
@@ -65,6 +68,36 @@ describe("createNeonProvisioner", () => {
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
       project: { name: "shipfix-run-1-db", org_id: "org_123" },
     });
+  });
+
+  it("selects pooled and direct URIs when both are present", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return jsonResponse({
+        project: { id: "proj_456" },
+        connection_uris: [
+          { connection_uri: "postgres://u:p@ep-x-pooler.neon.tech/db?sslmode=require" },
+          { connection_uri: "postgres://u:p@ep-x.neon.tech/db?sslmode=require" },
+        ],
+      });
+    }) as unknown as typeof fetch;
+
+    const neon = createNeonProvisioner({ fetchImpl: fakeFetch, apiBase: "https://neon.test/v2" });
+    const result = await neon.provision({
+      resourceName: "shipfix-run-2-db",
+      managed: pgManaged,
+      credentials: { provider: "neon", values: { apiKey: "neon_key", orgId: "org_123" } },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.exposed?.value).toBe(
+      JSON.stringify({
+        pooled: "postgres://u:p@ep-x-pooler.neon.tech/db?sslmode=require",
+        direct: "postgres://u:p@ep-x.neon.tech/db?sslmode=require",
+      }),
+    );
+    expect(calls).toHaveLength(1);
   });
 
   it("fails cleanly on a non-2xx response", async () => {

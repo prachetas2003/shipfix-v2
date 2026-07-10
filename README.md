@@ -1,16 +1,23 @@
 # ShipFix v2
 
-> ShipFix reliably deploys a defined class of full-stack apps — Vite/static and
-> Next.js frontends on Vercel, Node/Express APIs on Render, Neon Postgres — wires them
-> together, and verifies they are actually live before saying so. Repos outside
-> that slice get a precise, honest diagnosis (what's blocking, what to do next)
-> before any provider resource is touched.
+> ShipFix reliably deploys a defined class of full-stack apps — Next.js App
+> Router/SSR and Vite/static frontends on Vercel, Express/Fastify Node APIs on
+> Render, Neon Postgres — wires them together (including monorepos like
+> `apps/web` + `apps/api`), runs Prisma migrations when needed, and verifies
+> they are actually live before saying so. Repos outside that slice get a
+> precise, honest diagnosis (what's blocking, what to do next) before any
+> provider resource is touched.
 
 The supported slice is planned **deterministically** from static repo evidence
 (no model in the loop); anything else goes through an LLM proposal that a
 deterministic validator gates. ShipFix never marks an app live unless
 verification proves it. See [`docs/e2e-manual-test.md`](docs/e2e-manual-test.md)
 for the live E2E checklist.
+
+**Product roadmap (Phases A–C):** see
+[`docs/implementation-guide-phases-abc.md`](docs/implementation-guide-phases-abc.md)
+(addictive Next+API+Neon path, daily utility, differentiation). Task checklist:
+[`docs/phases-abc-checklist.md`](docs/phases-abc-checklist.md).
 
 ## Architecture (spine)
 
@@ -283,9 +290,10 @@ because ShipFix can diagnose missing provider config more clearly.
   | `diagnosed` | Useful infrastructure is live (URLs, provisioned DB) but full app not proven — e.g. `cors_from` or other verification check failed, frontend skipped, or unsupported services remain |
   | `failed` | A service deploy was attempted and failed, or the run produced no live services and no provisioned resources |
 
-  **What is NOT deployed yet:** `frontend_ssr`, Railway, migrations, private
-  repos, CORS auto-fix, or user-secret env resolution. ShipFix verifies CORS
-  evidence but does not mutate repos to fix it.
+  **What is NOT deployed yet:** Railway as a deploy target, Drizzle migrate
+  execution, CORS auto-fix of repo source, or user-secret env resolution via
+  HITL UI. ShipFix wires CORS origins after the frontend is live (Render setEnv)
+  and verifies CORS evidence; it does not mutate repos to fix CORS code.
 
   **Staging smoke before alpha launch:**
 
@@ -313,7 +321,8 @@ Secrets use a real AES-256-GCM envelope vault (local master key; KMS-swappable).
 Provider credentials and `DATABASE_URL` are sealed at rest and opened only inside
 trusted worker activities.
 
-**Still intentionally unimplemented:** `frontend_ssr`, Railway, other Render
-service types, `verifySystem` recovery wrapper, `user_secret` env resolution,
-migrations, recovery/diagnosis loop, human-in-the-loop question answering,
-GitHub App auth, private repos, KMS-backed vault, and the production E2B sandbox.
+**Still intentionally unimplemented:** Railway adapter, Drizzle migrate
+execution, `verifySystem` recovery wrapper, `user_secret` HITL answering UI,
+GitHub App auth, private repos, KMS-backed vault, and the production E2B
+sandbox. Prisma migrate on Neon (direct URL) and Next+API deterministic plans
+are implemented.

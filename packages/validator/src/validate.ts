@@ -315,16 +315,17 @@ export function validatePlan(
     }
   }
 
-  // ── Migrations: ShipFix provisions DBs but does not run migrations yet ─────
+  // ── Migrations: Prisma is executed by ShipFix; other tools still need setup ─
   for (const m of plan.managed) {
-    if (m.migration && m.migration !== "none") {
-      add({
-        code: "migration_required",
-        severity: "needs_input",
-        message: `"${m.id}" uses ${m.migration} migrations. ShipFix provisions the database but does not run migrations in this release — run them manually after the database is live, then rerun deploy.`,
-        path: `managed.${m.id}`,
-      });
+    if (!m.migration || m.migration === "none" || m.migration === "prisma") {
+      continue;
     }
+    add({
+      code: "migration_required",
+      severity: "needs_input",
+      message: `"${m.id}" uses ${m.migration} migrations. ShipFix provisions the database but does not run ${m.migration} migrations in this release — run them manually after the database is live, then rerun deploy.`,
+      path: `managed.${m.id}`,
+    });
   }
 
   // ── Managed services ───────────────────────────────────────────────────────

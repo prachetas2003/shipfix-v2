@@ -16,13 +16,14 @@ import { normalizeRoutePath, topHealthCandidate } from "@shipfix/validator";
  * Deterministic plan synthesis for the supported slice.
  *
  * When the analyzer's evidence fully describes a repo ShipFix can actually
- * deploy (Vite/CRA frontend on Vercel, Node API on Render, optional Neon
- * Postgres), the plan is BUILT IN CODE from that evidence — commands from the
- * scripts map, health path from grounded route candidates, env wiring from
- * detected refs. No model in the loop: the same repo always produces the same
- * plan, regardless of which LLM is configured or whether it is having a bad
- * day. Anything outside this slice returns null and goes to the LLM proposal
- * path (which the validator still gates).
+ * deploy (Vite/CRA or Next.js on Vercel, Node API on Render, optional Neon
+ * Postgres — including Next App Router + separate API monorepos), the plan is
+ * BUILT IN CODE from that evidence — commands from the scripts map, health
+ * path from grounded route candidates, env wiring from detected refs. No model
+ * in the loop: the same repo always produces the same plan, regardless of
+ * which LLM is configured or whether it is having a bad day. Anything outside
+ * this slice returns null and goes to the LLM proposal path (which the
+ * validator still gates).
  */
 
 /** Frontend frameworks with a known static build output directory. */
@@ -81,9 +82,9 @@ function matchSupportedSlice(ctx: RepoContext): SliceShape | null {
     }
   }
 
-  // A Next app alongside a separate frontend or backend is an architecture call
-  // the deterministic path won't make — let the LLM propose, validator gate.
-  if (next && (frontend || backend)) return null;
+  // Next + a separate static frontend is ambiguous (which is the real UI?).
+  // Next + one Node backend is the primary supported topology and is allowed.
+  if (next && frontend) return null;
 
   // Commands must be grounded in declared scripts, or the plan can't be honest.
   if (frontend && !frontend.scripts.build) return null;
@@ -147,7 +148,8 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
     });
     deployOrder.push("db");
     verification.push({ serviceId: "db", check: "db_connect" });
-    if (migrationTool !== "none") needsSetup = true; // validator flags migration_required
+    // Prisma migrations are executed by ShipFix (A2). Other tools still need setup.
+    if (migrationTool !== "none" && migrationTool !== "prisma") needsSetup = true;
   }
 
   // ── Backend (Render node_api) ──────────────────────────────────────────────
@@ -159,17 +161,16 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
       } else if (wantsPostgres && DB_URL_RE.test(name)) {
         env.push({ name, source: "generated_from_managed", ref: "db.connectionUrl" });
         wiring.push({ fromServiceId: "db", fromField: "connectionUrl", toServiceId: "api", toEnvName: name });
-      } else if (FRONTEND_ORIGIN_RE.test(name) && frontend) {
-        // The backend deploys BEFORE the frontend, so its public origin cannot
-        // be wired automatically in this one-pass engine. Ask for it honestly
-        // instead of guessing or deploying a backend that rejects its own UI.
-        env.push(
-          askSecret(
-            name,
-            "api",
-            `The backend reads "${name}" (likely the allowed frontend origin for CORS). ShipFix deploys the backend before the frontend, so supply the frontend URL after the first deploy, or set a safe default in the repo.`,
-          ),
-        );
+      } else if (FRONTEND_ORIGIN_RE.test(name) && (frontend || next)) {
+        // Deferred wiring: backend deploys before the frontend URL exists.
+        // A3 resolves web.origin after the frontend is live (Render setEnv).
+        env.push({ name, source: "generated_from_service", ref: "web.origin" });
+        wiring.push({
+          fromServiceId: "web",
+          fromField: "origin",
+          toServiceId: "api",
+          toEnvName: name,
+        });
       } else {
         env.push(
           askSecret(
@@ -209,15 +210,19 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
     }
   }
 
-  // ── Standalone Next.js app (Vercel frontend_ssr) ───────────────────────────
+  // ── Next.js app (Vercel frontend_ssr) — standalone or + separate Node API ─
   if (next) {
     const env: EnvVar[] = [];
     for (const name of refsFor(next)) {
       if (name === "PORT") {
         env.push({ name, source: "provider_injected" });
       } else if (wantsPostgres && DB_URL_RE.test(name)) {
+        // Prefer DB on the API when both exist; still wire Next if it refs DB.
         env.push({ name, source: "generated_from_managed", ref: "db.connectionUrl" });
         wiring.push({ fromServiceId: "db", fromField: "connectionUrl", toServiceId: "web", toEnvName: name });
+      } else if (API_URL_RE.test(name) && backend) {
+        env.push({ name, source: "generated_from_service", ref: "api.publicUrl" });
+        wiring.push({ fromServiceId: "api", fromField: "publicUrl", toServiceId: "web", toEnvName: name });
       } else {
         env.push(
           askSecret(
@@ -232,6 +237,7 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
     // API-route health is OPTIONAL for Next: the primary proof of life is
     // frontend_loads. Only pin a health path when a dedicated health-style API
     // route exists — probing an arbitrary data route could fail a healthy app.
+    // When a separate backend exists, backend health_path is the API proof.
     const getCandidates = next.routeCandidates
       .filter((c) => c.method === "GET" || c.method === "HEAD" || c.method === "ALL")
       .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
@@ -259,18 +265,28 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
     if (healthCheckPath) {
       verification.push({ serviceId: "web", check: "health_path", target: healthCheckPath });
     }
+    if (backend && services.some((s) => s.id === "api" && s.healthCheckPath)) {
+      verification.push({ serviceId: "api", check: "cors_from", target: "web" });
+    }
 
     const hardcoded = ctx.hardcodedUrls.filter((u) => u.service === next.rootDir);
     if (hardcoded.length > 0) {
       needsSetup = true;
       blockers.push({
         severity: "needs_input",
-        title: "App hardcodes a local URL",
-        explanation: `The app contains hardcoded local URL(s) (${hardcoded
-          .map((u) => u.value)
-          .slice(0, 3)
-          .join(", ")}). After deployment it would still call localhost.`,
-        action: "Replace the hardcoded URL with an environment variable and rerun the plan.",
+        title: backend ? "Frontend hardcodes a local URL" : "App hardcodes a local URL",
+        explanation: backend
+          ? `The frontend contains hardcoded local URL(s) (${hardcoded
+              .map((u) => u.value)
+              .slice(0, 3)
+              .join(", ")}). After deployment it would still call localhost, so the live app would not reach the backend.`
+          : `The app contains hardcoded local URL(s) (${hardcoded
+              .map((u) => u.value)
+              .slice(0, 3)
+              .join(", ")}). After deployment it would still call localhost.`,
+        action: backend
+          ? "Replace the hardcoded URL with an environment variable (for example NEXT_PUBLIC_API_URL) and rerun the plan."
+          : "Replace the hardcoded URL with an environment variable and rerun the plan.",
         autoFixable: false,
         evidence: hardcoded.map((u) => u.file),
       });

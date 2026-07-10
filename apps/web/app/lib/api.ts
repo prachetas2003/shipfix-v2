@@ -152,6 +152,11 @@ export interface PlanManaged { id: string; kind: string; mode: string; provider?
 export interface PlanWiring { fromServiceId: string; fromField: string; toServiceId: string; toEnvName: string }
 export interface PlanQuestion { id: string; prompt: string; kind: string; options?: string[]; default?: string }
 export interface PlanBlocker { severity: string; title: string; explanation: string; action: string }
+export interface PlanVerification {
+  serviceId: string;
+  check: string;
+  target?: string;
+}
 export interface PlanView {
   goal: string;
   classification: "deployable" | "needs_setup" | "diagnose_only";
@@ -161,6 +166,7 @@ export interface PlanView {
   deployOrder: string[];
   questions: PlanQuestion[];
   blockers: PlanBlocker[];
+  verification?: PlanVerification[];
   confidence: number;
 }
 

@@ -144,7 +144,8 @@ const META: Record<string, { title: string; action: string }> = {
   },
   migration_required: {
     title: "Database migrations required",
-    action: "ShipFix provisions the database but does not run migrations in this release. Run them manually after the DB is live, then rerun deploy.",
+    action:
+      "ShipFix runs Prisma migrations automatically. For other migration tools, run them manually after the DB is live, then rerun deploy.",
   },
   backend_health_ungrounded: {
     title: "Backend has no grounded health check",

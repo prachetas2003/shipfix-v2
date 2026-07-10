@@ -30,4 +30,4 @@ export function isManagedSupported(provider: ManagedProvider, kind: ManagedKind)
 
 /** Short human-readable description of the MVP-supported slice (for UI/copy). */
 export const MVP_SUPPORT_SUMMARY =
-  "Vite/static and Next.js frontends on Vercel, Node APIs on Render, and Postgres on Neon.";
+  "Next.js App Router/SSR and Vite/static frontends on Vercel, Express/Fastify Node APIs on Render, and Postgres on Neon.";

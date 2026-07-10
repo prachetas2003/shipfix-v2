@@ -370,7 +370,7 @@ const PROVISIONABLE_PROVIDERS = ["neon"] as const;
 const DEPLOYABLE_PROVIDERS = ["render", "vercel"] as const;
 const DEPLOYABLE_SERVICE_TYPES: Record<string, string[]> = {
   render: ["node_api"],
-  vercel: ["frontend_static"],
+  vercel: ["frontend_static", "frontend_ssr"],
 };
 
 function neonOrgIdConfigured(): boolean {

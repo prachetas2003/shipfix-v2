@@ -1,8 +1,11 @@
 /**
  * Which plan verification checks must pass before ShipFix marks a deploy
  * succeeded vs which are advisory (surfaced in timeline, not blocking).
+ *
+ * Split-stack honesty: cors_from and db_connect are required when present in
+ * the plan. Keep this set empty unless a check is truly advisory.
  */
-export const OPTIONAL_VERIFICATION_CHECKS = new Set(["db_connect", "cors_from"]);
+export const OPTIONAL_VERIFICATION_CHECKS = new Set<string>();
 
 export interface PlanVerificationCheck {
   serviceId?: string;

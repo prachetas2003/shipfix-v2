@@ -1,4 +1,9 @@
 import type { DeploymentPlan, EnvVar, PlanService } from "@shipfix/contracts";
+import {
+  parseNeonConnectionSecret,
+  runtimeConnectionUrl,
+  type NeonConnectionUrls,
+} from "@shipfix/provisioner";
 import type { SecretVault } from "@shipfix/secrets";
 
 /** Row shape needed from deployed_resources for env resolution. */
@@ -26,12 +31,28 @@ export type ResolveEnvIssue =
 export interface ResolveEnvResult {
   env: Record<string, string>;
   issues: ResolveEnvIssue[];
+  /** Env names deferred until a frontend service is live (e.g. CORS_ORIGIN). */
+  deferred: string[];
+}
+
+export interface ResolveServiceEnvOptions {
+  /**
+   * When true, `generated_from_service` refs to frontend services that are not
+   * live yet are omitted instead of becoming blocking issues. Used on the first
+   * backend deploy pass before the frontend URL exists.
+   */
+  deferFrontendOrigins?: boolean;
 }
 
 function parseRef(ref: string): { id: string; field: string } | null {
   const [id, field] = ref.split(".");
   if (!id || !field) return null;
   return { id, field };
+}
+
+function isFrontendService(plan: DeploymentPlan, serviceId: string): boolean {
+  const svc = plan.services.find((s) => s.id === serviceId);
+  return svc?.type === "frontend_static" || svc?.type === "frontend_ssr";
 }
 
 function serviceFieldValue(row: DeployedResourceRow, field: string): string | null {
@@ -45,6 +66,20 @@ function serviceFieldValue(row: DeployedResourceRow, field: string): string | nu
     }
   }
   return null;
+}
+
+/** Open sealed managed DB secret into pooled/direct connection roles. */
+export async function openManagedConnectionUrls(
+  row: DeployedResourceRow,
+  vault: SecretVault,
+): Promise<NeonConnectionUrls | null> {
+  if (!row.encBlob || !row.encIv || !row.encDek) return null;
+  const secret = await vault.open({
+    encBlob: row.encBlob,
+    encIv: row.encIv,
+    encDek: row.encDek,
+  });
+  return parseNeonConnectionSecret(secret);
 }
 
 async function resolveEnvVar(
@@ -116,8 +151,15 @@ async function resolveEnvVar(
         issue: { code: "managed_not_live", managedId: parsed.id, envName: env.name },
       };
     }
-    const secret = await vault.open({ encBlob: row.encBlob, encIv: row.encIv, encDek: row.encDek });
-    return { name: env.name, value: secret };
+    const urls = await openManagedConnectionUrls(row, vault);
+    if (!urls) {
+      return {
+        name: env.name,
+        issue: { code: "managed_not_live", managedId: parsed.id, envName: env.name },
+      };
+    }
+    // Runtime services always get the pooled URL when available.
+    return { name: env.name, value: runtimeConnectionUrl(urls) };
   }
   return {
     name: env.name,
@@ -135,8 +177,8 @@ export async function resolveServiceEnv(
   plan: DeploymentPlan,
   deployed: DeployedResourceRow[],
   vault: SecretVault,
+  opts: ResolveServiceEnvOptions = {},
 ): Promise<ResolveEnvResult> {
-  void plan;
   const managedById = new Map(
     deployed.filter((r) => r.exposesEnv != null).map((r) => [r.serviceId, r]),
   );
@@ -145,11 +187,24 @@ export async function resolveServiceEnv(
   );
   const env: Record<string, string> = {};
   const issues: ResolveEnvIssue[] = [];
+  const deferred: string[] = [];
 
   for (const v of service.env) {
     const r = await resolveEnvVar(v, managedById, servicesById, vault);
+    if (
+      opts.deferFrontendOrigins &&
+      r.issue &&
+      v.source === "generated_from_service" &&
+      (r.issue.code === "missing_service" || r.issue.code === "service_not_live")
+    ) {
+      const parsed = parseRef(v.ref ?? "");
+      if (parsed && isFrontendService(plan, parsed.id)) {
+        deferred.push(v.name);
+        continue;
+      }
+    }
     if (r.issue) issues.push(r.issue);
     else if (r.value != null) env[r.name] = r.value;
   }
-  return { env, issues };
+  return { env, issues, deferred };
 }

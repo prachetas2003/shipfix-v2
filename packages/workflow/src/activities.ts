@@ -27,10 +27,15 @@ import { createVercelAdapter } from "@shipfix/adapter-vercel";
 import {
   ProvisionerRegistry,
   createNeonProvisioner,
+  runtimeConnectionUrl,
   type ManagedProviderId,
 } from "@shipfix/provisioner";
 import { verifyFromPlan } from "@shipfix/verifier";
-import { resolveServiceEnv, type DeployedResourceRow } from "./resolveEnv";
+import { resolveServiceEnv, openManagedConnectionUrls, type DeployedResourceRow } from "./resolveEnv";
+import {
+  findPrismaSchemaPath,
+  runPrismaMigrateDeploy,
+} from "./prismaMigrate";
 import { buildRepoFixGuidance } from "./brokenRepoGuidance";
 import { resolveProviderDeployTarget } from "./providerResource";
 import {
@@ -949,6 +954,157 @@ export async function provisionManagedServices(runId: string): Promise<Provision
   return summary;
 }
 
+export interface MigrationSummary {
+  applied: string[];
+  skipped: Array<{ id: string; reason: string }>;
+  failed: string[];
+}
+
+/**
+ * Run managed DB migrations after provision and before service deploy.
+ * Prisma only in this release: uses Neon **direct** URL inside the sandbox.
+ * Runtime services still receive the **pooled** URL via resolveEnv.
+ */
+export async function runManagedMigrations(runId: string): Promise<MigrationSummary> {
+  const db = getDb();
+  const logger = createRunLogger(runId, createSafePostgresSink(db));
+  const { run, repoFullName } = await loadRun(db, runId);
+  const plan = await loadPlan(db, runId);
+  const vault = getVault();
+  const summary: MigrationSummary = { applied: [], skipped: [], failed: [] };
+
+  const targets = plan.managed.filter((m) => m.migration === "prisma");
+  if (targets.length === 0) {
+    await logger.log("No Prisma migrations to run.", { event: "migration_skipped" });
+    return summary;
+  }
+
+  await setStatus(db, runId, "provisioning");
+  await logger.stage("provisioning", `Running database migrations (${targets.length})`);
+
+  const deployedRows = await loadDeployedRows(db, runId);
+  const preferredRoot =
+    plan.services.find((s) => s.type === "node_api")?.rootDir ??
+    plan.services.find((s) => s.type === "frontend_ssr")?.rootDir ??
+    "";
+  const packageManager =
+    plan.services.find((s) => s.type === "node_api")?.install?.split(/\s+/)[0] ??
+    plan.services.find((s) => s.type === "frontend_ssr")?.install?.split(/\s+/)[0] ??
+    "npm";
+
+  const provider = createLocalDevSandboxProvider();
+  const sandbox = await provider.create({ runId: `${runId}-migrate` });
+
+  try {
+    await sandbox.clone({ repoFullName, sha: run.commitSha, token: "" });
+    const files = await sandbox.list();
+
+    for (const m of targets) {
+      const row = deployedRows.find((r) => r.serviceId === m.id && r.status === "live");
+      if (!row) {
+        summary.failed.push(m.id);
+        await logger.error(`Cannot migrate "${m.id}": managed database is not live.`, {
+          event: "migration_failed",
+          managedId: m.id,
+          reason: "managed_not_live",
+        });
+        continue;
+      }
+
+      const urls = await openManagedConnectionUrls(row, vault);
+      if (!urls) {
+        summary.failed.push(m.id);
+        await logger.error(`Cannot migrate "${m.id}": sealed connection missing.`, {
+          event: "migration_failed",
+          managedId: m.id,
+          reason: "secret_missing",
+        });
+        continue;
+      }
+
+      const schemaPath = findPrismaSchemaPath(files, preferredRoot || undefined);
+      if (!schemaPath) {
+        summary.failed.push(m.id);
+        await logger.error(`Cannot migrate "${m.id}": no schema.prisma found in the repo.`, {
+          event: "migration_failed",
+          managedId: m.id,
+          reason: "schema_missing",
+        });
+        continue;
+      }
+
+      await logger.log(`Running Prisma migrate deploy for "${m.id}"`, {
+        event: "migration_started",
+        managedId: m.id,
+        tool: "prisma",
+        schemaPath,
+      });
+
+      const result = await runPrismaMigrateDeploy({
+        sandbox,
+        schemaPath,
+        packageManager,
+        urls,
+      });
+
+      if (result.skipped) {
+        summary.skipped.push({ id: m.id, reason: result.skipReason ?? "skipped" });
+        await logger.log(`Migration skipped for "${m.id}": ${result.detail}`, {
+          event: "migration_skipped",
+          managedId: m.id,
+          reason: result.skipReason,
+        });
+        continue;
+      }
+
+      if (!result.ok) {
+        summary.failed.push(m.id);
+        await logger.error(`Migration failed for "${m.id}".`, {
+          event: "migration_failed",
+          managedId: m.id,
+          tool: "prisma",
+          detail: result.detail,
+        });
+        continue;
+      }
+
+      summary.applied.push(m.id);
+      const [existing] = await db
+        .select()
+        .from(deployedResources)
+        .where(and(eq(deployedResources.runId, runId), eq(deployedResources.serviceId, m.id)))
+        .limit(1);
+      if (existing) {
+        const prevMeta =
+          existing.meta && typeof existing.meta === "object" && !Array.isArray(existing.meta)
+            ? (existing.meta as Record<string, unknown>)
+            : {};
+        await db
+          .update(deployedResources)
+          .set({
+            meta: { ...prevMeta, migrationsApplied: true, migrationTool: "prisma" },
+          })
+          .where(eq(deployedResources.id, existing.id));
+      }
+      await logger.log(`Migrations applied for "${m.id}"`, {
+        event: "migration_completed",
+        managedId: m.id,
+        tool: "prisma",
+      });
+    }
+  } finally {
+    await sandbox.dispose();
+  }
+
+  if (summary.failed.length > 0) {
+    throw new Error(
+      `Database migrations failed for ${summary.failed.join(", ")}. Deploy was not started.`,
+    );
+  }
+
+  return summary;
+}
+
 /**
  * Deploy backend services from the validated plan (this slice: Render node_api only).
  * Resolves env (including sealed DATABASE_URL) in trusted worker code, then
@@ -1010,7 +1166,9 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
       continue;
     }
 
-    const { env, issues } = await resolveServiceEnv(svc, plan, deployedRows, vault);
+    const { env, issues, deferred } = await resolveServiceEnv(svc, plan, deployedRows, vault, {
+      deferFrontendOrigins: true,
+    });
     if (issues.length > 0) {
       summary.skipped.push({ id: svc.id, reason: issues[0]?.code ?? "env_unresolved" });
       await logger.warn(`Cannot deploy "${svc.id}": env resolution blocked.`, {
@@ -1019,6 +1177,12 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
         issues: issues.map((i) => i.code),
       });
       continue;
+    }
+    if (deferred.length > 0) {
+      await logger.log(
+        `Deferring ${deferred.join(", ")} for "${svc.id}" until the frontend is live.`,
+        { event: "env_deferred", serviceId: svc.id, deferred },
+      );
     }
 
     await logger.log(`Deploying backend "${svc.id}" to Render`, {
@@ -1079,7 +1243,10 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
       externalId: result.externalId,
       url: result.publicUrl,
       status: "live",
-      meta: { resourceName: deployTarget.resourceName },
+      meta: {
+        resourceName: deployTarget.resourceName,
+        ...(deferred.length > 0 ? { deferredEnv: deferred } : {}),
+      },
     });
 
     summary.deployed.push(svc.id);
@@ -1266,6 +1433,175 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
   return summary;
 }
 
+export interface WireDeferredSummary {
+  wired: string[];
+  skipped: Array<{ id: string; reason: string }>;
+  failed: string[];
+}
+
+/**
+ * After the frontend is live, apply deferred backend env (CORS_ORIGIN / web.origin)
+ * via Render setEnv + redeploy so verification can prove frontend→backend reachability.
+ */
+export async function wireDeferredBackendEnv(runId: string): Promise<WireDeferredSummary> {
+  const db = getDb();
+  const logger = createRunLogger(runId, createSafePostgresSink(db));
+  const { run, repoFullName, defaultBranch } = await loadRun(db, runId);
+  const plan = await loadPlan(db, runId);
+  const vault = getVault();
+  const summary: WireDeferredSummary = { wired: [], skipped: [], failed: [] };
+
+  const deferredEdges = plan.wiring.filter(
+    (w) =>
+      w.fromServiceId === "web" &&
+      (w.fromField === "origin" || w.fromField === "publicUrl") &&
+      plan.services.some((s) => s.id === w.toServiceId && s.type === "node_api"),
+  );
+  if (deferredEdges.length === 0) {
+    await logger.log("No deferred backend origin wiring.", { event: "env_wire_skipped" });
+    return summary;
+  }
+
+  const backendIds = [...new Set(deferredEdges.map((e) => e.toServiceId))];
+  const deployedRows = await loadDeployedRows(db, runId);
+  const web = deployedRows.find((r) => r.serviceId === "web" && r.status === "live" && r.url);
+  if (!web?.url) {
+    for (const id of backendIds) {
+      summary.skipped.push({ id, reason: "frontend_not_live" });
+    }
+    await logger.warn("Frontend is not live — cannot wire CORS origins yet.", {
+      event: "env_wire_skipped",
+      reason: "frontend_not_live",
+    });
+    return summary;
+  }
+
+  if (!adapters.has("render")) {
+    for (const id of backendIds) summary.skipped.push({ id, reason: "render_unavailable" });
+    return summary;
+  }
+
+  const accounts = await db
+    .select()
+    .from(providerAccounts)
+    .where(eq(providerAccounts.userId, run.userId));
+  const renderAccount = accounts.find((a) => a.provider === "render");
+  if (!renderAccount) {
+    for (const id of backendIds) summary.skipped.push({ id, reason: "render_not_connected" });
+    return summary;
+  }
+
+  const adapter = adapters.get("render");
+  const credValues = await decryptProviderCredentials(vault, renderAccount);
+  await setStatus(db, runId, "wiring");
+  await logger.stage("wiring", "Wiring frontend origin into backend CORS env");
+
+  for (const backendId of backendIds) {
+    const svc = plan.services.find((s) => s.id === backendId);
+    if (!svc || svc.provider !== "render") {
+      summary.skipped.push({ id: backendId, reason: "not_render" });
+      continue;
+    }
+
+    const [row] = await db
+      .select()
+      .from(deployedResources)
+      .where(and(eq(deployedResources.runId, runId), eq(deployedResources.serviceId, backendId)))
+      .limit(1);
+    if (!row?.externalId || row.status !== "live") {
+      summary.skipped.push({ id: backendId, reason: "backend_not_live" });
+      continue;
+    }
+
+    const { env, issues } = await resolveServiceEnv(svc, plan, deployedRows, vault);
+    if (issues.length > 0) {
+      summary.failed.push(backendId);
+      await logger.error(`Cannot wire origins for "${backendId}": env still unresolved.`, {
+        event: "env_wire_failed",
+        serviceId: backendId,
+        issues: issues.map((i) => i.code),
+      });
+      continue;
+    }
+
+    const originVars = deferredEdges
+      .filter((e) => e.toServiceId === backendId)
+      .map((e) => e.toEnvName);
+    const patch: Record<string, string> = {};
+    for (const name of originVars) {
+      if (env[name]) patch[name] = env[name]!;
+    }
+    if (Object.keys(patch).length === 0) {
+      summary.skipped.push({ id: backendId, reason: "nothing_to_wire" });
+      continue;
+    }
+
+    try {
+      await adapter.setEnv(row.externalId, patch, {
+        provider: "render",
+        values: credValues,
+      });
+      // Force a redeploy so the new env is picked up by the running service.
+      const deployTarget = await resolveProviderDeployTarget(db, run.projectId, svc.id, "render", 60);
+      const deployLogs = chainedDeployOnLog(logger, svc.id);
+      const result = await adapter.deploy({
+        service: svc,
+        repo: { fullName: repoFullName, branch: defaultBranch, commitSha: run.commitSha },
+        rootDir: svc.rootDir,
+        resourceName: deployTarget.resourceName,
+        existingExternalId: row.externalId,
+        env,
+        credentials: { provider: "render", values: credValues },
+        onLog: deployLogs.onLog,
+      });
+      await deployLogs.flush();
+      if (!result.ok) {
+        summary.failed.push(backendId);
+        await logger.error(`Origin wiring redeploy failed for "${backendId}".`, {
+          event: "env_wire_failed",
+          serviceId: backendId,
+          detail: result.logs,
+        });
+        continue;
+      }
+
+      const prevMeta =
+        row.meta && typeof row.meta === "object" && !Array.isArray(row.meta)
+          ? (row.meta as Record<string, unknown>)
+          : {};
+      await db
+        .update(deployedResources)
+        .set({
+          meta: { ...prevMeta, deferredEnv: [], originsWired: originVars },
+          url: result.publicUrl ?? row.url,
+        })
+        .where(eq(deployedResources.id, row.id));
+
+      summary.wired.push(backendId);
+      await logger.log(`Wired frontend origin into "${backendId}" (${originVars.join(", ")})`, {
+        event: "env_wired",
+        serviceId: backendId,
+        envNames: originVars,
+        origin: new URL(web.url!).origin,
+      });
+    } catch (e) {
+      summary.failed.push(backendId);
+      await logger.error(`Origin wiring failed for "${backendId}".`, {
+        event: "env_wire_failed",
+        serviceId: backendId,
+        detail: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  if (summary.failed.length > 0) {
+    throw new Error(
+      `Failed to wire frontend origin into backend (${summary.failed.join(", ")}).`,
+    );
+  }
+  return summary;
+}
+
 export type { DeployRunOutcome, PlanVerifySummary, ProvisionSummary } from "./finalizeDeployRun";
 
 /**
@@ -1275,6 +1611,7 @@ export async function verifyDeployedPlan(runId: string): Promise<PlanVerifySumma
   const db = getDb();
   const logger = createRunLogger(runId, createSafePostgresSink(db));
   const plan = await loadPlan(db, runId);
+  const vault = getVault();
 
   const summary: PlanVerifySummary = { passed: [], failed: [], skipped: [] };
 
@@ -1284,7 +1621,7 @@ export async function verifyDeployedPlan(runId: string): Promise<PlanVerifySumma
     .where(and(eq(deployedResources.runId, runId), eq(deployedResources.kind, "service")));
   const live = rows.filter((r) => r.status === "live" && r.url);
 
-  if (live.length === 0) {
+  if (live.length === 0 && !plan.verification.some((c) => c.check === "db_connect")) {
     await logger.log("No deployed services to verify.", { event: "verify_skipped" });
     return summary;
   }
@@ -1297,9 +1634,26 @@ export async function verifyDeployedPlan(runId: string): Promise<PlanVerifySumma
   await setStatus(db, runId, "verifying");
   await logger.stage("verifying", `Running ${plan.verification.length} verification check(s)`);
 
+  const dbConnections: Record<string, string> = {};
+  if (plan.verification.some((c) => c.check === "db_connect")) {
+    const managedRows = await loadDeployedRows(db, runId);
+    for (const check of plan.verification.filter((c) => c.check === "db_connect")) {
+      const row = managedRows.find((r) => r.serviceId === check.serviceId && r.status === "live");
+      if (!row) continue;
+      const urls = await openManagedConnectionUrls(row, vault);
+      if (urls) dbConnections[check.serviceId] = runtimeConnectionUrl(urls);
+    }
+  }
+
+  const neon = createNeonProvisioner();
   const outcomes = await verifyFromPlan(
     plan,
     live.map((r) => ({ serviceId: r.serviceId, publicUrl: r.url! })),
+    {
+      dbConnections,
+      verifyDbConnect: async (connectionString) =>
+        neon.verify({ name: "DATABASE_URL", value: connectionString }),
+    },
   );
 
   for (const o of outcomes) {

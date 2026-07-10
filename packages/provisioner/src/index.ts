@@ -18,3 +18,12 @@ export {
   type VerifyResult,
 } from "./types";
 export { createNeonProvisioner, type NeonOptions } from "./neon";
+export {
+  isPoolerUri,
+  migrateConnectionUrl,
+  parseNeonConnectionSecret,
+  runtimeConnectionUrl,
+  selectNeonConnectionUrls,
+  serializeNeonConnectionSecret,
+  type NeonConnectionUrls,
+} from "./neonConnections";
