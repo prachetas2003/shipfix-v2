@@ -40,7 +40,7 @@ import {
   findDrizzleConfigPath,
   runDrizzleMigrateDeploy,
 } from "./drizzleMigrate";
-import { buildRepoFixGuidance } from "./brokenRepoGuidance";
+import { buildDeployFailureGuidance } from "./deployFailureGuidance";
 import { resolveProviderDeployTarget } from "./providerResource";
 import {
   computeFinalizeDeployOutcome,
@@ -50,6 +50,7 @@ import {
   type PlanVerifySummary,
   type ProvisionSummary,
 } from "./finalizeDeployRun";
+import { resolveCloneToken } from "@shipfix/github";
 import { createSecretVaultFromEnv, type SecretVault } from "@shipfix/secrets";
 import {
   createDb,
@@ -113,7 +114,12 @@ interface RunRow {
 async function loadRun(
   db: Database,
   runId: string,
-): Promise<{ run: RunRow; repoFullName: string; defaultBranch: string }> {
+): Promise<{
+  run: RunRow;
+  repoFullName: string;
+  defaultBranch: string;
+  githubInstallationId: string | null;
+}> {
   const [run] = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
   if (!run) {
     throw new ControlPlaneConsistencyError(runId, controlPlaneConsistencyDetail(runId));
@@ -128,6 +134,7 @@ async function loadRun(
     run: { id: run.id, projectId: run.projectId, userId: project.userId, commitSha: run.commitSha, mode: run.mode },
     repoFullName: project.repoFullName,
     defaultBranch: project.defaultBranch,
+    githubInstallationId: project.githubInstallationId ?? null,
   };
 }
 
@@ -439,10 +446,41 @@ async function loadProjectEnvValues(
 }
 
 /**
- * On a repo-side deploy failure (build/timeout/deploy), emit a beginner-friendly
- * fix prompt + manual checklist. ShipFix never mutates the repo; this just hands
- * the user something to paste into Cursor/ChatGPT. No-op for setup_blocker.
+ * On a deploy failure, emit structured next-step guidance (credentials vs repo
+ * vs provider limit, etc.). ShipFix never mutates the repo.
  */
+async function emitDeployFailureGuidance(
+  logger: RunLogger,
+  args: {
+    repoFullName: string;
+    service: PlanService;
+    provider: string;
+    failureKind: DeployFailureKind;
+    errorSummary: string;
+  },
+): Promise<void> {
+  const guidance = buildDeployFailureGuidance({
+    repoFullName: args.repoFullName,
+    service: args.service,
+    provider: args.provider,
+    failureKind: args.failureKind,
+    errorSummary: args.errorSummary,
+  });
+  await logger.warn(guidance.whatHappened, {
+    event: "deploy_failure_guidance",
+    serviceId: guidance.serviceId,
+    provider: guidance.provider,
+    failureKind: guidance.failureKind,
+    action: guidance.action,
+    stage: guidance.stage,
+    title: guidance.title,
+    whatHappened: guidance.whatHappened,
+    whatYouShouldDo: guidance.whatYouShouldDo,
+    showCursorPrompt: guidance.showCursorPrompt,
+    ...(guidance.fixPrompt ? { fixPrompt: guidance.fixPrompt } : {}),
+  });
+}
+
 /** Serialize deploy_log lines so they cannot race on run_events.seq. */
 function chainedDeployOnLog(
   logger: RunLogger,
@@ -455,33 +493,6 @@ function chainedDeployOnLog(
     },
     flush: () => chain,
   };
-}
-
-async function emitRepoFixGuidance(
-  logger: RunLogger,
-  args: {
-    repoFullName: string;
-    service: PlanService;
-    provider: string;
-    failureKind: DeployFailureKind;
-    errorSummary: string;
-  },
-): Promise<void> {
-  const guidance = buildRepoFixGuidance({
-    repoFullName: args.repoFullName,
-    service: args.service,
-    provider: args.provider,
-    failureKind: args.failureKind,
-    errorSummary: args.errorSummary,
-  });
-  if (!guidance) return;
-  await logger.warn(guidance.summary, {
-    event: "deploy_fix_guidance",
-    serviceId: args.service.id,
-    stage: guidance.stage,
-    checklist: guidance.checklist,
-    fixPrompt: guidance.fixPrompt,
-  });
 }
 
 function planHasUnsupportedServices(plan: DeploymentPlan, caps: Capabilities): boolean {
@@ -521,7 +532,7 @@ async function setStatus(
 export async function analyzeRepo(runId: string): Promise<RepoContext> {
   const db = getDb();
   const logger: RunLogger = createRunLogger(runId, createSafePostgresSink(db));
-  const { run, repoFullName } = await loadRun(db, runId);
+  const { run, repoFullName, githubInstallationId } = await loadRun(db, runId);
 
   await setStatus(db, runId, "analyzing");
   await logger.stage("analyzing", `Analyzing ${repoFullName}`);
@@ -534,7 +545,11 @@ export async function analyzeRepo(runId: string): Promise<RepoContext> {
       event: "repo_clone_started",
       repoFullName,
     });
-    await sandbox.clone({ repoFullName, sha: run.commitSha, token: "" });
+    const token = await resolveCloneToken({
+      repoFullName,
+      installationId: githubInstallationId,
+    });
+    await sandbox.clone({ repoFullName, sha: run.commitSha, token });
 
     const head = await sandbox.exec("git rev-parse HEAD", { timeoutMs: 30_000 });
     const commitSha = head.exitCode === 0 ? head.stdout.trim() : run.commitSha;
@@ -1090,7 +1105,7 @@ export interface MigrationSummary {
 export async function runManagedMigrations(runId: string): Promise<MigrationSummary> {
   const db = getDb();
   const logger = createRunLogger(runId, createSafePostgresSink(db));
-  const { run, repoFullName } = await loadRun(db, runId);
+  const { run, repoFullName, githubInstallationId } = await loadRun(db, runId);
   const plan = await loadPlan(db, runId);
   const vault = getVault();
   const summary: MigrationSummary = { applied: [], skipped: [], failed: [] };
@@ -1118,7 +1133,11 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
   const sandbox = await provider.create({ runId: `${runId}-migrate` });
 
   try {
-    await sandbox.clone({ repoFullName, sha: run.commitSha, token: "" });
+    const token = await resolveCloneToken({
+      repoFullName,
+      installationId: githubInstallationId,
+    });
+    await sandbox.clone({ repoFullName, sha: run.commitSha, token });
     const files = await sandbox.list();
 
     for (const m of targets) {
@@ -1394,7 +1413,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
         failureKind: kind,
         detail: result.logs,
       });
-      await emitRepoFixGuidance(logger, {
+      await emitDeployFailureGuidance(logger, {
         repoFullName,
         service: svc,
         provider: "render",
@@ -1562,7 +1581,8 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
           : kind === "provider_env_conflict"
             ? `Vercel could not update an environment variable after retrying. This is a provider-side env conflict — rerun Deploy after ShipFix replaces the variable, or check the Vercel project settings.`
           : kind === "setup_blocker"
-            ? `Deploy blocked for "${svc.id}": provider account setup required.`
+            ? result.logs?.trim() ||
+              `Deploy blocked for "${svc.id}": update the Vercel connection (token/teamId/GitHub link), then retry.`
             : kind === "timeout"
               ? `Frontend "${svc.id}" deployment timed out on Vercel. Backend and database may still be live — check Vercel deployment logs or rerun Deploy.`
               : `Deploy failed for "${svc.id}".`;
@@ -1583,7 +1603,7 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
         vercelProjectId: result.externalId,
         detail: result.logs,
       });
-      await emitRepoFixGuidance(logger, {
+      await emitDeployFailureGuidance(logger, {
         repoFullName,
         service: svc,
         provider: "vercel",

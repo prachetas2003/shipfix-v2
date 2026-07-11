@@ -20,6 +20,14 @@ import { createSafePostgresSink, createRunLogger } from "@shipfix/observability"
 import { reconcileStuckRuns, revalidatePlanForRun } from "@shipfix/workflow";
 import { preflightProviderCredentials } from "@shipfix/adapter-core";
 import { createSecretVaultFromEnv } from "@shipfix/secrets";
+import {
+  loadGithubAppConfigFromEnv,
+  resolveCloneToken,
+  resolveGithubBranchSha,
+  shouldAutoDeployPush,
+  verifyGithubWebhookSignature,
+  type GithubPushEvent,
+} from "@shipfix/github";
 import { env, shipfixEnvLoad } from "./env";
 import { requireAdmin, requireUser, type AuthenticatedUser } from "./auth";
 import { alphaDefaultsProfile, usageLimitMessage } from "./alphaLimits";
@@ -52,6 +60,107 @@ import {
 
 const app = Fastify({ logger: true });
 const db = createDb(env.DATABASE_URL);
+
+/** GitHub webhooks need the raw body for HMAC verification (encapsulated parser). */
+await app.register(async (githubHooks) => {
+  githubHooks.removeContentTypeParser("application/json");
+  githubHooks.addContentTypeParser("application/json", { parseAs: "buffer" }, (_req, body, done) => {
+    done(null, body);
+  });
+
+  githubHooks.post("/webhooks/github", async (request, reply) => {
+    const config = loadGithubAppConfigFromEnv();
+    const secret = config?.webhookSecret ?? process.env.GITHUB_WEBHOOK_SECRET?.trim();
+    if (!secret) {
+      return reply.status(503).send({
+        error: "webhook_unconfigured",
+        message: "GITHUB_WEBHOOK_SECRET is not set.",
+      });
+    }
+
+    const rawBody = request.body as Buffer;
+    const signature = request.headers["x-hub-signature-256"];
+    const sigHeader = Array.isArray(signature) ? signature[0] : signature;
+    if (!verifyGithubWebhookSignature(rawBody, sigHeader, secret)) {
+      return reply.status(401).send({ error: "invalid_signature" });
+    }
+
+    const eventName = request.headers["x-github-event"];
+    const name = Array.isArray(eventName) ? eventName[0] : eventName;
+    if (name === "ping") {
+      return reply.status(200).send({ ok: true });
+    }
+    if (name !== "push") {
+      return reply.status(200).send({ ok: true, ignored: true });
+    }
+
+    let event: GithubPushEvent;
+    try {
+      event = JSON.parse(rawBody.toString("utf8")) as GithubPushEvent;
+    } catch {
+      return reply.status(400).send({ error: "invalid_json" });
+    }
+
+    const repoFullName = event.repository?.full_name?.trim();
+    if (!repoFullName) {
+      return reply.status(200).send({ ok: true, ignored: true, reason: "missing_repo" });
+    }
+
+    const candidates = await db
+      .select()
+      .from(projects)
+      .where(and(eq(projects.repoFullName, repoFullName), eq(projects.autoDeployOnPush, true)));
+
+    if (candidates.length === 0) {
+      return reply.status(200).send({ ok: true, ignored: true, reason: "no_auto_deploy_projects" });
+    }
+
+    const started: string[] = [];
+    const skipped: Array<{ projectId: string; reason: string }> = [];
+
+    for (const project of candidates) {
+      const gate = shouldAutoDeployPush(event, project.defaultBranch);
+      if (!gate.ok) {
+        skipped.push({ projectId: project.id, reason: gate.reason });
+        continue;
+      }
+
+      if (gate.installationId && gate.installationId !== project.githubInstallationId) {
+        await db
+          .update(projects)
+          .set({ githubInstallationId: gate.installationId })
+          .where(eq(projects.id, project.id));
+      }
+
+      const limits = await checkRunLimits(project.userId, project.id, "deploy");
+      if (!limits.ok) {
+        skipped.push({ projectId: project.id, reason: limits.code });
+        continue;
+      }
+
+      const [run] = await db
+        .insert(runs)
+        .values({
+          projectId: project.id,
+          commitSha: gate.commitSha,
+          trigger: "push",
+          mode: "deploy",
+          status: "queued",
+        })
+        .returning();
+
+      const logger = createRunLogger(run.id, createSafePostgresSink(db));
+      await logger.stage("queued", `Push deploy queued for ${repoFullName}@${gate.commitSha.slice(0, 8)}`);
+      await assertRunPersisted(db, run.id);
+      const result = await startTemporalWorkflowForRun(run.id, "deploy", logger);
+      if (result.ok) started.push(run.id);
+      else skipped.push({ projectId: project.id, reason: result.code });
+    }
+
+    return reply.status(202).send({ ok: true, started, skipped });
+  });
+});
+
 
 app.setErrorHandler((err, _request, reply) => {
   if ((err as { code?: string }).code === "FST_ERR_CTP_EMPTY_JSON_BODY") {
@@ -573,7 +682,7 @@ async function startTemporalWorkflowForRun(
 async function startRun(
   mode: RunMode,
   user: AuthenticatedUser,
-  input: { repoFullName: string; branch: string; commitSha: string },
+  input: { repoFullName: string; branch: string; commitSha: string; trigger?: "manual" | "push" },
 ): Promise<StartResult> {
   const project = await getOrCreateProject(user.id, input.repoFullName, input.branch);
   const limits = await checkRunLimits(user.id, project.id, mode);
@@ -586,7 +695,7 @@ async function startRun(
     .values({
       projectId: project.id,
       commitSha: input.commitSha,
-      trigger: "manual",
+      trigger: input.trigger ?? "manual",
       mode,
       status: "queued",
     })
@@ -598,47 +707,6 @@ async function startRun(
   await logger.stage("queued", `Run queued for ${input.repoFullName}`);
   await assertRunPersisted(db, run.id);
   return startTemporalWorkflowForRun(run.id, mode, logger);
-}
-
-async function resolveGithubBranchSha(
-  repoFullName: string,
-  branch: string,
-): Promise<{ sha: string } | { error: string; message: string }> {
-  const endpoint = `https://api.github.com/repos/${repoFullName}/commits/${encodeURIComponent(branch)}`;
-  try {
-    const res = await fetch(endpoint, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        "User-Agent": "shipfix",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    });
-    if (res.status === 404) {
-      return {
-        error: "repo_or_branch_not_found",
-        message: `Could not find ${repoFullName}@${branch} on GitHub. Confirm the repo is public and the default branch is correct.`,
-      };
-    }
-    if (!res.ok) {
-      return {
-        error: "github_lookup_failed",
-        message: `GitHub returned ${res.status} while resolving the latest commit. Try again in a minute.`,
-      };
-    }
-    const json = (await res.json()) as { sha?: string };
-    if (!json.sha || !/^[0-9a-f]{7,40}$/i.test(json.sha)) {
-      return {
-        error: "github_lookup_failed",
-        message: "GitHub did not return a commit SHA for this branch.",
-      };
-    }
-    return { sha: json.sha };
-  } catch {
-    return {
-      error: "github_lookup_failed",
-      message: "Could not reach GitHub to resolve the latest commit.",
-    };
-  }
 }
 
 async function startDeployFromExistingRun(
@@ -894,7 +962,13 @@ app.post("/apps/:projectId/redeploy", async (request, reply) => {
     .limit(1);
   if (!project) return reply.status(404).send({ error: "project_not_found" });
 
-  const resolved = await resolveGithubBranchSha(project.repoFullName, project.defaultBranch);
+  const token = await resolveCloneToken({
+    repoFullName: project.repoFullName,
+    installationId: project.githubInstallationId,
+  });
+  const resolved = await resolveGithubBranchSha(project.repoFullName, project.defaultBranch, {
+    token: token || null,
+  });
   if ("error" in resolved) {
     return reply.status(502).send({ error: resolved.error, message: resolved.message });
   }
@@ -1338,12 +1412,59 @@ app.get("/apps/:projectId", async (request, reply) => {
       id: project.id,
       repoFullName: project.repoFullName,
       defaultBranch: project.defaultBranch,
+      autoDeployOnPush: project.autoDeployOnPush,
       createdAt: project.createdAt,
     },
     current,
     latestLiveDeployment,
     deployAction,
     history,
+  };
+});
+
+const PatchAppBody = z.object({
+  autoDeployOnPush: z.boolean().optional(),
+});
+
+/** Update project settings (e.g. auto-deploy on push). */
+app.patch("/apps/:projectId", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) {
+    return reply.status(400).send({ error: "invalid_project_id" });
+  }
+
+  const parsed = PatchAppBody.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "invalid_body", details: parsed.error.flatten() });
+  }
+  if (parsed.data.autoDeployOnPush === undefined) {
+    return reply.status(400).send({ error: "invalid_body", message: "No updatable fields provided." });
+  }
+
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.userId, user.id)))
+    .limit(1);
+  if (!project) return reply.status(404).send({ error: "project_not_found" });
+
+  const [updated] = await db
+    .update(projects)
+    .set({ autoDeployOnPush: parsed.data.autoDeployOnPush })
+    .where(eq(projects.id, projectId))
+    .returning();
+
+  return {
+    project: {
+      id: updated.id,
+      repoFullName: updated.repoFullName,
+      defaultBranch: updated.defaultBranch,
+      autoDeployOnPush: updated.autoDeployOnPush,
+      createdAt: updated.createdAt,
+    },
   };
 });
 

@@ -8,9 +8,10 @@ import { deriveRequiredProviders, missingProviders } from "../../lib/planRequire
 import { runModeLabel, runStatusLabel } from "../../lib/runLabels";
 import { useRun } from "../../lib/useRun";
 import { buttonStyle, card, colors, mono } from "../../lib/theme";
-import { FixGuidance } from "../../components/FixGuidance";
+import { FailureGuidance, extractFailureGuidance } from "../../components/FailureGuidance";
 import { OutcomeBanner } from "../../components/OutcomeBanner";
 import { PlanPanel } from "../../components/PlanPanel";
+import { ProviderCredentialFix, providersNeedingCredentialFix } from "../../components/ProviderCredentialFix";
 import { ProviderRequirements } from "../../components/ProviderRequirements";
 import { Timeline } from "../../components/Timeline";
 import { WorkerStalledNotice } from "../../components/WorkerStalledNotice";
@@ -46,6 +47,12 @@ export default function RunPage({
 
   const required = deriveRequiredProviders(run.plan);
   const missing = missingProviders(required, connected);
+  const failureGuidance = extractFailureGuidance(run.events);
+  const credentialFixProviders = providersNeedingCredentialFix(run.events);
+  const needsCredentialFix =
+    failureGuidance?.action === "update_credentials" ||
+    failureGuidance?.action === "fix_account_setup" ||
+    credentialFixProviders.length > 0;
   const terminal = ["succeeded", "diagnosed", "failed"].includes(snap?.run.status ?? run.status);
   const isPlanReady = snap?.run.mode === "plan" && snap.run.status === "succeeded";
   const canRetryDeploy = snap?.run.mode === "deploy" && ["failed", "diagnosed"].includes(snap.run.status);
@@ -113,32 +120,54 @@ export default function RunPage({
       {primaryLabel && (
         <section style={{ ...card, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", margin: "1rem 0" }}>
           <div style={{ flex: "1 1 360px" }}>
-            <strong>{isPlanReady ? "This plan is ready to deploy." : "This deploy can be retried."}</strong>
+            <strong>
+              {needsCredentialFix
+                ? "Update the failing provider, then retry."
+                : isPlanReady
+                  ? "This plan is ready to deploy."
+                  : "This deploy can be retried."}
+            </strong>
             <p style={{ margin: "0.35rem 0 0", color: colors.dim, fontSize: "0.86rem" }}>
-              {missing.length > 0
-                ? "Connect the missing providers first, then ShipFix can continue from this plan."
-                : "ShipFix will reuse the selected plan and run the provider checks again."}
+              {needsCredentialFix
+                ? `Only ${(credentialFixProviders.length > 0 ? credentialFixProviders : [failureGuidance?.provider ?? "the failing provider"]).join(", ")} needs attention — other providers stay as-is.`
+                : missing.length > 0
+                  ? "Connect the missing providers first, then ShipFix can continue from this plan."
+                  : "ShipFix will reuse the selected plan and run the provider checks again."}
             </p>
           </div>
           <button onClick={() => void startDeployFromThisRun()} disabled={starting} style={buttonStyle("primary", starting)}>
             {starting ? "Starting deployment from this plan..." : primaryLabel}
           </button>
-          {missing.length > 0 && (
+          {(missing.length > 0 || needsCredentialFix) && (
             <button onClick={() => setShowConnect((v) => !v)} style={buttonStyle("ghost")}>
-              Fix provider setup
+              {needsCredentialFix ? "Update provider credentials" : "Fix provider setup"}
             </button>
           )}
         </section>
       )}
 
-      {showConnect && run.plan && (
-        <ProviderRequirements plan={run.plan} connected={connected} onConnected={refreshProviders} />
+      {needsCredentialFix && terminal && (
+        <ProviderCredentialFix
+          events={run.events}
+          plan={run.plan}
+          connected={connected}
+          onUpdated={refreshProviders}
+          onRetryDeploy={() => void startDeployFromThisRun()}
+          retrying={starting}
+        />
+      )}
+
+      {showConnect && run.plan && !needsCredentialFix && (
+        <ProviderRequirements plan={run.plan} connected={connected} onConnected={refreshProviders} allowUpdate />
       )}
 
       <WorkerStalledNotice show={run.workerStalled && !run.controlPlaneMismatch} />
       <ControlPlaneConsistencyNotice show={run.controlPlaneMismatch} />
       <OutcomeBanner status={snap?.run.status ?? run.status} snapshot={snap} />
-      <FixGuidance events={run.events} />
+      <FailureGuidance
+        events={run.events}
+        onUpdateCredentials={needsCredentialFix ? () => setShowConnect(true) : undefined}
+      />
       {run.plan && (
         <PlanPanel
           plan={run.plan}

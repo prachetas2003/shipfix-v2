@@ -48,6 +48,10 @@ const BaseEnvSchema = z.object({
   ALPHA_MAX_LLM_CALLS_PER_USER_PER_DAY: z.coerce.number().int().positive().default(alphaDefault("ALPHA_MAX_LLM_CALLS_PER_USER_PER_DAY")),
   ALPHA_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(alphaDefault("ALPHA_RATE_LIMIT_WINDOW_MS")),
   ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW: z.coerce.number().int().positive().default(alphaDefault("ALPHA_MAX_RUN_STARTS_PER_IP_WINDOW")),
+  /** Optional GitHub App credentials for private clone + push webhooks. */
+  GITHUB_APP_ID: z.string().optional(),
+  GITHUB_APP_PRIVATE_KEY: z.string().optional(),
+  GITHUB_WEBHOOK_SECRET: z.string().optional(),
 });
 
 export const EnvSchema = BaseEnvSchema.transform((value) => ({

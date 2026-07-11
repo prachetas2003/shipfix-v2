@@ -22,6 +22,7 @@
     "@shipfix/analyzer": "workspace:*",
     "@shipfix/contracts": "workspace:*",
     "@shipfix/db": "workspace:*",
+    "@shipfix/github": "workspace:*",
     "@shipfix/llm": "workspace:*",
     "@shipfix/observability": "workspace:*",
     "@shipfix/planner": "workspace:*",

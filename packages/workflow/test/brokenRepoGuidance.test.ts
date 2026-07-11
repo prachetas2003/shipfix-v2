@@ -11,7 +11,7 @@ const service = {
   healthCheckPath: "/health",
 };
 
-describe("buildRepoFixGuidance", () => {
+describe("buildRepoFixGuidance (compat)", () => {
   it("classifies a build failure as the build stage with a copy-pasteable prompt", () => {
     const g = buildRepoFixGuidance({
       repoFullName: "acme/app",
@@ -30,7 +30,7 @@ describe("buildRepoFixGuidance", () => {
     expect(g!.fixPrompt).toContain("TS2304");
   });
 
-  it("classifies a timeout distinctly", () => {
+  it("returns null for timeouts (not a Cursor code-fix by default)", () => {
     const g = buildRepoFixGuidance({
       repoFullName: "acme/app",
       service,
@@ -38,8 +38,7 @@ describe("buildRepoFixGuidance", () => {
       failureKind: "timeout",
       errorSummary: "timed out after 600000ms",
     });
-    expect(g!.stage).toBe("timeout");
-    expect(g!.fixPrompt).toContain("Failing stage: timeout");
+    expect(g).toBeNull();
   });
 
   it("returns null for provider setup blockers (not a repo bug)", () => {
@@ -84,6 +83,6 @@ describe("buildRepoFixGuidance", () => {
       failureKind: "build_failed",
       errorSummary: "boom",
     });
-    expect(g!.checklist.join(" ")).toContain("rerun Deploy");
+    expect(g!.checklist.join(" ")).toMatch(/retry Deploy|Fix the code/i);
   });
 });

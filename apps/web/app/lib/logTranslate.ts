@@ -77,7 +77,7 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
         return {
           title: "Could not fetch this repository",
           detail:
-            "This repo looks private or does not exist. ShipFix supports public GitHub repos right now — check the name, or make the repo public and try again.",
+            "ShipFix could not clone this repo. For private repos, install the ShipFix GitHub App on the repository (and set GITHUB_APP_* env). For public repos, double-check the owner/name.",
           tone: "error",
         };
       }
@@ -288,13 +288,21 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
         isLive: true,
         url: str(d.publicUrl),
       };
-    case "deploy_setup_blocker":
+    case "deploy_setup_blocker": {
+      const detail = str(d.detail) ?? "";
+      const permission = /permission|HTTP 403|HTTP 401|teamId|token/i.test(detail + (str(d.message) ?? ""));
       return {
-        title: role === "frontend" ? "Vercel needs GitHub access" : "Provider setup needs attention",
-        detail:
-          "The deploy stopped because a provider account needs setup. Fix the provider connection and retry deploy.",
+        title: permission
+          ? "Vercel token or team permission issue"
+          : role === "frontend"
+            ? "Vercel account setup needed"
+            : "Provider setup needs attention",
+        detail: permission
+          ? "ShipFix could not create the Vercel project with the connected token. Update only the Vercel credentials (include teamId for team accounts), then retry deploy."
+          : "The deploy stopped because a provider account needs setup. Update that provider connection and retry deploy.",
         tone: "warn",
       };
+    }
     case "deploy_provider_limit":
       return {
         title: "Vercel project limit reached for this repo",
@@ -366,6 +374,17 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
         detail: ev.message,
         tone: "warn",
       };
+    case "deploy_failure_guidance": {
+      const action = str(d.action) ?? "";
+      const title = str(d.title) ?? "What to do next";
+      if (action === "fix_repo_code") {
+        return { title, detail: "This looks like a repository code/config issue. Use the guidance below (and Cursor prompt if shown).", tone: "warn" };
+      }
+      if (action === "update_credentials" || action === "fix_account_setup") {
+        return { title, detail: "This is a provider account/credentials issue — not a repo code bug. Update the connection, then retry.", tone: "warn" };
+      }
+      return { title, detail: str(d.whatHappened) ?? ev.message, tone: "warn" };
+    }
     case "deploy_blocked":
       return {
         title: "Deploy not started",

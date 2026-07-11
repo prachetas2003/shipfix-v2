@@ -134,7 +134,7 @@ describe("translateEvent - leakage and honesty", () => {
       ev({ event: "run_failed", message: 'git clone failed for "acme/private" (exit 128). Details: fatal: could not read' }),
     );
     expect(f.title).toBe("Could not fetch this repository");
-    expect(f.detail.toLowerCase()).toContain("public");
+    expect(f.detail.toLowerCase()).toContain("github app");
   });
 
   it("never surfaces the raw error in run_failed copy", () => {

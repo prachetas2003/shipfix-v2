@@ -15,11 +15,17 @@ export function ConnectProvider({
   connected,
   reason,
   onConnected,
+  allowUpdate = false,
+  initiallyEditing = false,
 }: {
   providerId: ProviderId;
   connected: boolean;
   reason?: string;
   onConnected?: () => void;
+  /** When true, a connected provider can expand an Update credentials form. */
+  allowUpdate?: boolean;
+  /** Open the credential form immediately (used after a permission failure). */
+  initiallyEditing?: boolean;
 }): React.ReactElement | null {
   const guide = providerGuide(providerId);
   const [value, setValue] = useState("");
@@ -27,8 +33,11 @@ export function ConnectProvider({
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState(Boolean(initiallyEditing && (allowUpdate || !connected)));
 
   if (!guide) return null;
+
+  const showForm = !connected || editing;
 
   const connect = async () => {
     setSaving(true);
@@ -41,7 +50,8 @@ export function ConnectProvider({
       });
       setValue("");
       setOptionalValues({});
-      setMsg(`${guide.name} connected.`);
+      setEditing(false);
+      setMsg(connected ? `${guide.name} credentials updated.` : `${guide.name} connected.`);
       onConnected?.();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -55,8 +65,8 @@ export function ConnectProvider({
       style={{
         ...card,
         marginBottom: 12,
-        borderColor: connected ? colors.successDeep : colors.borderStrong,
-        background: connected ? "rgba(5,46,31,0.38)" : colors.card,
+        borderColor: connected && !editing ? colors.successDeep : colors.borderStrong,
+        background: connected && !editing ? "rgba(5,46,31,0.38)" : colors.card,
       }}
     >
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
@@ -68,25 +78,46 @@ export function ConnectProvider({
           {reason && <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", color: colors.muted }}>{reason}</p>}
           <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", color: colors.dim, lineHeight: 1.55 }}>{guide.whatFor}</p>
         </div>
-        <span
-          style={{
-            fontSize: "0.72rem",
-            fontWeight: 800,
-            color: "#061014",
-            background: connected ? colors.success : colors.warn,
-            padding: "0.18rem 0.6rem",
-            borderRadius: 999,
-          }}
-        >
-          {connected ? "Ready" : "Setup needed"}
-        </span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span
+            style={{
+              fontSize: "0.72rem",
+              fontWeight: 800,
+              color: "#061014",
+              background: connected ? colors.success : colors.warn,
+              padding: "0.18rem 0.6rem",
+              borderRadius: 999,
+            }}
+          >
+            {connected ? "Connected" : "Setup needed"}
+          </span>
+          {connected && allowUpdate && !editing && (
+            <button type="button" onClick={() => setEditing(true)} style={buttonStyle("ghost")}>
+              Update credentials
+            </button>
+          )}
+          {connected && allowUpdate && editing && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false);
+                setErr(null);
+                setValue("");
+              }}
+              style={buttonStyle("ghost")}
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </div>
 
-      {!connected && (
+      {showForm && (
         <>
           <div style={{ marginTop: "0.8rem", borderTop: `1px solid ${colors.border}`, paddingTop: "0.8rem" }}>
             <p style={{ margin: 0, fontSize: "0.85rem", color: colors.muted, lineHeight: 1.6 }}>
-              Create an account-level {guide.credentialLabel.toLowerCase()} at{" "}
+              {connected ? "Paste a new " : "Create an account-level "}
+              {guide.credentialLabel.toLowerCase()} at{" "}
               <a href={guide.tokenUrl} target="_blank" rel="noreferrer" style={{ color: colors.accentText, fontWeight: 700 }}>
                 {guide.tokenUrlLabel}
               </a>
@@ -136,7 +167,7 @@ export function ConnectProvider({
               disabled={saving || value.trim().length === 0}
               style={buttonStyle("primary", saving || value.trim().length === 0)}
             >
-              {saving ? "Connecting..." : `Connect ${guide.name}`}
+              {saving ? "Saving..." : connected ? `Update ${guide.name}` : `Connect ${guide.name}`}
             </button>
           </div>
           <p style={{ margin: "0.55rem 0 0", fontSize: "0.76rem", color: colors.dim, lineHeight: 1.45 }}>{ENCRYPTION_NOTE}</p>

@@ -6,8 +6,29 @@ export interface VercelFailure {
   message: string;
 }
 
+/** Typed Vercel API failure so adapters preserve failureKind (not just the message). */
+export class VercelApiError extends Error {
+  readonly failureKind: DeployFailureKind;
+  constructor(failure: VercelFailure) {
+    super(failure.message);
+    this.name = "VercelApiError";
+    this.failureKind = failure.kind;
+  }
+}
+
 export async function readVercelBody(res: Response): Promise<string> {
   return res.text().catch(() => "");
+}
+
+function permissionSetupMessage(status: number, msg: string, link: string): VercelFailure {
+  return {
+    kind: "setup_blocker",
+    message:
+      `Vercel API HTTP ${status}: ${redact(msg).slice(0, 400)}. ` +
+      `This is a Vercel account/token permission problem — not a bug in your repo. ` +
+      `Update the Vercel connection in ShipFix (use a token with create access; if you deploy under a team, include teamId), ` +
+      `confirm GitHub is linked to that Vercel account, then retry Deploy.${link}`,
+  };
 }
 
 /** Classify Vercel API errors into setup blockers vs hard deploy failures. */
@@ -20,6 +41,13 @@ export function classifyVercelFailure(status: number, statusText: string, bodyTe
     const err = json.error;
     const msg = err?.message ?? preview;
     const link = err?.link ? ` See ${err.link}` : "";
+    if (
+      status === 401 ||
+      status === 403 ||
+      /don't have permission|not authorized|unauthorized|forbidden|invalid token|not allowed to create/i.test(msg)
+    ) {
+      return permissionSetupMessage(status, msg || statusText, link);
+    }
     if (
       err?.code === "bad_request" &&
       /login connection|connect.*github|github account/i.test(msg)
@@ -66,6 +94,9 @@ export function classifyVercelFailure(status: number, statusText: string, bodyTe
   } catch {
     /* fall through */
   }
+  if (status === 401 || status === 403) {
+    return permissionSetupMessage(status, preview || statusText, "");
+  }
   const detail = preview.length > 0 ? preview.slice(0, 500) : "(empty body)";
   return {
     kind: "deploy_failed",
@@ -73,10 +104,10 @@ export function classifyVercelFailure(status: number, statusText: string, bodyTe
   };
 }
 
-export async function failVercelBody(res: Response, action: string): Promise<never> {
+export async function failVercelBody(res: Response, _action: string): Promise<never> {
   const body = await readVercelBody(res);
   const classified = classifyVercelFailure(res.status, res.statusText, body);
-  throw new Error(classified.message);
+  throw new VercelApiError(classified);
 }
 
 export async function parseVercelJson<T>(res: Response, action: string): Promise<T> {
@@ -88,6 +119,6 @@ export async function parseVercelJson<T>(res: Response, action: string): Promise
     return JSON.parse(body) as T;
   } catch {
     const classified = classifyVercelFailure(res.status, res.statusText, body);
-    throw new Error(classified.message);
+    throw new VercelApiError(classified);
   }
 }

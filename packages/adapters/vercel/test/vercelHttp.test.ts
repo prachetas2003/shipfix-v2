@@ -16,6 +16,20 @@ describe("classifyVercelFailure", () => {
     expect(result.message).toContain("Login Connection");
   });
 
+  it("classifies 403 permission errors as setup_blocker (not a repo bug)", () => {
+    const body = JSON.stringify({
+      error: {
+        code: "forbidden",
+        message: "You don't have permission to create the project.",
+      },
+    });
+    const result = classifyVercelFailure(403, "Forbidden", body);
+    expect(result.kind).toBe("setup_blocker");
+    expect(result.message).toContain("permission");
+    expect(result.message).toContain("teamId");
+    expect(result.message).toMatch(/not a bug in your repo/i);
+  });
+
   it("returns deploy_failed for other API errors", () => {
     const result = classifyVercelFailure(500, "Internal Server Error", "upstream error");
     expect(result.kind).toBe("deploy_failed");

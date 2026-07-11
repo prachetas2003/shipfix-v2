@@ -23,6 +23,7 @@ const h = vi.hoisted(() => {
     provider_accounts: [],
     deployed_resources: [],
     run_inputs: [],
+    project_env_vars: [],
     llm_usage: [],
   };
   const events: Array<{ level: string; message: string; data: Record<string, unknown> }> = [];
@@ -57,6 +58,7 @@ vi.mock("@shipfix/db", () => {
     providerAccounts: table("provider_accounts"),
     deployedResources: table("deployed_resources"),
     runInputs: table("run_inputs"),
+    projectEnvVars: table("project_env_vars"),
     llmUsage: table("llm_usage"),
   };
   const rowsFor = (t: { __table?: string }): FakeRow[] => h.rows[(t as { __table: string }).__table];
@@ -449,7 +451,7 @@ describe("deployFrontendServices", () => {
     expect(call.resourceName).toBe("sf-proj1-web");
   });
 
-  it("does not emit repo fix guidance for provider project limit failures", async () => {
+  it("emits failure guidance without a Cursor prompt for provider project limit failures", async () => {
     h.rows.deployed_resources.push(liveDbRow(), liveApiRow());
     h.adapterBehavior.vercel.deploy = async () => ({
       ok: false,
@@ -464,11 +466,13 @@ describe("deployFrontendServices", () => {
     const summary = await deployFrontendServices(RUN_ID);
 
     expect(summary.failed).toEqual([{ id: "web", kind: "provider_limit" }]);
-    expect(h.events.some((e) => e.data.event === "deploy_fix_guidance")).toBe(false);
+    const guidance = h.events.find((e) => e.data.event === "deploy_failure_guidance");
+    expect(guidance?.data.action).toBe("resolve_provider_limit");
+    expect(guidance?.data.showCursorPrompt).toBe(false);
     expect(h.events.some((e) => e.data.event === "deploy_provider_limit")).toBe(true);
   });
 
-  it("does not emit repo fix guidance for provider env var conflicts", async () => {
+  it("emits failure guidance without a Cursor prompt for provider env var conflicts", async () => {
     h.rows.deployed_resources.push(liveDbRow(), liveApiRow());
     h.adapterBehavior.vercel.deploy = async () => ({
       ok: false,
@@ -482,7 +486,9 @@ describe("deployFrontendServices", () => {
     const summary = await deployFrontendServices(RUN_ID);
 
     expect(summary.failed).toEqual([{ id: "web", kind: "provider_env_conflict" }]);
-    expect(h.events.some((e) => e.data.event === "deploy_fix_guidance")).toBe(false);
+    const guidance = h.events.find((e) => e.data.event === "deploy_failure_guidance");
+    expect(guidance?.data.action).toBe("resolve_env_conflict");
+    expect(guidance?.data.showCursorPrompt).toBe(false);
     expect(h.events.some((e) => e.data.event === "deploy_provider_env_conflict")).toBe(true);
   });
 });

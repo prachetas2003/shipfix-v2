@@ -15,10 +15,13 @@ export function ProviderRequirements({
   plan,
   connected,
   onConnected,
+  allowUpdate = false,
 }: {
   plan: PlanView | null;
   connected: string[];
   onConnected: () => void;
+  /** Let users refresh a single connected provider without touching the others. */
+  allowUpdate?: boolean;
 }): React.ReactElement {
   const required = deriveRequiredProviders(plan);
   const missing = missingProviders(required, connected);
@@ -29,6 +32,9 @@ export function ProviderRequirements({
       <h2 style={h2}>Connect providers</h2>
       <p style={{ margin: "0.5rem 0 1rem", fontSize: "0.86rem", color: colors.dim, lineHeight: 1.6 }}>
         ShipFix only asks for providers this plan needs. {REUSE_NOTE}
+        {allowUpdate
+          ? " Use Update credentials on a single card to refresh one connector without reconnecting the others."
+          : ""}
       </p>
 
       {required.length === 0 && (
@@ -43,6 +49,7 @@ export function ProviderRequirements({
           providerId={req.provider}
           connected={connected.includes(req.provider)}
           reason={req.reason}
+          allowUpdate={allowUpdate}
           onConnected={onConnected}
         />
       ))}

@@ -36,6 +36,13 @@
       "when": 1783721000000,
       "tag": "0004_project_env_vars",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783722000000,
+      "tag": "0005_github_push_deploy",
+      "breakpoints": true
     }
   ]
 }

@@ -17,6 +17,7 @@
     "@shipfix/adapter-core": "workspace:*",
     "@shipfix/contracts": "workspace:*",
     "@shipfix/db": "workspace:*",
+    "@shipfix/github": "workspace:*",
     "@shipfix/observability": "workspace:*",
     "@shipfix/secrets": "workspace:*",
     "@shipfix/verifier": "workspace:*",

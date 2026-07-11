@@ -191,8 +191,7 @@ pnpm smoke tj/commander.js         # or any public repo
 
 See **[`docs/e2e-manual-test.md`](docs/e2e-manual-test.md)** for the complete checklist:
 Neon + Render + Vercel credentials, test repo requirements, timeline events,
-success/partial/failure outcomes, and DB debugging queries. This is the proof step
-before building recovery, migrations, or private-repo support.
+success/partial/failure outcomes, and DB debugging queries.
 
 ### What success looks like (analyze-only)
 
@@ -211,7 +210,7 @@ before building recovery, migrations, or private-repo support.
 | Case | What you'll see |
 | --- | --- |
 | Invalid repo (`not-a-repo`) | API `400 missing_repo` (no run created) |
-| Repo missing/private | run `failed`; `analysis_failed` event: "git clone failed … Check the repo exists and is public" (fails fast — no credential prompt) |
+| Repo missing/private (no App) | run `failed`; clone failure — install the ShipFix GitHub App for private repos, or confirm the public name |
 | **Temporal not running** | API `503 workflow_start_failed`; run marked `failed` with an actionable event (no orphaned `queued` run) |
 | **Postgres not configured** | API fails fast at boot (missing `DATABASE_URL`) or returns `500` with the connection error; worker logs a `DATABASE_URL is not set` warning |
 | Analyzer error | run `failed`; `analysis_failed` event with the redacted error |
@@ -311,18 +310,18 @@ because ShipFix can diagnose missing provider config more clearly.
 validator → provisioner → Render + Vercel adapters → plan-driven verifier →
 run_events → SSE → UI):
 
-- `analyze_only` — deterministic RepoContext from public repos
+- `analyze_only` — deterministic RepoContext (public, or private via GitHub App)
 - `plan` — AI-proposed `DeploymentPlan` with deterministic validation
 - `deploy` — Neon provisioning, sealed managed env, Render backend, Vercel
   frontend with `generated_from_service` wiring, plan-driven verification,
   honest partial/full/failed outcomes
+- Push auto-deploy — `POST /webhooks/github` + per-project `autoDeployOnPush`
+  (still gated + verified)
 
 Secrets use a real AES-256-GCM envelope vault (local master key; KMS-swappable).
 Provider credentials and `DATABASE_URL` are sealed at rest and opened only inside
 trusted worker activities.
 
-**Still intentionally unimplemented:** Railway adapter, Drizzle migrate
-execution, `verifySystem` recovery wrapper, `user_secret` HITL answering UI,
-GitHub App auth, private repos, KMS-backed vault, and the production E2B
-sandbox. Prisma migrate on Neon (direct URL) and Next+API deterministic plans
-are implemented.
+**Still intentionally unimplemented:** Railway adapter, KMS-backed vault, the
+production E2B sandbox, and a full GitHub App install/OAuth UI (credentials are
+env-based; private clone + push webhooks work when the App is installed).

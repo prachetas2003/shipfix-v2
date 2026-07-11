@@ -85,7 +85,7 @@ export const PROVIDER_GUIDES: Record<ProviderId, ProviderGuide> = {
     tokenUrlLabel: "Vercel tokens",
     scope: "Use a token with access to the personal account or team that will own the project.",
     optionalFields: [
-      { field: "teamId", label: "Team ID", placeholder: "Optional: team_xxx for Vercel teams" },
+      { field: "teamId", label: "Team ID", placeholder: "team_xxx — required if projects live under a Vercel team" },
     ],
     extraSteps: [
       {

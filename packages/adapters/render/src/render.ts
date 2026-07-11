@@ -348,8 +348,14 @@ function servicePublicUrl(svc: RenderService): string | null {
 
 function renderFailureKind(message: string): DeployFailureKind {
   if (/timed out|timeout/i.test(message)) return "timeout";
-  if (/owner|unauthorized|forbidden|permission|repo|github|not found|api key/i.test(message)) {
+  if (/unauthorized|forbidden|permission|invalid api key|invalid credentials|HTTP 401|HTTP 403/i.test(message)) {
     return "setup_blocker";
+  }
+  if (/github.*(connect|access|auth)|Login Connection|repository not found/i.test(message)) {
+    return "setup_blocker";
+  }
+  if (/build failed|Exited with status|npm ERR|Module not found|TS\d{4}|ELIFECYCLE|failed to compile/i.test(message)) {
+    return "build_failed";
   }
   return "deploy_failed";
 }

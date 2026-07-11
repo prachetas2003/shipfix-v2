@@ -6,7 +6,7 @@ import type {
   ProviderCredentials,
 } from "@shipfix/adapter-core";
 import { resolveGitRepoId } from "./resolveGitRepoId.js";
-import { failVercelBody, parseVercelJson } from "./vercelHttp.js";
+import { failVercelBody, parseVercelJson, VercelApiError } from "./vercelHttp.js";
 import { buildGitSource, VercelRepoIdError } from "./vercelGit.js";
 import { buildProjectBody, buildProjectPatch } from "./vercelProject.js";
 import { setProjectEnv, VercelEnvConflictError } from "./vercelEnv.js";
@@ -77,6 +77,9 @@ function statusFromFailure(
 }
 
 function deployError(e: unknown): { logs: string; failureKind: DeployFailureKind } {
+  if (e instanceof VercelApiError) {
+    return { logs: e.message, failureKind: e.failureKind };
+  }
   if (e instanceof VercelRepoIdError) {
     return { logs: e.message, failureKind: e.failureKind };
   }
@@ -84,7 +87,11 @@ function deployError(e: unknown): { logs: string; failureKind: DeployFailureKind
     return { logs: e.message, failureKind: e.failureKind };
   }
   const msg = e instanceof Error ? e.message : String(e);
-  if (/GitHub connection required|Login Connection|git repoId unresolved|requires a linked GitHub repoId/i.test(msg)) {
+  if (
+    /GitHub connection required|Login Connection|git repoId unresolved|requires a linked GitHub repoId|don't have permission|not authorized|HTTP 401|HTTP 403|account\/token permission/i.test(
+      msg,
+    )
+  ) {
     return { logs: msg, failureKind: "setup_blocker" };
   }
   if (/timed out|timeout/i.test(msg)) {

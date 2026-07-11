@@ -123,7 +123,13 @@ export interface AppSummary {
 }
 
 export interface AppDetail {
-  project: { id: string; repoFullName: string; defaultBranch: string; createdAt: string };
+  project: {
+    id: string;
+    repoFullName: string;
+    defaultBranch: string;
+    autoDeployOnPush: boolean;
+    createdAt: string;
+  };
   current: {
     resources: SnapshotResource[];
     layers: RunLayers;
@@ -264,6 +270,23 @@ export const api = {
       commitSha: body.commitSha as string,
       branch: body.branch as string,
     };
+  },
+
+  async updateApp(
+    projectId: string,
+    patch: { autoDeployOnPush: boolean },
+  ): Promise<{ autoDeployOnPush: boolean }> {
+    const res = await fetch(`${API_BASE}/apps/${projectId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify(patch),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return { autoDeployOnPush: Boolean(body.project?.autoDeployOnPush) };
   },
 
   async submitRunInputs(

@@ -74,6 +74,10 @@ export const projects = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     repoFullName: text("repo_full_name").notNull(),
     defaultBranch: text("default_branch").notNull().default("main"),
+    /** When true, GitHub push webhooks on defaultBranch start a deploy run. */
+    autoDeployOnPush: boolean("auto_deploy_on_push").notNull().default(false),
+    /** GitHub App installation id that covers this repo (for private clone + push). */
+    githubInstallationId: text("github_installation_id"),
     /** Denormalized snapshot of the last good deployment graph (for dashboard). */
     liveGraph: jsonb("live_graph"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

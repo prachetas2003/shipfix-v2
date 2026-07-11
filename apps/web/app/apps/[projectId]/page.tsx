@@ -37,6 +37,7 @@ export default function AppDetailPage({
   const [showConnect, setShowConnect] = useState(false);
   const [starting, setStarting] = useState(false);
   const [redeploying, setRedeploying] = useState(false);
+  const [savingAutoDeploy, setSavingAutoDeploy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -110,6 +111,21 @@ export default function AppDetailPage({
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setRedeploying(false);
+    }
+  };
+
+  const toggleAutoDeploy = async () => {
+    if (!detail) return;
+    setErr(null);
+    setSavingAutoDeploy(true);
+    try {
+      const next = !detail.project.autoDeployOnPush;
+      await api.updateApp(projectId, { autoDeployOnPush: next });
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingAutoDeploy(false);
     }
   };
 
@@ -189,9 +205,12 @@ export default function AppDetailPage({
             <button onClick={() => void redeployLatest()} disabled={redeploying} style={buttonStyle("primary", redeploying)}>
               {redeploying ? "Starting..." : "Redeploy latest"}
             </button>
+            <button onClick={() => setShowConnect((v) => !v)} style={buttonStyle("ghost")}>
+              Update a provider
+            </button>
           </div>
           {showConnect && (
-            <ProviderRequirements plan={action.plan} connected={connected} onConnected={() => void load()} />
+            <ProviderRequirements plan={action.plan} connected={connected} onConnected={() => void load()} allowUpdate />
           )}
         </section>
       )}
@@ -216,6 +235,29 @@ export default function AppDetailPage({
       )}
 
       <ProjectEnvPanel projectId={projectId} />
+
+      {detail && (
+        <section style={{ ...card, margin: "1.5rem 0" }}>
+          <h2 style={h2}>Auto-deploy on push</h2>
+          <p style={{ margin: "0.4rem 0 0.9rem", color: colors.muted, lineHeight: 1.55 }}>
+            When enabled, pushes to{" "}
+            <code style={{ fontFamily: mono }}>{detail.project.defaultBranch}</code> start a full
+            deploy (still gated and verified). Requires the ShipFix GitHub App webhook.
+          </p>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: savingAutoDeploy ? "wait" : "pointer" }}>
+            <input
+              type="checkbox"
+              checked={detail.project.autoDeployOnPush}
+              disabled={savingAutoDeploy}
+              onChange={() => void toggleAutoDeploy()}
+            />
+            <span style={{ color: colors.text, fontWeight: 600 }}>
+              {detail.project.autoDeployOnPush ? "On" : "Off"}
+              {savingAutoDeploy ? " (saving…)" : ""}
+            </span>
+          </label>
+        </section>
+      )}
 
       <section>
         <h2 style={h2}>Deployment history</h2>
