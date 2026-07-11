@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { api, type AppSummary } from "./lib/api";
-import { buttonStyle, card, colors } from "./lib/theme";
+import { colors } from "./lib/theme";
 import { AppCard } from "./components/AppCard";
-import { BrandMark } from "./components/BrandMark";
+import { AppNav, Button, EmptyState, Shell, Skeleton } from "./components/ui";
 
 export default function DashboardPage(): React.ReactElement {
   const [apps, setApps] = useState<AppSummary[]>([]);
@@ -24,11 +24,11 @@ export default function DashboardPage(): React.ReactElement {
       if (!opts?.quiet) setLoading(false);
     }
   }, []);
+
   useEffect(() => {
     void load();
   }, [load]);
 
-  // Light polling while any app has a non-terminal latest run.
   useEffect(() => {
     const active = apps.some(
       (a) => a.latestRun && !["succeeded", "diagnosed", "failed"].includes(a.latestRun.status),
@@ -39,62 +39,46 @@ export default function DashboardPage(): React.ReactElement {
   }, [apps, load]);
 
   return (
-    <main style={{ maxWidth: 1080, margin: "0 auto", padding: "3rem 1.5rem 6rem" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 18, flexWrap: "wrap" }}>
-        <div style={{ flex: "1 1 560px" }}>
-          <BrandMark size={38} />
-          <h1 style={{ fontSize: "2.25rem", margin: "1.1rem 0 0", letterSpacing: 0 }}>
-            Deploy full-stack apps with proof.
-          </h1>
-          <p style={{ color: colors.dim, margin: "0.55rem 0 0", fontSize: "1rem", lineHeight: 1.65, maxWidth: 720 }}>
-            ShipFix analyzes a GitHub repo, plans the deployment, connects the required providers,
-            ships Vite, Next.js, Node API, and Postgres services, then verifies the live system before calling it done.
-          </p>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: "1rem" }}>
-            {["Vite + Next.js on Vercel", "Node API on Render", "Neon Postgres", "Live verification"].map((item) => (
-              <span
-                key={item}
-                style={{
-                  border: `1px solid ${colors.border}`,
-                  background: colors.panelSoft,
-                  color: colors.muted,
-                  borderRadius: 999,
-                  padding: "0.28rem 0.7rem",
-                  fontSize: "0.78rem",
-                  fontWeight: 600,
-                }}
-              >
-                {item}
-              </span>
-            ))}
-          </div>
-        </div>
-        <Link href="/new" style={{ marginLeft: "auto", textDecoration: "none" }}>
-          <button style={buttonStyle("primary")}>New deployment</button>
-        </Link>
+    <Shell wide>
+      <AppNav
+        right={
+          <Link href="/new" style={{ textDecoration: "none" }}>
+            <Button>New deployment</Button>
+          </Link>
+        }
+      />
+
+      <div style={{ marginBottom: "1.75rem" }}>
+        <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0, letterSpacing: "-0.02em" }}>Apps</h1>
+        <p style={{ color: colors.dim, margin: "0.4rem 0 0", fontSize: "0.92rem", lineHeight: 1.55, maxWidth: 560 }}>
+          Deploy from GitHub, wire providers, and verify the live stack before calling it done.
+        </p>
       </div>
 
-      {err && <p style={{ color: colors.error, marginTop: "1.5rem" }}>{err}</p>}
+      {err && <p style={{ color: colors.error, marginBottom: "1rem" }}>{err}</p>}
 
-      <section style={{ marginTop: "2rem" }}>
-        {loading ? (
-          <p style={{ color: colors.dim }}>Loading your apps...</p>
-        ) : apps.length === 0 ? (
-          <div style={{ ...card, textAlign: "center", padding: "2.75rem 1.25rem", background: colors.panelSoft }}>
-            <p style={{ fontSize: "1.15rem", margin: 0, fontWeight: 700 }}>No apps deployed yet</p>
-            <p style={{ color: colors.dim, margin: "0.55rem auto 1.35rem", fontSize: "0.92rem", maxWidth: 560, lineHeight: 1.6 }}>
-              Start with a GitHub repo. ShipFix will show a deployment plan first, then ask for only the providers that app needs.
-            </p>
+      {loading ? (
+        <div style={{ display: "grid", gap: 12 }}>
+          <Skeleton height={96} />
+          <Skeleton height={96} />
+        </div>
+      ) : apps.length === 0 ? (
+        <EmptyState
+          title="No apps yet"
+          detail="Paste a GitHub repo to analyze and deploy. ShipFix only asks for the providers that plan needs."
+          action={
             <Link href="/new" style={{ textDecoration: "none" }}>
-              <button style={buttonStyle("primary")}>Analyze your first repo</button>
+              <Button>Analyze a repo</Button>
             </Link>
-          </div>
-        ) : (
-          apps.map((app) => (
+          }
+        />
+      ) : (
+        <div className="sf-fade-in" style={{ display: "grid", gap: 10 }}>
+          {apps.map((app) => (
             <AppCard key={app.projectId} app={app} verification={app.verification ?? []} />
-          ))
-        )}
-      </section>
-    </main>
+          ))}
+        </div>
+      )}
+    </Shell>
   );
 }

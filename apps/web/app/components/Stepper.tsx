@@ -13,18 +13,18 @@ export function Stepper({ steps, current }: { steps: string[]; current: number }
           <div key={label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span
               style={{
-                width: 26,
-                height: 26,
+                width: 24,
+                height: 24,
                 borderRadius: 999,
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: "0.72rem",
-                fontWeight: 800,
-                color: active ? "#fff" : done ? "#04120c" : "#061014",
-                background: color,
-                boxShadow: active ? "0 0 0 4px rgba(14,165,233,0.18)" : "none",
-                transition: "background 160ms ease, box-shadow 160ms ease",
+                fontSize: "0.7rem",
+                fontWeight: 700,
+                color: active || done ? "#0a0c10" : colors.dim,
+                background: active || done ? color : "transparent",
+                border: active || done ? "none" : `1px solid ${colors.borderStrong}`,
+                transition: "background 160ms ease, color 160ms ease, border-color 160ms ease",
               }}
             >
               {done ? (
@@ -42,7 +42,14 @@ export function Stepper({ steps, current }: { steps: string[]; current: number }
                 i + 1
               )}
             </span>
-            <span style={{ fontSize: "0.84rem", color: active ? colors.text : colors.dim, fontWeight: active ? 700 : 500 }}>
+            <span
+              style={{
+                fontSize: "0.84rem",
+                color: active ? colors.text : colors.dim,
+                fontWeight: active ? 600 : 500,
+                transition: "color 160ms ease",
+              }}
+            >
               {label}
             </span>
             {i < steps.length - 1 && (
@@ -54,6 +61,7 @@ export function Stepper({ steps, current }: { steps: string[]; current: number }
                   background: done ? colors.success : colors.border,
                   margin: "0 4px",
                   opacity: done ? 0.7 : 1,
+                  transition: "background 160ms ease",
                 }}
               />
             )}

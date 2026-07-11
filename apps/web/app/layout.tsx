@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { ClerkProvider } from "@clerk/nextjs";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import { AuthGate } from "./components/AuthGate";
 import "./globals.css";
 
@@ -10,15 +12,8 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   const body = (
-    <html lang="en">
-      <body
-        style={{
-          fontFamily: "ui-sans-serif, system-ui, sans-serif",
-          margin: 0,
-          background: "#08090b",
-          color: "#ededed",
-        }}
-      >
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+      <body>
         <AuthGate>{children}</AuthGate>
       </body>
     </html>

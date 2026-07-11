@@ -7,15 +7,17 @@ import { api } from "../../lib/api";
 import { deriveRequiredProviders, missingProviders } from "../../lib/planRequirements";
 import { runModeLabel, runStatusLabel } from "../../lib/runLabels";
 import { useRun } from "../../lib/useRun";
-import { buttonStyle, card, colors, mono } from "../../lib/theme";
+import { colors, mono } from "../../lib/theme";
+import { ActivityStages } from "../../components/ActivityStages";
 import { FailureGuidance, extractFailureGuidance } from "../../components/FailureGuidance";
+import { LogDrawer } from "../../components/LogDrawer";
 import { OutcomeBanner } from "../../components/OutcomeBanner";
 import { PlanPanel } from "../../components/PlanPanel";
 import { ProviderCredentialFix, providersNeedingCredentialFix } from "../../components/ProviderCredentialFix";
 import { ProviderRequirements } from "../../components/ProviderRequirements";
-import { Timeline } from "../../components/Timeline";
 import { WorkerStalledNotice } from "../../components/WorkerStalledNotice";
 import { ControlPlaneConsistencyNotice } from "../../components/ControlPlaneConsistencyNotice";
+import { AppNav, Badge, Button, PageHeader, Panel, Shell, Skeleton, Tabs } from "../../components/ui";
 
 export default function RunPage({
   params,
@@ -31,13 +33,14 @@ export default function RunPage({
   const [showTechnicalError, setShowTechnicalError] = useState(false);
   const [starting, setStarting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [tab, setTab] = useState("overview");
 
   const refreshProviders = useCallback(async () => {
     try {
       const providers = await api.listProviders();
       setConnected(providers.connected);
     } catch {
-      /* non-fatal: deploy API still gates server-side */
+      /* non-fatal */
     }
   }, []);
 
@@ -59,6 +62,7 @@ export default function RunPage({
   const hasLiveDeployment = Boolean(snap?.layers.fullStack.live || snap?.resources.some((r) => r.status === "live"));
   const primaryLabel = isPlanReady && !hasLiveDeployment ? "Deploy this plan" : canRetryDeploy ? "Retry deploy" : null;
   const pageTitle = runPageTitle(snap?.run.mode, snap?.run.status ?? run.status, Boolean(snap?.layers.fullStack.live));
+  const status = snap?.run.status ?? run.status;
 
   const startDeployFromThisRun = async () => {
     if (!snap) return;
@@ -67,6 +71,7 @@ export default function RunPage({
     setConnected(providers.connected);
     if (missingProviders(deriveRequiredProviders(run.plan), providers.connected).length > 0) {
       setShowConnect(true);
+      setTab("overview");
       return;
     }
     setStarting(true);
@@ -80,120 +85,189 @@ export default function RunPage({
     }
   };
 
-  return (
-    <main style={{ maxWidth: 980, margin: "0 auto", padding: "2.5rem 1.5rem 6rem" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: "1rem", flexWrap: "wrap" }}>
-        <div style={{ flex: "1 1 520px" }}>
-          <Link href="/" style={{ color: colors.dim, textDecoration: "none", fontSize: "0.84rem" }}>
-            Back to My Apps
-          </Link>
-          <h1 style={{ fontSize: "1.75rem", margin: "0.75rem 0 0", letterSpacing: 0 }}>{pageTitle}</h1>
-          {snap?.run.repoFullName && (
-            <p style={{ color: colors.dim, fontFamily: mono, fontSize: "0.88rem", margin: "0.4rem 0 0" }}>
-              {snap.run.repoFullName} / {runModeLabel(snap.run.mode)} /{" "}
-              <strong style={{ color: colors.text }}>{runStatusLabel(snap.run.mode, snap.run.status)}</strong>
-            </p>
-          )}
-        </div>
-        <Link href="/new" style={{ marginLeft: "auto", textDecoration: "none" }}>
-          <button style={buttonStyle("ghost")}>Start different deployment</button>
-        </Link>
-      </div>
+  const statusBadgeTone =
+    hasLiveDeployment || status === "succeeded"
+      ? "success"
+      : status === "failed"
+        ? "error"
+        : status === "diagnosed"
+          ? "warn"
+          : "info";
 
-      {run.status === "loading" && <p style={{ color: colors.dim }}>Loading run...</p>}
-      {run.error && <p style={{ color: colors.error }}>{run.error}</p>}
-      {actionError && (
-        <div style={{ ...card, borderColor: colors.errorBorder, background: colors.errorBg, color: colors.errorText, marginBottom: "1rem" }}>
-          <p style={{ margin: 0 }}>Could not start deploy from this plan. Please retry.</p>
-          <button
-            onClick={() => setShowTechnicalError((v) => !v)}
-            style={{ ...buttonStyle("ghost"), marginTop: 8 }}
+  return (
+    <Shell>
+      <AppNav
+        right={
+          <Link href="/new" style={{ textDecoration: "none" }}>
+            <Button variant="ghost">New deployment</Button>
+          </Link>
+        }
+      />
+
+      <PageHeader
+        eyebrow={
+          <Link
+            href={snap?.run.projectId ? `/apps/${snap.run.projectId}` : "/"}
+            style={{ color: colors.dim, textDecoration: "none", fontSize: "0.82rem" }}
           >
-            {showTechnicalError ? "Hide technical details" : "Show technical details"}
-          </button>
-          {showTechnicalError && (
-            <pre style={{ whiteSpace: "pre-wrap", color: colors.errorText, fontSize: "0.8rem" }}>{actionError}</pre>
-          )}
+            {snap?.run.projectId ? "Back to app" : "Back to apps"}
+          </Link>
+        }
+        title={pageTitle}
+        subtitle={
+          snap?.run.repoFullName ? (
+            <span style={{ fontFamily: mono, fontSize: "0.84rem" }}>
+              {snap.run.repoFullName}
+              {snap.run.commitSha ? ` · ${snap.run.commitSha.slice(0, 8)}` : ""}
+              {" · "}
+              {runModeLabel(snap.run.mode)}
+            </span>
+          ) : undefined
+        }
+        actions={<Badge tone={statusBadgeTone}>{runStatusLabel(snap?.run.mode ?? "", status)}</Badge>}
+      />
+
+      {run.status === "loading" && (
+        <div style={{ display: "grid", gap: 10 }}>
+          <Skeleton height={72} />
+          <Skeleton height={160} />
         </div>
+      )}
+      {run.error && (
+        <Panel style={{ borderColor: colors.errorBorder, color: colors.errorText, marginBottom: "1rem" }}>
+          {run.error}
+        </Panel>
+      )}
+      {actionError && (
+        <Panel style={{ borderColor: colors.errorBorder, background: colors.errorBg, marginBottom: "1rem" }}>
+          <p style={{ margin: 0, color: colors.errorText }}>Could not start deploy from this plan.</p>
+          <Button variant="ghost" onClick={() => setShowTechnicalError((v) => !v)} style={{ marginTop: 8 }}>
+            {showTechnicalError ? "Hide details" : "Show details"}
+          </Button>
+          {showTechnicalError && (
+            <pre style={{ whiteSpace: "pre-wrap", color: colors.errorText, fontSize: "0.78rem", marginTop: 8 }}>{actionError}</pre>
+          )}
+        </Panel>
       )}
 
       {primaryLabel && (
-        <section style={{ ...card, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", margin: "1rem 0" }}>
-          <div style={{ flex: "1 1 360px" }}>
-            <strong>
+        <Panel style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: "1.25rem" }}>
+          <div style={{ flex: "1 1 320px" }}>
+            <strong style={{ fontWeight: 600 }}>
               {needsCredentialFix
                 ? "Update the failing provider, then retry."
                 : isPlanReady
                   ? "This plan is ready to deploy."
                   : "This deploy can be retried."}
             </strong>
-            <p style={{ margin: "0.35rem 0 0", color: colors.dim, fontSize: "0.86rem" }}>
+            <p style={{ margin: "0.3rem 0 0", color: colors.dim, fontSize: "0.84rem", lineHeight: 1.5 }}>
               {needsCredentialFix
-                ? `Only ${(credentialFixProviders.length > 0 ? credentialFixProviders : [failureGuidance?.provider ?? "the failing provider"]).join(", ")} needs attention — other providers stay as-is.`
+                ? `Only ${(credentialFixProviders.length > 0 ? credentialFixProviders : [failureGuidance?.provider ?? "provider"]).join(", ")} needs attention.`
                 : missing.length > 0
-                  ? "Connect the missing providers first, then ShipFix can continue from this plan."
-                  : "ShipFix will reuse the selected plan and run the provider checks again."}
+                  ? "Connect missing providers first."
+                  : "Reuses this plan and re-runs provider checks."}
             </p>
           </div>
-          <button onClick={() => void startDeployFromThisRun()} disabled={starting} style={buttonStyle("primary", starting)}>
-            {starting ? "Starting deployment from this plan..." : primaryLabel}
-          </button>
+          <Button onClick={() => void startDeployFromThisRun()} disabled={starting}>
+            {starting ? "Starting…" : primaryLabel}
+          </Button>
           {(missing.length > 0 || needsCredentialFix) && (
-            <button onClick={() => setShowConnect((v) => !v)} style={buttonStyle("ghost")}>
-              {needsCredentialFix ? "Update provider credentials" : "Fix provider setup"}
-            </button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setShowConnect(true);
+                setTab("overview");
+              }}
+            >
+              {needsCredentialFix ? "Update credentials" : "Fix providers"}
+            </Button>
           )}
-        </section>
-      )}
-
-      {needsCredentialFix && terminal && (
-        <ProviderCredentialFix
-          events={run.events}
-          plan={run.plan}
-          connected={connected}
-          onUpdated={refreshProviders}
-          onRetryDeploy={() => void startDeployFromThisRun()}
-          retrying={starting}
-        />
-      )}
-
-      {showConnect && run.plan && !needsCredentialFix && (
-        <ProviderRequirements plan={run.plan} connected={connected} onConnected={refreshProviders} allowUpdate />
+        </Panel>
       )}
 
       <WorkerStalledNotice show={run.workerStalled && !run.controlPlaneMismatch} />
       <ControlPlaneConsistencyNotice show={run.controlPlaneMismatch} />
-      <OutcomeBanner status={snap?.run.status ?? run.status} snapshot={snap} />
-      <FailureGuidance
-        events={run.events}
-        onUpdateCredentials={needsCredentialFix ? () => setShowConnect(true) : undefined}
+
+      <Tabs
+        tabs={[
+          { id: "overview", label: "Overview" },
+          { id: "plan", label: "Plan" },
+          { id: "activity", label: "Activity" },
+          { id: "logs", label: "Logs" },
+        ]}
+        active={tab}
+        onChange={setTab}
       />
-      {run.plan && (
-        <PlanPanel
-          plan={run.plan}
-          runId={runId}
-          answeredQuestionIds={snap?.answeredQuestionIds ?? []}
-          onAnswersSaved={() => void run.refreshSnapshot()}
-        />
+
+      {tab === "overview" && (
+        <div className="sf-fade-in">
+          {needsCredentialFix && terminal && (
+            <ProviderCredentialFix
+              events={run.events}
+              plan={run.plan}
+              connected={connected}
+              onUpdated={refreshProviders}
+              onRetryDeploy={() => void startDeployFromThisRun()}
+              retrying={starting}
+            />
+          )}
+          {showConnect && run.plan && !needsCredentialFix && (
+            <ProviderRequirements plan={run.plan} connected={connected} onConnected={refreshProviders} allowUpdate />
+          )}
+          <OutcomeBanner status={status} snapshot={snap} />
+          <FailureGuidance
+            events={run.events}
+            onUpdateCredentials={
+              needsCredentialFix
+                ? () => {
+                    setShowConnect(true);
+                    setTab("overview");
+                  }
+                : undefined
+            }
+          />
+        </div>
       )}
-      <Timeline events={run.events} />
+
+      {tab === "plan" && (
+        <div className="sf-fade-in">
+          {run.plan ? (
+            <PlanPanel
+              plan={run.plan}
+              runId={runId}
+              answeredQuestionIds={snap?.answeredQuestionIds ?? []}
+              onAnswersSaved={() => void run.refreshSnapshot()}
+            />
+          ) : (
+            <Panel>
+              <p style={{ margin: 0, color: colors.dim }}>No plan for this run yet.</p>
+            </Panel>
+          )}
+        </div>
+      )}
+
+      {tab === "activity" && (
+        <div className="sf-fade-in">
+          <Panel>
+            <ActivityStages status={status} events={run.events} />
+          </Panel>
+        </div>
+      )}
+
+      {tab === "logs" && (
+        <div className="sf-fade-in">
+          <LogDrawer events={run.events} />
+        </div>
+      )}
 
       {snap?.run.projectId && (
         <p style={{ marginTop: "2rem" }}>
-          <Link href={`/apps/${snap.run.projectId}`} style={{ color: colors.accentText }}>
+          <Link href={`/apps/${snap.run.projectId}`} style={{ color: colors.accentText, fontSize: "0.88rem" }}>
             View all runs for this app
           </Link>
         </p>
       )}
-
-      {terminal && (
-        <p style={{ marginTop: "1rem" }}>
-          <Link href="/new" style={{ color: colors.dim }}>
-            Start a different deployment
-          </Link>
-        </p>
-      )}
-    </main>
+    </Shell>
   );
 }
 

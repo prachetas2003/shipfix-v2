@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
 import type { PlanView, RunEventRow } from "../lib/api";
 import { deriveRequiredProviders } from "../lib/planRequirements";
 import { providerGuide, type ProviderId } from "../lib/providerGuide";
-import { buttonStyle, card, colors } from "../lib/theme";
+import { colors } from "../lib/theme";
 import { ConnectProvider } from "./ConnectProvider";
+import { Button } from "./ui/Button";
+import { Panel } from "./ui/Panel";
 
 const PROVIDER_EVENTS = new Set([
   "deploy_setup_blocker",
@@ -69,20 +70,20 @@ export function ProviderCredentialFix({
   const reasonByProvider = new Map(required.map((r) => [r.provider, r.reason]));
 
   return (
-    <section
+    <Panel
+      className="sf-fade-in"
       style={{
-        ...card,
         marginTop: "1.5rem",
         borderColor: colors.warnBorder,
         background: colors.warnBg,
       }}
     >
-      <h3 style={{ margin: "0 0 0.35rem", fontSize: "1rem", color: colors.warnText }}>
+      <h3 style={{ margin: "0 0 0.35rem", fontSize: "1rem", fontWeight: 600, color: colors.warnText }}>
         Update provider credentials
       </h3>
       <p style={{ margin: "0 0 0.9rem", fontSize: "0.88rem", color: colors.warnText, lineHeight: 1.55 }}>
-        This failure is a provider account/token issue, not a bug in your repo. Update only the
-        connector below, then retry deploy — you do not need to reconnect Neon or Render again.
+        This failure is a provider account/token issue, not a bug in your repo. Update only the connector
+        below, then retry deploy — you do not need to reconnect Neon or Render again.
       </p>
 
       {focus.map((providerId) => {
@@ -107,11 +108,11 @@ export function ProviderCredentialFix({
 
       {onRetryDeploy && (
         <div style={{ marginTop: 8 }}>
-          <button onClick={onRetryDeploy} disabled={retrying} style={buttonStyle("primary", retrying)}>
-            {retrying ? "Starting..." : "Retry deploy after updating"}
-          </button>
+          <Button onClick={onRetryDeploy} disabled={retrying}>
+            {retrying ? "Starting…" : "Retry deploy after updating"}
+          </Button>
         </div>
       )}
-    </section>
+    </Panel>
   );
 }

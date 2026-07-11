@@ -1,6 +1,7 @@
 "use client";
 
-import { card, colors } from "../lib/theme";
+import { colors } from "../lib/theme";
+import { Panel } from "./ui/Panel";
 
 /**
  * Shown when the worker picked up a Temporal task but could not find the run row
@@ -9,17 +10,17 @@ import { card, colors } from "../lib/theme";
 export function ControlPlaneConsistencyNotice({ show }: { show: boolean }): React.ReactElement | null {
   if (!show) return null;
   return (
-    <div
+    <Panel
       role="alert"
+      className="sf-fade-in"
       style={{
-        ...card,
         borderColor: colors.errorBorder,
         background: colors.errorBg,
         color: colors.errorText,
         marginTop: "1rem",
       }}
     >
-      <strong style={{ display: "block", fontSize: "0.95rem" }}>
+      <strong style={{ display: "block", fontSize: "0.95rem", fontWeight: 600 }}>
         ShipFix started a worker task, but the worker could not find the run record.
       </strong>
       <p style={{ margin: "0.45rem 0 0", lineHeight: 1.55, fontSize: "0.88rem", opacity: 0.9 }}>
@@ -28,6 +29,6 @@ export function ControlPlaneConsistencyNotice({ show }: { show: boolean }): Reac
         local Docker Postgres and Neon in one test session — old Temporal workflows may still reference
         runs in a previous database.
       </p>
-    </div>
+    </Panel>
   );
 }

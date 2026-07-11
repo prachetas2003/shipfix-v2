@@ -1,11 +1,25 @@
-/* ShipFix global polish. Component layout lives in inline styles; this file
-   adds the interactive layer inline styles cannot express (hover, focus,
-   scrollbars, selection) plus subtle depth on the page background. */
+/* ShipFix design system — calm dark surfaces, hairline borders, intentional motion. */
 
 :root {
   color-scheme: dark;
-  --sf-accent: #0ea5e9;
-  --sf-ring: rgba(14, 165, 233, 0.35);
+  --sf-bg: #0c0d10;
+  --sf-card: #12141a;
+  --sf-panel: #161922;
+  --sf-panel-soft: #0e1015;
+  --sf-border: #23262f;
+  --sf-border-strong: #2e3340;
+  --sf-text: #eceef2;
+  --sf-dim: #8b919c;
+  --sf-muted: #b4bac6;
+  --sf-accent: #5b9fd4;
+  --sf-accent-text: #8ec5e8;
+  --sf-ring: rgba(91, 159, 212, 0.32);
+  --sf-success: #3ecf8e;
+  --sf-warn: #e6b84d;
+  --sf-error: #e57373;
+  --sf-radius: 10px;
+  --sf-radius-sm: 8px;
+  --sf-space: 8px;
 }
 
 html {
@@ -16,35 +30,82 @@ html {
 
 body {
   min-height: 100vh;
-  background-color: #08090b;
+  margin: 0;
+  background-color: var(--sf-bg);
   background-image:
-    radial-gradient(1100px 480px at 18% -8%, rgba(14, 165, 233, 0.08), transparent 60%),
-    radial-gradient(900px 420px at 92% -12%, rgba(52, 211, 153, 0.05), transparent 55%);
-  background-repeat: no-repeat;
+    radial-gradient(circle, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-attachment: fixed;
+  color: var(--sf-text);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
 ::selection {
-  background: rgba(14, 165, 233, 0.32);
-  color: #f3f6fb;
+  background: rgba(91, 159, 212, 0.35);
+  color: var(--sf-text);
 }
 
-/* ── Buttons ──────────────────────────────────────────────────────────────── */
+/* ── Buttons (kit uses .sf-btn; keep native button calm) ─────────────────── */
 button {
   font: inherit;
+  font-family: inherit;
+}
+
+.sf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.1rem;
+  border-radius: var(--sf-radius-sm);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  border: 1px solid transparent;
   transition:
-    filter 130ms ease,
-    transform 130ms ease,
-    box-shadow 130ms ease,
-    opacity 130ms ease;
+    transform 120ms ease,
+    background-color 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
 }
 
-button:hover:not(:disabled) {
-  filter: brightness(1.12);
+.sf-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-button:active:not(:disabled) {
+.sf-btn:active:not(:disabled) {
   transform: translateY(1px);
-  filter: brightness(0.96);
+}
+
+.sf-btn--primary {
+  background: var(--sf-accent);
+  color: #0a0c10;
+}
+
+.sf-btn--primary:hover:not(:disabled) {
+  background: #6aabd9;
+}
+
+.sf-btn--ghost {
+  background: transparent;
+  color: var(--sf-text);
+  border-color: var(--sf-border-strong);
+}
+
+.sf-btn--ghost:hover:not(:disabled) {
+  background: var(--sf-panel);
+  border-color: var(--sf-muted);
+}
+
+.sf-btn--success {
+  background: var(--sf-success);
+  color: #04120c;
+}
+
+.sf-btn--success:hover:not(:disabled) {
+  filter: brightness(1.06);
 }
 
 button:focus-visible,
@@ -52,9 +113,11 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
-summary:focus-visible {
+summary:focus-visible,
+.sf-btn:focus-visible,
+.sf-tab:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--sf-ring) !important;
+  box-shadow: 0 0 0 3px var(--sf-ring);
 }
 
 /* ── Inputs ───────────────────────────────────────────────────────────────── */
@@ -62,7 +125,8 @@ input,
 textarea,
 select {
   font: inherit;
-  transition: border-color 130ms ease, box-shadow 130ms ease;
+  font-family: inherit;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
 input:focus,
@@ -74,25 +138,19 @@ select:focus {
 
 input::placeholder,
 textarea::placeholder {
-  color: #5f6877;
+  color: #5a616e;
 }
 
-/* ── Links and small interactive details ──────────────────────────────────── */
 a {
-  transition: color 130ms ease, opacity 130ms ease;
+  transition: color 120ms ease, opacity 120ms ease;
 }
 
 a:hover {
-  opacity: 0.92;
+  opacity: 0.9;
 }
 
 summary {
   cursor: pointer;
-  transition: color 130ms ease;
-}
-
-summary:hover {
-  color: #f3f6fb;
 }
 
 @keyframes sf-spin {
@@ -101,11 +159,19 @@ summary:hover {
   }
 }
 
-/* ── Cards fade in gently as lists load ───────────────────────────────────── */
-@keyframes sf-rise {
+@keyframes sf-fade {
   from {
     opacity: 0;
-    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sf-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -113,32 +179,170 @@ summary:hover {
   }
 }
 
-article {
-  animation: sf-rise 240ms ease both;
+@keyframes sf-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+.sf-fade-in {
+  animation: sf-fade 200ms ease both;
+}
+
+.sf-slide-up {
+  animation: sf-slide-up 220ms ease both;
+}
+
+.sf-skeleton {
+  background: linear-gradient(90deg, var(--sf-panel-soft) 0%, var(--sf-panel) 50%, var(--sf-panel-soft) 100%);
+  background-size: 200% 100%;
+  animation: sf-pulse 1.4s ease-in-out infinite;
+  border-radius: var(--sf-radius-sm);
+}
+
+.sf-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+
+.sf-badge--success {
+  color: var(--sf-success);
+  background: rgba(62, 207, 142, 0.1);
+  border-color: rgba(62, 207, 142, 0.25);
+}
+
+.sf-badge--warn {
+  color: var(--sf-warn);
+  background: rgba(230, 184, 77, 0.1);
+  border-color: rgba(230, 184, 77, 0.28);
+}
+
+.sf-badge--error {
+  color: var(--sf-error);
+  background: rgba(229, 115, 115, 0.1);
+  border-color: rgba(229, 115, 115, 0.28);
+}
+
+.sf-badge--neutral {
+  color: var(--sf-dim);
+  background: rgba(139, 145, 156, 0.1);
+  border-color: var(--sf-border);
+}
+
+.sf-badge--info {
+  color: var(--sf-accent-text);
+  background: rgba(91, 159, 212, 0.12);
+  border-color: rgba(91, 159, 212, 0.28);
+}
+
+.sf-panel {
+  background: var(--sf-card);
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  padding: 1rem 1.15rem;
+}
+
+.sf-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--sf-border);
+  margin-bottom: 1.25rem;
+  overflow-x: auto;
+}
+
+.sf-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--sf-dim);
+  padding: 0.65rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+
+.sf-tab:hover {
+  color: var(--sf-text);
+}
+
+.sf-tab[aria-selected="true"] {
+  color: var(--sf-text);
+  border-bottom-color: var(--sf-text);
+}
+
+.sf-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sf-log-drawer {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  background: var(--sf-panel-soft);
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  max-height: 420px;
+  overflow: auto;
+  padding: 0.85rem 1rem;
+}
+
+.sf-shell {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 5rem;
+}
+
+.sf-page-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
 }
 
-/* ── Scrollbars ───────────────────────────────────────────────────────────── */
 * {
   scrollbar-width: thin;
   scrollbar-color: #2c3440 transparent;
 }
 
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 *::-webkit-scrollbar-thumb {
   background: #2c3440;
   border-radius: 999px;
-  border: 2px solid #08090b;
+  border: 2px solid var(--sf-bg);
 }
 
 *::-webkit-scrollbar-thumb:hover {

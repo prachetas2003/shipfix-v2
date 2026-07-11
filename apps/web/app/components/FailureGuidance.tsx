@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import type { RunEventRow } from "../lib/api";
-import { buttonStyle, card, colors, mono } from "../lib/theme";
+import { Button } from "./ui/Button";
+import { colors, mono } from "../lib/theme";
 
 export type GuidanceAction =
   | "fix_repo_code"
@@ -116,26 +117,10 @@ export function FailureGuidance({
   };
 
   return (
-    <section
-      style={{
-        ...card,
-        marginTop: "1.5rem",
-        borderColor: colors.warnBorder,
-        background: colors.warnBg,
-      }}
-    >
+    <section className="sf-panel sf-slide-up" style={{ marginTop: "1.25rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-        <h3 style={{ margin: 0, fontSize: "1rem", color: colors.warnText }}>{guidance.title}</h3>
-        <span
-          style={{
-            fontSize: "0.72rem",
-            fontWeight: 800,
-            color: "#061014",
-            background: badge.color,
-            padding: "0.14rem 0.55rem",
-            borderRadius: 999,
-          }}
-        >
+        <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 600, color: colors.warnText }}>{guidance.title}</h3>
+        <span className={`sf-badge sf-badge--${guidance.action === "fix_repo_code" ? "warn" : "info"}`}>
           {badge.label}
         </span>
       </div>
@@ -158,9 +143,9 @@ export function FailureGuidance({
       )}
 
       {guidance.action === "update_credentials" && onUpdateCredentials && (
-        <button type="button" onClick={onUpdateCredentials} style={{ ...buttonStyle("primary"), marginBottom: 12 }}>
+        <Button onClick={onUpdateCredentials} style={{ marginBottom: 12 }}>
           Update {guidance.provider ?? "provider"} credentials
-        </button>
+        </Button>
       )}
 
       {guidance.showCursorPrompt && guidance.fixPrompt && (

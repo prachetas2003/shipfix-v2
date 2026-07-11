@@ -2,49 +2,40 @@
 
 import Link from "next/link";
 import type { AppSummary, LayerState, VerificationEntry } from "../lib/api";
-import { buildAppResourceDisplay } from "../lib/resourceDisplay";
+import { buildAppResourceDisplay, providerConsoleLabel } from "../lib/resourceDisplay";
 import { runStatusLabel } from "../lib/runLabels";
-import { buttonStyle, card, colors, mono, STATE_COLOR } from "../lib/theme";
-import { VerificationChecklist } from "./VerificationChecklist";
-import { providerConsoleLabel } from "../lib/resourceDisplay";
+import { colors, mono } from "../lib/theme";
+import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
+import { StatusDot } from "./ui/StatusDot";
 
-const STATUS_COLOR: Record<string, string> = {
-  succeeded: colors.success,
-  diagnosed: colors.warn,
-  failed: colors.error,
-  queued: colors.dim,
-  analyzing: colors.accentText,
-  planning: colors.accentText,
-  provisioning: colors.accentText,
-  deploying: colors.accentText,
-  verifying: colors.accentText,
-};
-
-const STATE_COPY: Record<LayerState, string> = {
-  live: "Live",
-  failed: "Failed",
-  provisioning: "In progress",
-  not_attempted: "Not deployed",
-};
+function badgeToneForRun(status: string | undefined): "success" | "warn" | "error" | "neutral" | "info" {
+  if (!status) return "neutral";
+  if (status === "succeeded") return "success";
+  if (status === "diagnosed") return "warn";
+  if (status === "failed") return "error";
+  return "info";
+}
 
 function MiniStatus({ label, state }: { label: string; state: LayerState }): React.ReactElement {
-  const color = STATE_COLOR[state] ?? colors.dim;
+  const tone = state === "live" ? "live" : state === "failed" ? "failed" : state === "provisioning" ? "provisioning" : "neutral";
+  const copy = state === "live" ? "Live" : state === "failed" ? "Failed" : state === "provisioning" ? "In progress" : "—";
   return (
     <div
       style={{
         border: `1px solid ${colors.border}`,
         background: colors.panelSoft,
         borderRadius: 8,
-        padding: "0.65rem 0.75rem",
-        minWidth: 150,
+        padding: "0.55rem 0.7rem",
+        minWidth: 120,
       }}
     >
-      <div style={{ color: colors.dim, fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0 }}>
+      <div style={{ color: colors.dim, fontSize: "0.68rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
         {label}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-        <span style={{ width: 8, height: 8, borderRadius: 999, background: color }} />
-        <strong style={{ fontSize: "0.86rem" }}>{STATE_COPY[state] ?? state}</strong>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 4 }}>
+        <StatusDot tone={tone} />
+        <span style={{ fontSize: "0.84rem", fontWeight: 500 }}>{copy}</span>
       </div>
     </div>
   );
@@ -52,94 +43,70 @@ function MiniStatus({ label, state }: { label: string; state: LayerState }): Rea
 
 export function AppCard({
   app,
-  verification = [],
 }: {
   app: AppSummary;
   verification?: VerificationEntry[];
 }): React.ReactElement {
   const run = app.latestRun;
-  const statusColor = run ? STATUS_COLOR[run.status] ?? colors.dim : colors.dim;
   const display = buildAppResourceDisplay({
     resources: app.resources,
     layers: app.layers,
-    verification,
+    verification: app.verification ?? [],
   });
   const live = Boolean(display?.fullStack.live);
   const lastDeployedAt = app.liveDeployment && run?.finishedAt ? run.finishedAt : run?.startedAt;
 
   return (
-    <article style={{ ...card, marginBottom: 14, padding: "1.1rem" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
-        <div style={{ flex: "1 1 420px", minWidth: 0 }}>
+    <article className="sf-panel sf-slide-up" style={{ padding: "1rem 1.1rem" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 360px", minWidth: 0 }}>
           <Link
             href={`/apps/${app.projectId}`}
-            style={{ textDecoration: "none", color: "inherit", fontFamily: mono, fontWeight: 700, fontSize: "1rem", wordBreak: "break-word" }}
+            style={{
+              textDecoration: "none",
+              color: "inherit",
+              fontFamily: mono,
+              fontWeight: 600,
+              fontSize: "0.95rem",
+              wordBreak: "break-word",
+            }}
           >
             {app.repoFullName}
           </Link>
-          <p style={{ margin: "0.35rem 0 0", color: colors.dim, fontSize: "0.86rem", lineHeight: 1.5 }}>
+          <p style={{ margin: "0.3rem 0 0", color: colors.dim, fontSize: "0.82rem", lineHeight: 1.45 }}>
             {live
-              ? "Live deployment verified across frontend, backend, and database."
+              ? "Verified live across frontend, backend, and database."
               : app.liveDeployment
-                ? "A previous live deployment is preserved while the latest run needs attention."
+                ? "Previous live deploy preserved; latest run needs attention."
                 : "No verified live deployment yet."}
           </p>
         </div>
-
-        {run && (
-          <span
-            style={{
-              fontSize: "0.74rem",
-              fontWeight: 800,
-              color: "#061014",
-              background: statusColor,
-              padding: "0.22rem 0.65rem",
-              borderRadius: 999,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {runStatusLabel(run.mode, run.status)}
-          </span>
-        )}
+        {run && <Badge tone={badgeToneForRun(run.status)}>{runStatusLabel(run.mode, run.status)}</Badge>}
       </div>
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: "1rem" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: "0.85rem" }}>
         <MiniStatus label="Frontend" state={display?.frontend?.state ?? "not_attempted"} />
-        <MiniStatus label="Backend API" state={display?.backend?.state ?? "not_attempted"} />
+        <MiniStatus label="API" state={display?.backend?.state ?? "not_attempted"} />
         <MiniStatus label="Database" state={display?.database?.state ?? "not_attempted"} />
       </div>
 
-      {verification.length > 0 && <VerificationChecklist verification={verification} compact />}
-
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: "1rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: "0.9rem" }}>
         {display?.frontend?.openAppUrl ? (
-          <a
-            href={display.frontend.openAppUrl}
-            target="_blank"
-            rel="noreferrer"
-            style={{ ...buttonStyle("success"), textDecoration: "none", display: "inline-block" }}
-          >
-            Open app
+          <a href={display.frontend.openAppUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+            <Button variant="success">Open app</Button>
           </a>
-        ) : (
-          <span style={{ color: colors.dim, fontSize: "0.85rem" }}>Frontend link appears after a verified deploy.</span>
-        )}
+        ) : null}
         {display?.frontend?.consoleUrl && (
-          <a
-            href={display.frontend.consoleUrl}
-            target="_blank"
-            rel="noreferrer"
-            style={{ ...buttonStyle("ghost"), textDecoration: "none", display: "inline-block" }}
-          >
-            {providerConsoleLabel(display.frontend.provider)}
+          <a href={display.frontend.consoleUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+            <Button variant="ghost">{providerConsoleLabel(display.frontend.provider)}</Button>
           </a>
         )}
         <Link href={`/apps/${app.projectId}`} style={{ textDecoration: "none" }}>
-          <button style={buttonStyle("ghost")}>View deployment details</button>
+          <Button variant="ghost">Details</Button>
         </Link>
         {lastDeployedAt && (
-          <span style={{ marginLeft: "auto", color: colors.dim, fontSize: "0.78rem" }}>
-            Last activity {new Date(lastDeployedAt).toLocaleString()}
+          <span style={{ marginLeft: "auto", color: colors.dim, fontSize: "0.75rem" }}>
+            {new Date(lastDeployedAt).toLocaleString()}
           </span>
         )}
       </div>

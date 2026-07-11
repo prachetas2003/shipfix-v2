@@ -4,11 +4,13 @@ import type { RunSnapshot } from "../lib/api";
 import { buildAppResourceDisplay } from "../lib/resourceDisplay";
 import { CurrentState } from "./CurrentState";
 import { VerificationChecklist } from "./VerificationChecklist";
-import { buttonStyle, card, colors } from "../lib/theme";
+import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
+import { Panel } from "./ui/Panel";
+import { colors } from "../lib/theme";
 
 /**
- * Honest, per-layer outcome with resource-type-aware links (frontend primary,
- * backend health URL, database as metadata).
+ * Quiet status-first outcome: badge + one sentence + stack + checks.
  */
 export function OutcomeBanner({
   status,
@@ -32,76 +34,72 @@ export function OutcomeBanner({
   const runStatus = status;
   const terminal = runStatus === "succeeded" || runStatus === "diagnosed" || runStatus === "failed";
   const hasAnyLiveResource = snapshot.resources.some((r) => r.status === "live");
+
   const headline = allLive
     ? "Your app is live"
     : isPlanRun && runStatus === "succeeded"
-      ? "Plan generated. App not deployed yet."
+      ? "Plan ready — not deployed yet"
       : runStatus === "failed"
         ? deployFailureHeadline(snapshot)
         : runStatus === "succeeded"
-          ? "Deploy succeeded with partial verification"
+          ? "Deploy finished with partial verification"
           : runStatus === "diagnosed" && hasAnyLiveResource
             ? "Deploy needs attention"
             : terminal
               ? "Deploy finished without full verification"
               : hasAnyLiveResource
-                ? "Part of the stack is live, but verification is not complete."
-                : "App not deployed yet.";
+                ? "Part of the stack is live"
+                : "Deployment in progress";
 
-  const tone = allLive
-    ? { border: colors.successDeep, bg: colors.successBg, text: colors.successText }
-    : status === "failed" && !hasAnyLiveResource
-      ? { border: colors.errorBorder, bg: colors.errorBg, text: colors.errorText }
-      : { border: colors.warnBorder, bg: colors.warnBg, text: colors.warnText };
+  const badgeTone = allLive
+    ? "success"
+    : runStatus === "failed"
+      ? "error"
+      : runStatus === "diagnosed" || (!allLive && terminal)
+        ? "warn"
+        : "info";
+
+  const badgeLabel = allLive
+    ? "Live"
+    : runStatus === "failed"
+      ? "Failed"
+      : runStatus === "diagnosed"
+        ? "Needs attention"
+        : terminal
+          ? "Partial"
+          : "In progress";
 
   const nextAction =
-    (!allLive && snapshot.diagnoses?.[0]?.action) ||
-    computeNextAction(display, status);
+    (!allLive && snapshot.diagnoses?.[0]?.action) || computeNextAction(display, status);
 
   return (
-    <section style={{ marginTop: "1.5rem" }}>
-      <div
-        style={{
-          ...card,
-          borderColor: tone.border,
-          background: tone.bg,
-          padding: allLive ? "1.35rem" : "1rem",
-          marginBottom: "0.9rem",
-        }}
-      >
+    <section className="sf-slide-up" style={{ marginBottom: "1.25rem" }}>
+      <Panel>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 460px" }}>
-            <p style={{ margin: 0, color: tone.text, fontSize: "0.82rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0 }}>
-              {allLive ? "Verified deployment" : "Deployment outcome"}
-            </p>
-            <h2 style={{ margin: "0.35rem 0 0", color: tone.text, fontSize: allLive ? "1.65rem" : "1.15rem", letterSpacing: 0 }}>
+          <div style={{ flex: "1 1 420px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <Badge tone={badgeTone}>{badgeLabel}</Badge>
+            </div>
+            <h2 style={{ margin: "0.65rem 0 0", fontSize: "1.25rem", fontWeight: 600, letterSpacing: "-0.02em" }}>
               {headline}
             </h2>
-            <p style={{ margin: "0.55rem 0 0", color: tone.text, opacity: 0.9, lineHeight: 1.55 }}>
-              {allLive
-                ? "ShipFix created the database, deployed the backend and frontend, wired the environment variables, and verified the live app."
-                : nextAction}
-            </p>
+            {!allLive && nextAction && (
+              <p style={{ margin: "0.45rem 0 0", color: colors.dim, lineHeight: 1.55, fontSize: "0.9rem" }}>
+                {nextAction}
+              </p>
+            )}
+            {allLive && (
+              <p style={{ margin: "0.45rem 0 0", color: colors.dim, lineHeight: 1.55, fontSize: "0.9rem" }}>
+                Database, backend, and frontend are deployed and verified.
+              </p>
+            )}
           </div>
           {display.frontend?.openAppUrl && (
-            <a
-              href={display.frontend.openAppUrl}
-              target="_blank"
-              rel="noreferrer"
-              style={{ ...buttonStyle("success"), textDecoration: "none", display: "inline-block" }}
-            >
-              Open app
+            <a href={display.frontend.openAppUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+              <Button variant="success">Open app</Button>
             </a>
           )}
         </div>
-
-        {allLive && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginTop: "1rem" }}>
-            <SummaryItem label="Frontend" value="Vercel app is live" />
-            <SummaryItem label="Backend" value={display.backend?.healthCheckPassed ? "Render health check passed" : "Render service deployed"} />
-            <SummaryItem label="Database" value="Neon Postgres verified" />
-          </div>
-        )}
 
         {!allLive && (snapshot.diagnoses?.length ?? 0) > 0 && (
           <ul style={{ listStyle: "none", margin: "1rem 0 0", padding: 0, display: "grid", gap: 8 }}>
@@ -111,29 +109,26 @@ export function OutcomeBanner({
                 style={{
                   border: `1px solid ${colors.border}`,
                   borderRadius: 8,
-                  padding: "0.7rem 0.8rem",
-                  background: "rgba(0,0,0,0.12)",
+                  padding: "0.65rem 0.75rem",
+                  background: colors.panelSoft,
                 }}
               >
-                <div style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", color: tone.text, opacity: 0.75 }}>
+                <div style={{ fontSize: "0.7rem", fontWeight: 600, textTransform: "uppercase", color: colors.dim, letterSpacing: "0.04em" }}>
                   {diagnosisTitle(diag.code)}
-                  {diag.fromServiceId && diag.toServiceId
-                    ? ` · ${diag.fromServiceId} → ${diag.toServiceId}`
-                    : diag.serviceId
-                      ? ` · ${diag.serviceId}`
-                      : diag.managedId
-                        ? ` · ${diag.managedId}`
-                        : ""}
                 </div>
-                <p style={{ margin: "0.35rem 0 0", color: tone.text, lineHeight: 1.5, fontSize: "0.9rem" }}>{diag.action}</p>
+                <p style={{ margin: "0.3rem 0 0", color: colors.muted, lineHeight: 1.5, fontSize: "0.88rem" }}>{diag.action}</p>
               </li>
             ))}
           </ul>
         )}
 
-        <VerificationChecklist verification={snapshot.verification} plan={snapshot.plan} />
+        <div style={{ marginTop: "1rem" }}>
+          <VerificationChecklist verification={snapshot.verification} plan={snapshot.plan} />
+        </div>
+      </Panel>
+      <div style={{ marginTop: "0.85rem" }}>
+        <CurrentState display={display} />
       </div>
-      <CurrentState display={display} />
     </section>
   );
 }
@@ -155,17 +150,6 @@ function diagnosisTitle(code: string): string {
   }
 }
 
-function SummaryItem({ label, value }: { label: string; value: string }): React.ReactElement {
-  return (
-    <div style={{ border: `1px solid ${colors.successDeep}`, borderRadius: 8, background: "rgba(5,46,31,0.45)", padding: "0.75rem" }}>
-      <div style={{ color: colors.successText, opacity: 0.75, fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0 }}>
-        {label}
-      </div>
-      <div style={{ color: colors.successText, marginTop: 4, fontWeight: 700, fontSize: "0.88rem" }}>{value}</div>
-    </div>
-  );
-}
-
 const IN_PROGRESS_STATUSES = new Set([
   "queued",
   "analyzing",
@@ -183,33 +167,26 @@ function computeNextAction(
   if (display.fullStack.live) return null;
   if (IN_PROGRESS_STATUSES.has(status)) {
     return status === "queued"
-      ? "The run is queued and waiting for the deployment worker to pick it up."
-      : "The run is still in progress — the timeline below updates live.";
+      ? "Queued — waiting for the worker."
+      : "Still running — activity updates live.";
   }
-  if (status === "succeeded") {
-    return "Connect the required providers, then deploy this plan.";
-  }
-  if (display.database && display.database.state === "failed") {
-    return "The database was not created, so ShipFix did not deploy the backend. Check Neon setup and retry deploy.";
-  }
-  if (display.backend && display.backend.state === "failed") {
-    return "Render could not deploy the backend. Open technical details for the build or provider error, then retry deploy.";
-  }
-  if (display.frontend && display.frontend.state === "failed") {
-    return "Vercel could not deploy the frontend. Check GitHub access or build output, then retry deploy.";
-  }
-  if (status === "failed") {
-    return "No live result yet. Review the timeline, fix the flagged setup or repo issue, and retry deploy.";
-  }
-  return "The app was not marked live because verification did not pass. Review the failed check below.";
+  if (status === "succeeded") return "Connect providers, then deploy this plan.";
+  if (display.database?.state === "failed") return "Database was not created. Check Neon and retry.";
+  if (display.backend?.state === "failed") return "Backend deploy failed. Check Render logs, then retry.";
+  if (display.frontend?.state === "failed") return "Frontend deploy failed. Update Vercel credentials or fix the build, then retry.";
+  if (status === "failed") return "Review the guidance below, fix the issue, and retry.";
+  return "Verification did not pass. Review the failed check.";
 }
 
 function deployFailureHeadline(snapshot: RunSnapshot): string {
-  const failedDb = snapshot.resources.some((r) => r.role === "database" && r.status === "failed");
-  const failedBackend = snapshot.resources.some((r) => r.role === "backend" && r.status === "failed");
-  const failedFrontend = snapshot.resources.some((r) => r.role === "frontend" && r.status === "failed");
-  if (failedDb) return "Deploy failed during database provisioning.";
-  if (failedBackend) return "Backend deploy failed.";
-  if (failedFrontend) return "Frontend deploy failed.";
-  return "Deploy did not produce a live app.";
+  if (snapshot.resources.some((r) => r.role === "database" && r.status === "failed")) {
+    return "Failed during database provisioning";
+  }
+  if (snapshot.resources.some((r) => r.role === "backend" && r.status === "failed")) {
+    return "Backend deploy failed";
+  }
+  if (snapshot.resources.some((r) => r.role === "frontend" && r.status === "failed")) {
+    return "Frontend deploy failed";
+  }
+  return "Deploy did not produce a live app";
 }

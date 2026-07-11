@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { RunEventRow } from "../lib/api";
 import { translateEvent, type FriendlyTone } from "../lib/logTranslate";
 import { card, colors, h2, mono } from "../lib/theme";
+import { Button } from "./ui/Button";
 
 const TONE_COLOR: Record<FriendlyTone, string> = {
   info: colors.dim,
@@ -66,20 +67,13 @@ export function Timeline({ events }: { events: RunEventRow[] }): React.ReactElem
             Human-readable deployment events. Raw provider output stays under technical details.
           </p>
         </div>
-        <button
+        <Button
+          variant="ghost"
           onClick={() => setShowTech((v) => !v)}
-          style={{
-            background: colors.panel,
-            color: colors.text,
-            border: `1px solid ${colors.borderStrong}`,
-            borderRadius: 8,
-            padding: "0.4rem 0.7rem",
-            fontSize: "0.78rem",
-            cursor: "pointer",
-          }}
+          style={{ padding: "0.35rem 0.7rem", fontSize: "0.78rem" }}
         >
           {showTech ? "Hide technical details" : "Show technical details"}
-        </button>
+        </Button>
       </div>
       <ol style={{ listStyle: "none", padding: 0, margin: 0, border: `1px solid ${colors.border}`, borderRadius: 8, overflow: "hidden" }}>
         {events.map((ev) => {

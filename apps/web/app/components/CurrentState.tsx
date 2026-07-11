@@ -3,14 +3,11 @@
 import type { ReactNode } from "react";
 import type { AppResourceDisplay } from "../lib/resourceDisplay";
 import { fullStackSummary, providerConsoleLabel } from "../lib/resourceDisplay";
-import { buttonStyle, card, colors, h2, mono, STATE_COLOR } from "../lib/theme";
-
-const STATE_LABEL: Record<string, string> = {
-  live: "Live",
-  failed: "Failed",
-  provisioning: "In progress",
-  not_attempted: "Not deployed",
-};
+import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
+import { Panel } from "./ui/Panel";
+import { StatusDot } from "./ui/StatusDot";
+import { colors, h2, mono } from "../lib/theme";
 
 function providerName(provider: string | null | undefined): string {
   if (!provider) return "";
@@ -20,34 +17,30 @@ function providerName(provider: string | null | undefined): string {
   return provider;
 }
 
-function StatusPill({ state }: { state: string }): React.ReactElement {
-  const color = STATE_COLOR[state] ?? colors.dim;
-  return (
-    <span
-      style={{
-        color: "#061014",
-        background: color,
-        fontSize: "0.72rem",
-        fontWeight: 800,
-        padding: "0.14rem 0.58rem",
-        borderRadius: 999,
-      }}
-    >
-      {STATE_LABEL[state] ?? state}
-    </span>
-  );
+function badgeTone(state: string): "success" | "warn" | "error" | "neutral" | "info" {
+  if (state === "live") return "success";
+  if (state === "failed") return "error";
+  if (state === "provisioning") return "warn";
+  return "neutral";
+}
+
+function stateLabel(state: string): string {
+  if (state === "live") return "Live";
+  if (state === "failed") return "Failed";
+  if (state === "provisioning") return "In progress";
+  return "Not deployed";
 }
 
 function MetaLine({ label, value }: { label: string; value: string }): React.ReactElement {
   return (
-    <p style={{ margin: "0.28rem 0", fontSize: "0.82rem", color: colors.muted }}>
+    <p style={{ margin: "0.25rem 0", fontSize: "0.8rem", color: colors.muted }}>
       <span style={{ color: colors.dim }}>{label}: </span>
       <code style={{ fontFamily: mono, wordBreak: "break-all", color: colors.text }}>{value}</code>
     </p>
   );
 }
 
-function ServicePanel({
+function ServiceNode({
   title,
   provider,
   state,
@@ -60,95 +53,75 @@ function ServicePanel({
   description: string;
   children?: ReactNode;
 }): React.ReactElement {
-  const color = STATE_COLOR[state] ?? colors.dim;
   return (
     <div
       style={{
-        border: `1px solid ${state === "live" ? colors.successDeep : colors.border}`,
-        borderLeft: `4px solid ${color}`,
-        borderRadius: 8,
+        border: `1px solid ${colors.border}`,
+        borderRadius: 10,
         background: colors.panelSoft,
-        padding: "0.9rem 1rem",
+        padding: "0.85rem 1rem",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <strong style={{ fontSize: "0.98rem" }}>{title}</strong>
-        <StatusPill state={state} />
-        {provider && <span style={{ color: colors.dim, fontSize: "0.8rem" }}>{providerName(provider)}</span>}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <StatusDot tone={state === "live" ? "live" : state === "failed" ? "failed" : state === "provisioning" ? "provisioning" : "neutral"} />
+        <strong style={{ fontSize: "0.92rem", fontWeight: 600 }}>{title}</strong>
+        <Badge tone={badgeTone(state)}>{stateLabel(state)}</Badge>
+        {provider && <span style={{ color: colors.dim, fontSize: "0.78rem" }}>{providerName(provider)}</span>}
       </div>
-      <p style={{ margin: "0.45rem 0 0", fontSize: "0.84rem", color: colors.dim, lineHeight: 1.55 }}>
-        {description}
-      </p>
-      {children && <div style={{ marginTop: "0.65rem" }}>{children}</div>}
+      <p style={{ margin: "0.4rem 0 0", fontSize: "0.82rem", color: colors.dim, lineHeight: 1.5 }}>{description}</p>
+      {children && <div style={{ marginTop: "0.6rem" }}>{children}</div>}
     </div>
   );
 }
 
-/**
- * Resource-type-aware "Current state": frontend is the main app; backend and
- * database are supporting infrastructure with appropriate link behavior.
- */
 export function CurrentState({ display }: { display: AppResourceDisplay }): React.ReactElement {
   const { frontend, backend, database } = display;
 
   return (
-    <section style={card}>
+    <Panel>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <h2 style={h2}>Current state</h2>
-        <span style={{ color: display.fullStack.live ? colors.success : colors.warn, fontWeight: 800, fontSize: "0.86rem" }}>
-          {display.fullStack.live ? "Full-stack live" : "Not proven live yet"}
-        </span>
+        <h2 style={h2}>Stack</h2>
+        <Badge tone={display.fullStack.live ? "success" : "warn"}>
+          {display.fullStack.live ? "Full-stack live" : "Not proven live"}
+        </Badge>
       </div>
 
-      <div style={{ display: "grid", gap: 12, marginTop: "1rem" }}>
+      <div style={{ display: "grid", gap: 10, marginTop: "0.9rem" }}>
         {frontend && (
-          <ServicePanel
-            title="Frontend app"
+          <ServiceNode
+            title="Frontend"
             provider={frontend.provider}
             state={frontend.state}
-            description="This is the user-facing app link. It should load in a browser and call the backend through the configured API URL."
+            description="User-facing app."
           >
             {frontend.openAppUrl ? (
-              <>
-                <a
-                  href={frontend.openAppUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ ...buttonStyle("success"), textDecoration: "none", display: "inline-block" }}
-                >
-                    Open app
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <a href={frontend.openAppUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                  <Button variant="success">Open app</Button>
                 </a>
                 {frontend.consoleUrl && (
-                  <a
-                    href={frontend.consoleUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ ...buttonStyle("ghost"), textDecoration: "none", display: "inline-block", marginLeft: 8 }}
-                  >
-                    {providerConsoleLabel(frontend.provider)}
+                  <a href={frontend.consoleUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                    <Button variant="ghost">{providerConsoleLabel(frontend.provider)}</Button>
                   </a>
                 )}
-                <p style={{ margin: "0.55rem 0 0", fontSize: "0.78rem", fontFamily: mono, color: colors.dim, wordBreak: "break-all" }}>
-                  {frontend.openAppUrl}
-                </p>
-              </>
+              </div>
             ) : (
-              <p style={{ margin: 0, color: colors.dim, fontSize: "0.84rem" }}>No frontend URL recorded yet.</p>
+              <p style={{ margin: 0, color: colors.dim, fontSize: "0.82rem" }}>No URL yet.</p>
             )}
-          </ServicePanel>
+          </ServiceNode>
         )}
 
         {backend && (
-          <ServicePanel
+          <ServiceNode
             title="Backend API"
             provider={backend.provider}
             state={backend.state}
-            description='This powers your frontend. The API root path can show "Cannot GET /" and still be healthy if the health check passes.'
+            description="API for the frontend."
           >
-            {backend.baseUrl && <MetaLine label="Service URL" value={backend.baseUrl} />}
-            {backend.healthCheckUrl ? (
-              <p style={{ margin: "0.28rem 0", fontSize: "0.82rem", color: colors.muted }}>
-                <span style={{ color: colors.dim }}>Health check: </span>
+            {backend.baseUrl && <MetaLine label="URL" value={backend.baseUrl} />}
+            {backend.healthCheckUrl && (
+              <p style={{ margin: "0.25rem 0", fontSize: "0.8rem", color: colors.muted }}>
+                <span style={{ color: colors.dim }}>Health: </span>
                 {backend.healthCheckPassed ? (
                   <a
                     href={backend.healthCheckUrl}
@@ -162,61 +135,39 @@ export function CurrentState({ display }: { display: AppResourceDisplay }): Reac
                   <code style={{ fontFamily: mono, wordBreak: "break-all" }}>{backend.healthCheckUrl}</code>
                 )}
                 {backend.healthCheckPassed && (
-                  <span style={{ color: colors.success, marginLeft: 8, fontWeight: 700 }}>passed</span>
+                  <span style={{ color: colors.success, marginLeft: 8, fontWeight: 600 }}>passed</span>
                 )}
               </p>
-            ) : backend.state === "live" ? (
-              <p style={{ margin: 0, color: colors.dim, fontSize: "0.84rem" }}>Health check URL was not recorded for this run.</p>
-            ) : null}
+            )}
             {backend.consoleUrl && (
-              <p style={{ margin: "0.55rem 0 0" }}>
-                <a
-                  href={backend.consoleUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ ...buttonStyle("ghost"), textDecoration: "none", display: "inline-block" }}
-                  >
-                    {providerConsoleLabel(backend.provider)}
-                  </a>
-                </p>
-              )}
-            </ServicePanel>
-          )}
+              <a href={backend.consoleUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                <Button variant="ghost">{providerConsoleLabel(backend.provider)}</Button>
+              </a>
+            )}
+          </ServiceNode>
+        )}
 
-          {database && (
-            <ServicePanel
-              title="Database"
-              provider={database.provider}
-              state={database.state}
-              description="This is infrastructure for your backend, not a website. ShipFix stores the connection string securely and only shows safe metadata."
-            >
-              {database.host && <MetaLine label="Host" value={database.host} />}
-              {database.exposesEnv && <MetaLine label="Backend env" value={database.exposesEnv} />}
-              <p style={{ margin: "0.35rem 0 0", fontSize: "0.82rem", color: colors.dim }}>
-                Connection string is sealed and never shown in the browser.
-              </p>
-              {database.consoleUrl && (
-                <p style={{ margin: "0.55rem 0 0" }}>
-                  <a
-                    href={database.consoleUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ ...buttonStyle("ghost"), textDecoration: "none", display: "inline-block" }}
-                  >
-                    {providerConsoleLabel(database.provider)}
-                  </a>
-                </p>
-              )}
-          </ServicePanel>
+        {database && (
+          <ServiceNode
+            title="Database"
+            provider={database.provider}
+            state={database.state}
+            description="Postgres for the backend. Connection string stays sealed."
+          >
+            {database.host && <MetaLine label="Host" value={database.host} />}
+            {database.exposesEnv && <MetaLine label="Env" value={database.exposesEnv} />}
+            {database.consoleUrl && (
+              <a href={database.consoleUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                <Button variant="ghost">{providerConsoleLabel(database.provider)}</Button>
+              </a>
+            )}
+          </ServiceNode>
         )}
       </div>
 
-      <div style={{ borderTop: `1px solid ${colors.border}`, marginTop: "1rem", paddingTop: "0.85rem" }}>
-        <p style={{ margin: 0, color: colors.muted, fontSize: "0.9rem", lineHeight: 1.55 }}>
-          <strong style={{ color: colors.text }}>Full-stack result: </strong>
-          {fullStackSummary(display)}
-        </p>
-      </div>
-    </section>
+      <p style={{ margin: "0.9rem 0 0", color: colors.muted, fontSize: "0.85rem", lineHeight: 1.5 }}>
+        {fullStackSummary(display)}
+      </p>
+    </Panel>
   );
 }

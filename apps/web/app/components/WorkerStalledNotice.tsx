@@ -1,6 +1,7 @@
 "use client";
 
-import { card, colors } from "../lib/theme";
+import { colors } from "../lib/theme";
+import { Panel } from "./ui/Panel";
 
 /**
  * Shown when a run sits in "queued" with no timeline events past the stall
@@ -10,23 +11,23 @@ import { card, colors } from "../lib/theme";
 export function WorkerStalledNotice({ show }: { show: boolean }): React.ReactElement | null {
   if (!show) return null;
   return (
-    <div
+    <Panel
       role="alert"
+      className="sf-fade-in"
       style={{
-        ...card,
         borderColor: colors.warnBorder,
         background: colors.warnBg,
         color: colors.warnText,
         marginTop: "1rem",
       }}
     >
-      <strong style={{ display: "block", fontSize: "0.95rem" }}>
+      <strong style={{ display: "block", fontSize: "0.95rem", fontWeight: 600 }}>
         Deployment worker is not running or not reachable.
       </strong>
       <p style={{ margin: "0.45rem 0 0", lineHeight: 1.55, fontSize: "0.88rem", opacity: 0.9 }}>
-        The run is queued, but nothing is picking it up. The run will continue automatically
-        once the worker is back — no progress was lost.
+        The run is queued, but nothing is picking it up. The run will continue automatically once the
+        worker is back — no progress was lost.
       </p>
-    </div>
+    </Panel>
   );
 }

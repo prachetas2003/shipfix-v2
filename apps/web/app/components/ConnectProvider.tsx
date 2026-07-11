@@ -3,7 +3,10 @@
 import { useState } from "react";
 import { api } from "../lib/api";
 import { ENCRYPTION_NOTE, providerGuide, type ProviderId } from "../lib/providerGuide";
-import { buttonStyle, card, colors, inputStyle, mono } from "../lib/theme";
+import { colors, inputStyle, mono } from "../lib/theme";
+import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
+import { Panel } from "./ui/Panel";
 
 /**
  * Guided credential card for a single provider: explains what the key is for,
@@ -61,53 +64,42 @@ export function ConnectProvider({
   };
 
   return (
-    <div
+    <Panel
+      className="sf-slide-up"
       style={{
-        ...card,
-        marginBottom: 12,
-        borderColor: connected && !editing ? colors.successDeep : colors.borderStrong,
-        background: connected && !editing ? "rgba(5,46,31,0.38)" : colors.card,
+        marginBottom: 10,
+        borderColor: connected && !editing ? colors.successDeep : colors.border,
+        background: connected && !editing ? colors.successBg : colors.card,
       }}
     >
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 420px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <strong style={{ fontSize: "1rem" }}>{guide.name}</strong>
+            <strong style={{ fontSize: "0.95rem", fontWeight: 600 }}>{guide.name}</strong>
             <span style={{ color: colors.dim, fontSize: "0.82rem" }}>{guide.blurb}</span>
           </div>
-          {reason && <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", color: colors.muted }}>{reason}</p>}
-          <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", color: colors.dim, lineHeight: 1.55 }}>{guide.whatFor}</p>
+          {reason && <p style={{ margin: "0.45rem 0 0", fontSize: "0.85rem", color: colors.muted }}>{reason}</p>}
+          <p style={{ margin: "0.45rem 0 0", fontSize: "0.85rem", color: colors.dim, lineHeight: 1.55 }}>{guide.whatFor}</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span
-            style={{
-              fontSize: "0.72rem",
-              fontWeight: 800,
-              color: "#061014",
-              background: connected ? colors.success : colors.warn,
-              padding: "0.18rem 0.6rem",
-              borderRadius: 999,
-            }}
-          >
-            {connected ? "Connected" : "Setup needed"}
-          </span>
+          <Badge tone={connected ? "success" : "warn"}>{connected ? "Connected" : "Setup needed"}</Badge>
           {connected && allowUpdate && !editing && (
-            <button type="button" onClick={() => setEditing(true)} style={buttonStyle("ghost")}>
+            <Button type="button" variant="ghost" onClick={() => setEditing(true)}>
               Update credentials
-            </button>
+            </Button>
           )}
           {connected && allowUpdate && editing && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => {
                 setEditing(false);
                 setErr(null);
                 setValue("");
               }}
-              style={buttonStyle("ghost")}
             >
               Cancel
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -118,7 +110,7 @@ export function ConnectProvider({
             <p style={{ margin: 0, fontSize: "0.85rem", color: colors.muted, lineHeight: 1.6 }}>
               {connected ? "Paste a new " : "Create an account-level "}
               {guide.credentialLabel.toLowerCase()} at{" "}
-              <a href={guide.tokenUrl} target="_blank" rel="noreferrer" style={{ color: colors.accentText, fontWeight: 700 }}>
+              <a href={guide.tokenUrl} target="_blank" rel="noreferrer" style={{ color: colors.accentText, fontWeight: 600 }}>
                 {guide.tokenUrlLabel}
               </a>
               . {guide.scope}
@@ -128,10 +120,18 @@ export function ConnectProvider({
           {guide.extraSteps?.map((step) => (
             <div
               key={step.title}
-              style={{ marginTop: 10, padding: "0.75rem", background: colors.warnBg, border: `1px solid ${colors.warnBorder}`, borderRadius: 8 }}
+              style={{
+                marginTop: 10,
+                padding: "0.75rem",
+                background: colors.warnBg,
+                border: `1px solid ${colors.warnBorder}`,
+                borderRadius: 8,
+              }}
             >
               <strong style={{ fontSize: "0.85rem", color: colors.warnText }}>{step.title}</strong>
-              <p style={{ margin: "0.3rem 0 0", fontSize: "0.82rem", color: colors.warnText, opacity: 0.92, lineHeight: 1.5 }}>{step.detail}</p>
+              <p style={{ margin: "0.3rem 0 0", fontSize: "0.82rem", color: colors.warnText, opacity: 0.92, lineHeight: 1.5 }}>
+                {step.detail}
+              </p>
               {step.url && (
                 <a href={step.url} target="_blank" rel="noreferrer" style={{ color: colors.accentText, fontSize: "0.82rem" }}>
                   {step.urlLabel ?? step.url}
@@ -153,22 +153,16 @@ export function ConnectProvider({
               <input
                 key={field.field}
                 value={optionalValues[field.field] ?? ""}
-                onChange={(e) =>
-                  setOptionalValues((prev) => ({ ...prev, [field.field]: e.target.value }))
-                }
+                onChange={(e) => setOptionalValues((prev) => ({ ...prev, [field.field]: e.target.value }))}
                 placeholder={field.placeholder}
                 spellCheck={false}
                 style={{ ...inputStyle, flex: 1, minWidth: 220, fontFamily: mono, padding: "0.55rem 0.75rem" }}
                 aria-label={`${guide.name} ${field.label}`}
               />
             ))}
-            <button
-              onClick={() => void connect()}
-              disabled={saving || value.trim().length === 0}
-              style={buttonStyle("primary", saving || value.trim().length === 0)}
-            >
-              {saving ? "Saving..." : connected ? `Update ${guide.name}` : `Connect ${guide.name}`}
-            </button>
+            <Button onClick={() => void connect()} disabled={saving || value.trim().length === 0}>
+              {saving ? "Saving…" : connected ? `Update ${guide.name}` : `Connect ${guide.name}`}
+            </Button>
           </div>
           <p style={{ margin: "0.55rem 0 0", fontSize: "0.76rem", color: colors.dim, lineHeight: 1.45 }}>{ENCRYPTION_NOTE}</p>
         </>
@@ -180,6 +174,6 @@ export function ConnectProvider({
 
       {msg && <p style={{ margin: "0.55rem 0 0", color: colors.success, fontSize: "0.82rem" }}>{msg}</p>}
       {err && <p style={{ margin: "0.55rem 0 0", color: colors.error, fontSize: "0.82rem" }}>{err}</p>}
-    </div>
+    </Panel>
   );
 }
