@@ -26,6 +26,7 @@ export function AppNav({
 }): React.ReactElement {
   return (
     <header
+      className="sf-nav"
       style={{
         display: "flex",
         alignItems: "center",
@@ -59,12 +60,10 @@ export function PageHeader({
       <div style={{ flex: "1 1 480px", minWidth: 0 }}>
         {eyebrow}
         <h1
+          className="sf-display"
           style={{
-            fontSize: "1.55rem",
-            fontWeight: 600,
+            fontSize: "1.7rem",
             margin: eyebrow ? "0.5rem 0 0" : 0,
-            letterSpacing: "-0.02em",
-            lineHeight: 1.25,
           }}
         >
           {title}

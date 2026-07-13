@@ -2,47 +2,95 @@
 
 :root {
   color-scheme: dark;
-  --sf-bg: #0c0d10;
+  --sf-bg: #090a0d;
   --sf-card: #12141a;
   --sf-panel: #161922;
   --sf-panel-soft: #0e1015;
-  --sf-border: #23262f;
-  --sf-border-strong: #2e3340;
-  --sf-text: #eceef2;
-  --sf-dim: #8b919c;
-  --sf-muted: #b4bac6;
+  --sf-border: #262a34;
+  --sf-border-strong: #343a48;
+  --sf-text: #f3f5f8;
+  --sf-dim: #8e95a3;
+  --sf-muted: #c0c6d2;
   --sf-accent: #5b9fd4;
-  --sf-accent-text: #8ec5e8;
-  --sf-ring: rgba(91, 159, 212, 0.32);
+  --sf-accent-text: #9fd0ef;
+  --sf-ring: rgba(91, 159, 212, 0.34);
   --sf-success: #3ecf8e;
   --sf-warn: #e6b84d;
   --sf-error: #e57373;
   --sf-radius: 10px;
   --sf-radius-sm: 8px;
   --sf-space: 8px;
+  --sf-display: var(--font-syne), var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --sf-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --sf-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  background-color: var(--sf-bg);
 }
 
 body {
+  position: relative;
   min-height: 100vh;
   margin: 0;
-  background-color: var(--sf-bg);
-  background-image:
-    radial-gradient(circle, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-  background-size: 24px 24px;
-  background-attachment: fixed;
+  background: transparent;
   color: var(--sf-text);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--sf-sans);
+  font-feature-settings: "ss01" on, "cv11" on;
+}
+
+/* Canvas aurora — painted behind UI */
+.sf-atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.sf-atmosphere__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+body > *:not(.sf-atmosphere) {
+  position: relative;
+  z-index: 1;
 }
 
 ::selection {
   background: rgba(91, 159, 212, 0.35);
   color: var(--sf-text);
+}
+
+/* Display type — sharper contrast against calm UI sans */
+.sf-display {
+  font-family: var(--sf-display);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.15;
+  color: #fafbfc;
+}
+
+.sf-brand-word {
+  font-family: var(--sf-display);
+  font-weight: 700;
+  letter-spacing: -0.045em;
+  font-size: 1.05rem;
+  color: #fafbfc;
+}
+
+.sf-brand-tag {
+  font-family: var(--sf-sans);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sf-dim);
 }
 
 /* ── Buttons (kit uses .sf-btn; keep native button calm) ─────────────────── */
@@ -61,13 +109,15 @@ button {
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.2;
+  letter-spacing: -0.01em;
   cursor: pointer;
   border: 1px solid transparent;
   transition:
     transform 120ms ease,
     background-color 120ms ease,
     border-color 120ms ease,
-    opacity 120ms ease;
+    opacity 120ms ease,
+    box-shadow 160ms ease;
 }
 
 .sf-btn:disabled {
@@ -82,6 +132,7 @@ button {
 .sf-btn--primary {
   background: var(--sf-accent);
   color: #0a0c10;
+  box-shadow: 0 0 0 1px rgba(91, 159, 212, 0.25);
 }
 
 .sf-btn--primary:hover:not(:disabled) {
@@ -95,7 +146,7 @@ button {
 }
 
 .sf-btn--ghost:hover:not(:disabled) {
-  background: var(--sf-panel);
+  background: rgba(22, 25, 34, 0.85);
   border-color: var(--sf-muted);
 }
 
@@ -105,7 +156,7 @@ button {
 }
 
 .sf-btn--success:hover:not(:disabled) {
-  filter: brightness(1.06);
+  background: #4ad89a;
 }
 
 button:focus-visible,
@@ -190,11 +241,11 @@ summary {
 }
 
 .sf-fade-in {
-  animation: sf-fade 200ms ease both;
+  animation: sf-fade 220ms ease both;
 }
 
 .sf-slide-up {
-  animation: sf-slide-up 220ms ease both;
+  animation: sf-slide-up 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .sf-skeleton {
@@ -249,10 +300,12 @@ summary {
 }
 
 .sf-panel {
-  background: var(--sf-card);
+  background: rgba(18, 20, 26, 0.72);
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);
   padding: 1rem 1.15rem;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .sf-tabs {
@@ -285,6 +338,7 @@ summary {
 .sf-tab[aria-selected="true"] {
   color: var(--sf-text);
   border-bottom-color: var(--sf-text);
+  font-weight: 600;
 }
 
 .sf-status-dot {
@@ -295,10 +349,10 @@ summary {
 }
 
 .sf-log-drawer {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--sf-mono);
   font-size: 0.75rem;
   line-height: 1.55;
-  background: var(--sf-panel-soft);
+  background: rgba(14, 16, 21, 0.9);
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);
   max-height: 420px;
@@ -310,6 +364,7 @@ summary {
   max-width: 980px;
   margin: 0 auto;
   padding: 2rem 1.5rem 5rem;
+  position: relative;
 }
 
 .sf-page-header {
@@ -320,12 +375,24 @@ summary {
   margin-bottom: 1.5rem;
 }
 
+.sf-page-header h1 {
+  font-family: var(--sf-display);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: #fafbfc;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+  .sf-fade-in,
+  .sf-slide-up,
+  .sf-skeleton {
+    animation: none !important;
+  }
+
+  .sf-btn,
+  .sf-tab,
+  .sf-badge {
+    transition: none !important;
   }
 }
 

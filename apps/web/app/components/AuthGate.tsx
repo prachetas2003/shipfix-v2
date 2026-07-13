@@ -31,7 +31,7 @@ function LoginScreen(): React.ReactElement {
         <div style={{ display: "flex", justifyContent: "center", marginBottom: "1.25rem" }}>
           <BrandMark />
         </div>
-        <h1 style={{ margin: 0, fontSize: "1.65rem", fontWeight: 600, letterSpacing: "-0.02em" }}>
+        <h1 className="sf-display" style={{ margin: 0, fontSize: "1.85rem" }}>
           Deploy with a verified trail
         </h1>
         <p style={{ color: colors.dim, margin: "0.75rem 0 1.5rem", lineHeight: 1.6, fontSize: "0.92rem" }}>

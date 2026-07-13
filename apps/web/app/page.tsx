@@ -49,8 +49,10 @@ export default function DashboardPage(): React.ReactElement {
       />
 
       <div style={{ marginBottom: "1.75rem" }}>
-        <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0, letterSpacing: "-0.02em" }}>Apps</h1>
-        <p style={{ color: colors.dim, margin: "0.4rem 0 0", fontSize: "0.92rem", lineHeight: 1.55, maxWidth: 560 }}>
+        <h1 className="sf-display" style={{ fontSize: "2rem", margin: 0 }}>
+          Apps
+        </h1>
+        <p style={{ color: colors.dim, margin: "0.5rem 0 0", fontSize: "0.92rem", lineHeight: 1.6, maxWidth: 560 }}>
           Deploy from GitHub, wire providers, and verify the live stack before calling it done.
         </p>
       </div>

@@ -38,9 +38,9 @@ export function BrandMark({
         </svg>
       </span>
       {showWordmark && (
-        <span style={{ display: "inline-flex", flexDirection: "column", lineHeight: 1.05 }}>
-          <strong style={{ fontSize: "0.95rem", letterSpacing: "-0.02em", fontWeight: 600 }}>ShipFix</strong>
-          <span style={{ color: colors.dim, fontSize: "0.68rem", letterSpacing: 0 }}>deployment operator</span>
+        <span style={{ display: "inline-flex", flexDirection: "column", lineHeight: 1.05, gap: 3 }}>
+          <strong className="sf-brand-word">ShipFix</strong>
+          <span className="sf-brand-tag">deployment operator</span>
         </span>
       )}
     </div>

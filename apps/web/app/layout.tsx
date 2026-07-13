@@ -1,9 +1,18 @@
 import type { ReactNode } from "react";
 import { ClerkProvider } from "@clerk/nextjs";
+import { Syne } from "next/font/google";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
+import { Atmosphere } from "./components/Atmosphere";
 import { AuthGate } from "./components/AuthGate";
 import "./globals.css";
+
+const syne = Syne({
+  subsets: ["latin"],
+  variable: "--font-syne",
+  display: "swap",
+  weight: ["500", "600", "700", "800"],
+});
 
 export const metadata = {
   title: "ShipFix",
@@ -12,8 +21,9 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   const body = (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable} ${syne.variable}`}>
       <body>
+        <Atmosphere />
         <AuthGate>{children}</AuthGate>
       </body>
     </html>
