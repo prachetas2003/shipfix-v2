@@ -171,7 +171,7 @@ function computeNextAction(
       : "Still running — activity updates live.";
   }
   if (status === "succeeded") return "Connect providers, then deploy this plan.";
-  if (display.database?.state === "failed") return "Database was not created. Check Neon and retry.";
+  if (display.database?.state === "failed") return `Database was not created. Check ${display.database.provider === "upstash" ? "Upstash" : "Neon"} and retry.`;
   if (display.backend?.state === "failed") return "Backend deploy failed. Check Render logs, then retry.";
   if (display.frontend?.state === "failed") return "Frontend deploy failed. Update Vercel credentials or fix the build, then retry.";
   if (status === "failed") return "Review the guidance below, fix the issue, and retry.";

@@ -34,6 +34,7 @@ export function providerConsoleHref(
   const id = encodeURIComponent(externalId);
   if (provider === "render") return `https://dashboard.render.com/web/${id}`;
   if (provider === "neon") return `https://console.neon.tech/app/projects/${id}`;
+  if (provider === "upstash") return `https://console.upstash.com/redis/${id}`;
   // Vercel needs team slug + project name — use storedConsoleUrl from deploy meta.
   return null;
 }
@@ -42,6 +43,7 @@ export function providerConsoleLabel(provider: string | null | undefined): strin
   if (provider === "vercel") return "Open in Vercel";
   if (provider === "render") return "Open in Render";
   if (provider === "neon") return "Open in Neon";
+  if (provider === "upstash") return "Open in Upstash";
   return "Open in provider";
 }
 
@@ -128,7 +130,9 @@ export function buildAppResourceDisplay(input: {
   const frontendRes = resources.find((r) => r.role === "frontend");
   const backendRes = resources.find((r) => r.role === "backend");
   const dbRes = resources.find((r) => r.role === "database");
-  const backendPlan = plan?.services?.find((s) => s.type === "node_api" || s.id === backendRes?.serviceId);
+  const backendPlan = plan?.services?.find(
+    (s) => s.type === "node_api" || s.type === "python_api" || s.type === "docker_service" || s.id === backendRes?.serviceId,
+  );
 
   const health = backendHealthCheck(
     verification,

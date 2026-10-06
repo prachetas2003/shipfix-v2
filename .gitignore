@@ -7,7 +7,9 @@ out/
 .env
 .env.*
 !.env.example
+!packages/analyzer/test/fixtures/**/.env
 coverage/
 .DS_Store
+eval/reports/
 
 SHipfixV2/

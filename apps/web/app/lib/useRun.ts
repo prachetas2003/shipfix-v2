@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { API_BASE, api, withAuthQuery, type PlanView, type RunEventRow, type RunSnapshot } from "./api";
+import { api, streamUrl, type PlanView, type RunEventRow, type RunSnapshot } from "./api";
+
+const MAX_STREAM_RECONNECTS = 5;
 
 export type LiveStatus =
   | "loading"
@@ -40,7 +42,7 @@ export function useRun(runId: string | null): {
   repoContext: unknown;
   snapshot: RunSnapshot | null;
   error: string | null;
-  /** True when the run sits "queued" with no events — the worker is not picking it up. */
+  /** True when the run sits "queued" with no events â€” the worker is not picking it up. */
   workerStalled: boolean;
   /** True when the worker could not find this run in its database. */
   controlPlaneMismatch: boolean;
@@ -111,62 +113,85 @@ export function useRun(runId: string | null): {
         return;
       }
 
-      const es = new EventSource(await withAuthQuery(`${API_BASE}/runs/${runId}/events`));
-      esRef.current = es;
-      setStatus("streaming");
+      let attempts = 0;
+      const connect = async (): Promise<void> => {
+        if (cancelled) return;
+        let url: string;
+        try {
+          url = await streamUrl(runId);
+        } catch {
+          setStatus("error");
+          setError("Could not open the live event stream.");
+          return;
+        }
+        if (cancelled) return;
+        const es = new EventSource(url);
+        esRef.current = es;
+        setStatus("streaming");
+        es.onopen = () => {
+          attempts = 0;
+          setError(null);
+        };
 
-      es.addEventListener("run_event", (e) => {
-        const row = JSON.parse((e as MessageEvent).data) as RunEventRow;
-        eventCountRef.current += 1;
-        setWorkerStalled(false);
-        setEvents((prev) => (prev.some((p) => p.seq === row.seq) ? prev : [...prev, row]));
-        if (row.data?.event === "internal_control_plane_consistency_error") {
-          setControlPlaneMismatch(true);
+        es.addEventListener("run_event", (e) => {
+          const row = JSON.parse((e as MessageEvent).data) as RunEventRow;
+          eventCountRef.current += 1;
           setWorkerStalled(false);
-        }
-        if (row.data?.event === "analysis_completed" && row.data.repoContext) {
-          setRepoContext(row.data.repoContext);
-        }
-        if (row.data?.event === "plan_validated" && row.data.plan) {
-          setPlan(row.data.plan as PlanView);
-        }
-        const ev = row.data?.event;
-        const stage = row.data?.stage ?? row.stage;
-        if (
-          ev === "verification" ||
-          ev === "service_deployed" ||
-          ev === "verify_skipped" ||
-          stage === "succeeded" ||
-          stage === "diagnosed" ||
-          stage === "failed" ||
-          stage === "verifying"
-        ) {
-        void loadSnapshot(runId).then((snap) => {
-          if (!cancelled && snap) {
-            setSnapshot(snap);
-            if (snap.run.status === "failed") setWorkerStalled(false);
+          setEvents((prev) => (prev.some((p) => p.seq === row.seq) ? prev : [...prev, row]));
+          if (row.data?.event === "internal_control_plane_consistency_error") {
+            setControlPlaneMismatch(true);
+            setWorkerStalled(false);
+          }
+          if (row.data?.event === "analysis_completed" && row.data.repoContext) {
+            setRepoContext(row.data.repoContext);
+          }
+          if (row.data?.event === "plan_validated" && row.data.plan) {
+            setPlan(row.data.plan as PlanView);
+          }
+          const ev = row.data?.event;
+          const stage = row.data?.stage ?? row.stage;
+          if (
+            ev === "verification" ||
+            ev === "service_deployed" ||
+            ev === "verify_skipped" ||
+            stage === "succeeded" ||
+            stage === "diagnosed" ||
+            stage === "failed" ||
+            stage === "verifying"
+          ) {
+          void loadSnapshot(runId).then((snap) => {
+            if (!cancelled && snap) {
+              setSnapshot(snap);
+              if (snap.run.status === "failed") setWorkerStalled(false);
+            }
+          });
           }
         });
-        }
-      });
 
-      es.addEventListener("end", (e) => {
-        const { status: final } = JSON.parse((e as MessageEvent).data) as { status: string };
-        es.close();
-        esRef.current = null;
-        void loadSnapshot(runId).then(() => {
-          if (!cancelled) setStatus(normalize(final));
+        es.addEventListener("end", (e) => {
+          const { status: final } = JSON.parse((e as MessageEvent).data) as { status: string };
+          es.close();
+          esRef.current = null;
+          void loadSnapshot(runId).then(() => {
+            if (!cancelled) setStatus(normalize(final));
+          });
         });
-      });
 
-      es.onerror = () => {
-        es.close();
-        esRef.current = null;
-        if (!cancelled) {
+        es.onerror = () => {
+          es.close();
+          esRef.current = null;
+          if (cancelled) return;
+          if (attempts < MAX_STREAM_RECONNECTS) {
+            attempts += 1;
+            setError("Reconnecting to live updatesâ€¦");
+            setTimeout(() => void connect(), Math.min(1000 * 2 ** attempts, 15_000));
+            return;
+          }
           setStatus((s) => (s === "streaming" ? "error" : s));
           setError("Lost connection to the live event stream.");
-        }
+        };
       };
+      await connect();
     })();
 
     return () => {

@@ -70,3 +70,12 @@ describe("redact", () => {
     expect(out).toContain("[REDACTED]");
   });
 });
+
+describe("redact — Redis", () => {
+  it("hides TLS Redis URLs and REST tokens", () => {
+    const out = redact("url=rediss://default:pw@h.upstash.io:6379 UPSTASH_REDIS_REST_TOKEN=AXyzSecret KV_REST_API_TOKEN: abc123");
+    expect(out).not.toContain("pw@h");
+    expect(out).not.toContain("AXyzSecret");
+    expect(out).not.toContain("abc123");
+  });
+});

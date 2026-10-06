@@ -28,12 +28,16 @@ function providerName(provider: string | undefined): string {
   if (provider === "vercel") return "Vercel";
   if (provider === "render") return "Render";
   if (provider === "neon") return "Neon";
+  if (provider === "upstash") return "Upstash";
   return provider ?? "provider";
 }
 
 function serviceType(type: string): string {
   if (type === "frontend_static") return "Frontend app";
+  if (type === "frontend_ssr") return "Web app";
   if (type === "node_api") return "Backend API";
+  if (type === "python_api") return "Python service";
+  if (type === "docker_service") return "Docker service";
   if (type === "worker") return "Worker";
   return type.replace(/_/g, " ");
 }
@@ -48,6 +52,33 @@ function severityColor(sev: string): string {
   if (sev === "fatal") return colors.error;
   if (sev === "needs_input") return colors.warn;
   return colors.dim;
+}
+
+export interface CompanionView {
+  rootDir: string;
+  kind: string;
+}
+
+const COMPANION_LABEL: Record<string, string> = {
+  desktop: "Desktop app",
+  mobile: "Mobile app",
+  browser_extension: "Browser extension",
+  cli: "Command-line tool",
+  mcp_server: "MCP server",
+  tooling: "Builder or agent tooling",
+  docs: "Docs",
+  example: "Examples or tests",
+  scripts: "Helper scripts",
+};
+
+/** Read companions from an untyped analysis event payload. */
+export function companionsFrom(repoContext: unknown): CompanionView[] {
+  const list = (repoContext as { companions?: unknown } | null)?.companions;
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (c): c is CompanionView =>
+      typeof c === "object" && c !== null && typeof c.rootDir === "string" && typeof c.kind === "string",
+  );
 }
 
 function CommandRow({ label, value }: { label: string; value: string | null }): React.ReactElement | null {
@@ -66,8 +97,10 @@ export function PlanPanel({
   answeredQuestionIds = [],
   onAnswersSaved,
   onPlanRevalidated,
+  companions = [],
 }: {
   plan: PlanView;
+  companions?: CompanionView[];
   runId?: string;
   answeredQuestionIds?: string[];
   onAnswersSaved?: (answered: string[]) => void;
@@ -261,6 +294,26 @@ export function PlanPanel({
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {companions.length > 0 && (
+        <div style={{ marginTop: "1rem" }}>
+          <h3 style={{ ...h2, fontSize: "0.75rem" }}>Not deployed</h3>
+          <div style={{ ...card, fontSize: "0.85rem", color: colors.muted, lineHeight: 1.7 }}>
+            <p style={{ margin: "0 0 0.35rem", color: colors.dim }}>
+              These parts of the repo aren&apos;t web services, so ShipFix leaves them alone.
+            </p>
+            {companions.slice(0, 12).map((c) => (
+              <div key={c.rootDir}>
+                <code style={{ fontFamily: mono }}>{c.rootDir || "/"}</code>{" "}
+                <span style={{ color: colors.dim }}>{COMPANION_LABEL[c.kind] ?? c.kind}</span>
+              </div>
+            ))}
+            {companions.length > 12 && (
+              <div style={{ color: colors.dim }}>and {companions.length - 12} more</div>
+            )}
           </div>
         </div>
       )}

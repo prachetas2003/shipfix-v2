@@ -1,7 +1,7 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import { z } from "zod";
-import { Client, Connection } from "@temporalio/client";
+import { Client, Connection, WorkflowNotFoundError } from "@temporalio/client";
 import { and, asc, desc, eq, gt, gte, inArray, sql } from "drizzle-orm";
 import {
   createDb,
@@ -15,21 +15,28 @@ import {
   projectEnvVars,
   runs,
   workerHeartbeats,
+  githubInstallations,
+  ownedGithubInstallationIds,
 } from "@shipfix/db";
 import { createSafePostgresSink, createRunLogger } from "@shipfix/observability";
-import { reconcileStuckRuns, revalidatePlanForRun } from "@shipfix/workflow";
+import { reconcileStuckRuns, revalidatePlanForRun, type WorkflowLiveness } from "@shipfix/workflow";
 import { preflightProviderCredentials } from "@shipfix/adapter-core";
 import { createSecretVaultFromEnv } from "@shipfix/secrets";
 import {
+  exchangeGithubUserCode,
+  githubAppInstallUrl,
+  listGithubUserInstallations,
   loadGithubAppConfigFromEnv,
   resolveCloneToken,
   resolveGithubBranchSha,
+  resolveGithubDefaultBranch,
   shouldAutoDeployPush,
   verifyGithubWebhookSignature,
   type GithubPushEvent,
 } from "@shipfix/github";
 import { env, shipfixEnvLoad } from "./env";
-import { requireAdmin, requireUser, type AuthenticatedUser } from "./auth";
+import { requireAdmin, requireStreamUser, requireUser, type AuthenticatedUser } from "./auth";
+import { issueStreamTicket, streamTicketKey, verifyStreamTicket } from "./streamTicket";
 import { alphaDefaultsProfile, usageLimitMessage } from "./alphaLimits";
 import { apiControlPlaneDiagnostics } from "./configCheck";
 import { assertRunPersisted } from "./runLifecycle";
@@ -60,6 +67,7 @@ import {
 
 const app = Fastify({ logger: true });
 const db = createDb(env.DATABASE_URL);
+const streamKey = streamTicketKey([env.SHIPFIX_MASTER_KEY, env.CLERK_SECRET_KEY, env.SHIPFIX_ADMIN_TOKEN]);
 
 /** GitHub webhooks need the raw body for HMAC verification (encapsulated parser). */
 await app.register(async (githubHooks) => {
@@ -125,7 +133,16 @@ await app.register(async (githubHooks) => {
         continue;
       }
 
-      if (gate.installationId && gate.installationId !== project.githubInstallationId) {
+      // A push only deploys projects whose owner has claimed the installation that
+      // sent it; otherwise anyone could register a project for someone else's repo.
+      const owned = gate.installationId
+        ? (await ownedGithubInstallationIds(db, project.userId)).includes(gate.installationId)
+        : false;
+      if (!owned) {
+        skipped.push({ projectId: project.id, reason: "installation_not_owned" });
+        continue;
+      }
+      if (gate.installationId !== project.githubInstallationId) {
         await db
           .update(projects)
           .set({ githubInstallationId: gate.installationId })
@@ -210,7 +227,7 @@ const RECONCILE_INTERVAL_MS = 15 * 1000;
 const TEMPORAL_CHECK_INTERVAL_MS = 60 * 1000;
 const TEMPORAL_CHECK_TIMEOUT_MS = 2_500;
 const WORKFLOW_START_TIMEOUT_MS = 10_000;
-const NON_TERMINAL_STATUSES = ["queued", "analyzing", "planning", "validating", "awaiting_input", "provisioning", "deploying", "verifying"];
+const NON_TERMINAL_STATUSES = ["queued", "analyzing", "planning", "validating", "awaiting_input", "provisioning", "deploying", "wiring", "verifying"];
 const ipStarts = new Map<string, number[]>();
 
 let temporalStatus: { reachable: boolean; checkedAt: string | null; error: string | null } = {
@@ -231,12 +248,53 @@ async function getOrCreateProject(
     .from(projects)
     .where(and(eq(projects.userId, userId), eq(projects.repoFullName, repoFullName)))
     .limit(1);
-  if (existing[0]) return existing[0];
+  if (existing[0]) {
+    if (existing[0].defaultBranch !== defaultBranch) {
+      await db.update(projects).set({ defaultBranch }).where(eq(projects.id, existing[0].id));
+    }
+    return existing[0];
+  }
   const [created] = await db
     .insert(projects)
     .values({ userId, repoFullName, defaultBranch })
     .returning();
   return created;
+}
+
+/** Clone token for a repo, minted only through installations this user has claimed. */
+async function cloneTokenForUser(
+  userId: string,
+  repoFullName: string,
+  installationId?: string | null,
+): Promise<string> {
+  return resolveCloneToken({
+    repoFullName,
+    installationId,
+    allowedInstallationIds: await ownedGithubInstallationIds(db, userId),
+  });
+}
+
+/**
+ * Branch to build: the caller's explicit branch, else the repo's real default
+ * branch from GitHub. Falls back to the stored project branch (or "main") only
+ * when GitHub is unreachable, never when the repo is missing.
+ */
+async function resolveRunBranch(
+  userId: string,
+  repoFullName: string,
+  explicit: string | undefined,
+): Promise<{ ok: true; branch: string } | { ok: false; error: string; message: string }> {
+  if (explicit?.trim()) return { ok: true, branch: explicit.trim() };
+  const token = await cloneTokenForUser(userId, repoFullName);
+  const looked = await resolveGithubDefaultBranch(repoFullName, { token: token || null });
+  if ("branch" in looked) return { ok: true, branch: looked.branch };
+  if (looked.error === "repo_not_found") return { ok: false, error: looked.error, message: looked.message };
+  const [existing] = await db
+    .select({ defaultBranch: projects.defaultBranch })
+    .from(projects)
+    .where(and(eq(projects.userId, userId), eq(projects.repoFullName, repoFullName)))
+    .limit(1);
+  return { ok: true, branch: existing?.defaultBranch ?? "main" };
 }
 
 /** Latest validated plan doc for a run (highest version), if any. */
@@ -460,9 +518,24 @@ async function buildRunSnapshot(runId: string): Promise<Record<string, unknown> 
   };
 }
 
+async function workflowLiveness(runId: string): Promise<WorkflowLiveness> {
+  try {
+    const client = await withTimeout(temporal(), 3000, "Temporal connect timed out");
+    const description = await withTimeout(
+      client.workflow.getHandle(`run-${runId}`).describe(),
+      3000,
+      "Temporal describe timed out",
+    );
+    return description.status.name === "RUNNING" ? "running" : "closed";
+  } catch (err) {
+    if (err instanceof WorkflowNotFoundError) return "not_found";
+    return "unknown";
+  }
+}
+
 async function reconcileStuckRunsSafely(reason: string) {
   try {
-    const summary = await reconcileStuckRuns(db);
+    const summary = await reconcileStuckRuns(db, { workflowLiveness });
     if (summary.reconciled > 0) {
       app.log.warn({ reason, summary }, "reconciled stuck runs");
     }
@@ -491,10 +564,10 @@ function resolveRepoFullName(input: {
 type RunMode = "analyze_only" | "plan" | "deploy";
 
 /** Providers ShipFix can actually execute against in THIS build. */
-const PROVISIONABLE_PROVIDERS = ["neon"] as const;
+const PROVISIONABLE_PROVIDERS = ["neon", "upstash"] as const;
 const DEPLOYABLE_PROVIDERS = ["render", "vercel"] as const;
 const DEPLOYABLE_SERVICE_TYPES: Record<string, string[]> = {
-  render: ["node_api"],
+  render: ["node_api", "python_api", "docker_service"],
   vercel: ["frontend_static", "frontend_ssr"],
 };
 
@@ -847,9 +920,13 @@ function runRouteHandler(mode: RunMode) {
     }
 
     try {
+      const branch = await resolveRunBranch(user.id, repoFullName, parsed.data.branch);
+      if (!branch.ok) {
+        return reply.status(400).send({ error: branch.error, message: branch.message });
+      }
       const result = await startRun(mode, user, {
         repoFullName,
-        branch: parsed.data.branch ?? "main",
+        branch: branch.branch,
         commitSha: parsed.data.commitSha ?? "HEAD",
       });
       if (!result.ok) {
@@ -962,11 +1039,10 @@ app.post("/apps/:projectId/redeploy", async (request, reply) => {
     .limit(1);
   if (!project) return reply.status(404).send({ error: "project_not_found" });
 
-  const token = await resolveCloneToken({
-    repoFullName: project.repoFullName,
-    installationId: project.githubInstallationId,
-  });
-  const resolved = await resolveGithubBranchSha(project.repoFullName, project.defaultBranch, {
+  const token = await cloneTokenForUser(user.id, project.repoFullName, project.githubInstallationId);
+  const branchLookup = await resolveGithubDefaultBranch(project.repoFullName, { token: token || null });
+  const branch = "branch" in branchLookup ? branchLookup.branch : project.defaultBranch;
+  const resolved = await resolveGithubBranchSha(project.repoFullName, branch, {
     token: token || null,
   });
   if ("error" in resolved) {
@@ -976,7 +1052,7 @@ app.post("/apps/:projectId/redeploy", async (request, reply) => {
   try {
     const result = await startRun("deploy", user, {
       repoFullName: project.repoFullName,
-      branch: project.defaultBranch,
+      branch,
       commitSha: resolved.sha,
     });
     if (!result.ok) {
@@ -989,7 +1065,7 @@ app.post("/apps/:projectId/redeploy", async (request, reply) => {
       runId: result.runId,
       mode: "deploy",
       commitSha: resolved.sha,
-      branch: project.defaultBranch,
+      branch,
     });
   } catch (err) {
     request.log.error(err);
@@ -998,6 +1074,101 @@ app.post("/apps/:projectId/redeploy", async (request, reply) => {
       message: "ShipFix hit an internal error starting this redeploy. Try again in a minute.",
     });
   }
+});
+
+// ── GitHub App installations ────────────────────────────────────────────────
+// Ownership is proven by a GitHub user OAuth code (the App's "request user
+// authorization during installation" setting): we only record installations that
+// GitHub itself lists for the authenticated GitHub user.
+app.get("/github/installations", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const config = loadGithubAppConfigFromEnv();
+  const rows = await db
+    .select({
+      installationId: githubInstallations.installationId,
+      accountLogin: githubInstallations.accountLogin,
+      accountType: githubInstallations.accountType,
+      createdAt: githubInstallations.createdAt,
+    })
+    .from(githubInstallations)
+    .where(eq(githubInstallations.userId, user.id));
+  return {
+    configured: Boolean(config),
+    claimable: Boolean(config?.clientId && config?.clientSecret),
+    installUrl: githubAppInstallUrl(config),
+    installations: rows,
+  };
+});
+
+const ClaimInstallationBody = z.object({
+  code: z.string().min(1).max(200),
+  installationId: z.string().regex(/^\d+$/).optional(),
+});
+
+app.post("/github/installations/claim", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const parsed = ClaimInstallationBody.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "invalid_body", details: parsed.error.flatten() });
+  }
+  const config = loadGithubAppConfigFromEnv();
+  if (!config?.clientId || !config.clientSecret) {
+    return reply.status(503).send({
+      error: "github_app_unconfigured",
+      message: "The ShipFix GitHub App is not fully configured on this server.",
+    });
+  }
+
+  let installations;
+  try {
+    const userToken = await exchangeGithubUserCode(config, parsed.data.code);
+    installations = await listGithubUserInstallations(userToken);
+  } catch (err) {
+    request.log.warn({ err }, "GitHub installation claim failed");
+    return reply.status(400).send({
+      error: "github_oauth_failed",
+      message: "GitHub did not confirm this installation. Start the GitHub connection again.",
+    });
+  }
+
+  if (parsed.data.installationId && !installations.some((i) => i.installationId === parsed.data.installationId)) {
+    return reply.status(403).send({
+      error: "installation_not_accessible",
+      message: "Your GitHub account does not have access to that installation.",
+    });
+  }
+
+  for (const inst of installations) {
+    await db
+      .insert(githubInstallations)
+      .values({
+        userId: user.id,
+        installationId: inst.installationId,
+        accountLogin: inst.accountLogin,
+        accountType: inst.accountType,
+      })
+      .onConflictDoUpdate({
+        target: [githubInstallations.userId, githubInstallations.installationId],
+        set: { accountLogin: inst.accountLogin, accountType: inst.accountType },
+      });
+  }
+  return { ok: true, installations };
+});
+
+app.delete("/github/installations/:installationId", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { installationId } = request.params as { installationId: string };
+  await db
+    .delete(githubInstallations)
+    .where(and(eq(githubInstallations.userId, user.id), eq(githubInstallations.installationId, installationId)));
+  await db
+    .update(projects)
+    .set({ githubInstallationId: null })
+    .where(and(eq(projects.userId, user.id), eq(projects.githubInstallationId, installationId)));
+  return { ok: true };
 });
 
 // ── Provider credentials ───────────────────────────────────────────────────
@@ -1154,14 +1325,28 @@ app.post("/admin/runs/reconcile-stuck", async (request, reply) => {
  * polling on `seq`; the DB remains the single source of truth. Closes when the
  * run reaches a terminal status.
  */
-app.get("/runs/:runId/events", async (request, reply) => {
+app.post("/runs/:runId/events/ticket", async (request, reply) => {
   const user = await requireUser(request, reply, db, env);
   if (!user) return;
-
   const { runId } = request.params as { runId: string };
   if (!z.string().uuid().safeParse(runId).success) {
     return reply.status(400).send({ error: "invalid_run_id" });
   }
+  if (!(await userCanAccessRun(user.id, runId))) {
+    return reply.status(404).send({ error: "run_not_found" });
+  }
+  return issueStreamTicket(streamKey, { userId: user.id, runId });
+});
+
+app.get("/runs/:runId/events", async (request, reply) => {
+  const { runId } = request.params as { runId: string };
+  if (!z.string().uuid().safeParse(runId).success) {
+    return reply.status(400).send({ error: "invalid_run_id" });
+  }
+  const user = await requireStreamUser(request, reply, db, env, (ticket) =>
+    verifyStreamTicket(streamKey, ticket, runId),
+  );
+  if (!user) return;
   if (!(await userCanAccessRun(user.id, runId))) {
     return reply.status(404).send({ error: "run_not_found" });
   }

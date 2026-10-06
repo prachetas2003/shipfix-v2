@@ -34,12 +34,12 @@ function isFrontendServiceType(type: string): boolean {
 }
 
 function isBackendServiceType(type: string): boolean {
-  return type === "node_api";
+  return type === "node_api" || type === "python_api" || type === "docker_service";
 }
 
 export interface PlanLite {
   services?: PlanServiceLite[];
-  managed?: Array<{ kind?: string; provider?: string | null; exposesEnv?: string }>;
+  managed?: Array<{ kind?: string; mode?: string; provider?: string | null; exposesEnv?: string }>;
   verification?: Array<{ serviceId?: string; check?: string; target?: string }>;
 }
 
@@ -69,6 +69,7 @@ export function providerConsoleUrl(
   const id = encodeURIComponent(externalId);
   if (provider === "render") return `https://dashboard.render.com/web/${id}`;
   if (provider === "neon") return `https://console.neon.tech/app/projects/${id}`;
+  if (provider === "upstash") return `https://console.upstash.com/redis/${id}`;
   // Vercel needs team slug + project name; prefer meta.consoleUrl written at deploy time.
   return null;
 }
@@ -252,9 +253,17 @@ export function deriveLayers(
 
   const plannedFrontend = services.some((s) => isFrontendServiceType(s.type));
   const plannedBackend = services.some((s) => isBackendServiceType(s.type));
-  const plannedDb = (plan?.managed?.length ?? 0) > 0 || !!byRole("database");
+  const plannedManaged = (plan?.managed ?? []).filter((m) => m.mode !== "connect_existing").length;
+  const dataResources = resources.filter((r) => r.role === "database");
+  const plannedDb = plannedManaged > 0 || dataResources.length > 0;
 
-  const database = layerFromResource(byRole("database"), plannedDb);
+  // Postgres and Redis share the data layer; it is only as healthy as its worst store.
+  const dataLayers = dataResources.map((r) => layerFromResource(r, true)!);
+  if (dataLayers.length < plannedManaged) dataLayers.push(layerFromResource(undefined, true)!);
+  const rank: Record<LayerState, number> = { failed: 0, not_attempted: 1, provisioning: 2, live: 3 };
+  const database = dataLayers.length
+    ? dataLayers.reduce((worst, l) => (rank[l.state] < rank[worst.state] ? l : worst))
+    : layerFromResource(undefined, plannedDb);
   const backend = layerFromResource(
     resourceFor(backendService?.id) ?? byRole("backend"),
     plannedBackend,

@@ -10,12 +10,13 @@ import type { ManagedProvider } from "./capabilities";
  * without a working adapter recreates the "support illusion" that sank v1.
  */
 export const MVP_SERVICE_SUPPORT: Readonly<Record<string, ReadonlyArray<ServiceType>>> = {
-  render: ["node_api"],
+  render: ["node_api", "python_api", "docker_service"],
   vercel: ["frontend_static", "frontend_ssr"],
 };
 
 export const MVP_MANAGED_SUPPORT: Readonly<Record<string, ReadonlyArray<ManagedKind>>> = {
   neon: ["postgres"],
+  upstash: ["redis"],
 };
 
 /** True when ShipFix can auto-deploy this provider+service type in the MVP. */
@@ -30,4 +31,4 @@ export function isManagedSupported(provider: ManagedProvider, kind: ManagedKind)
 
 /** Short human-readable description of the MVP-supported slice (for UI/copy). */
 export const MVP_SUPPORT_SUMMARY =
-  "Next.js App Router/SSR and Vite/static frontends on Vercel, Express/Fastify Node APIs on Render, and Postgres on Neon.";
+  "Server-rendered apps (Next.js, Nuxt, Remix, React Router, SvelteKit, TanStack Start) and Vite/static frontends on Vercel, Node and Python (FastAPI, Flask, Streamlit, Gradio, Chainlit) web services or Dockerfile services on Render, Postgres on Neon, and Redis on Upstash.";

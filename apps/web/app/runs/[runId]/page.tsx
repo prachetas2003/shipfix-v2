@@ -12,7 +12,7 @@ import { ActivityStages } from "../../components/ActivityStages";
 import { FailureGuidance, extractFailureGuidance } from "../../components/FailureGuidance";
 import { LogDrawer } from "../../components/LogDrawer";
 import { OutcomeBanner } from "../../components/OutcomeBanner";
-import { PlanPanel } from "../../components/PlanPanel";
+import { companionsFrom, PlanPanel } from "../../components/PlanPanel";
 import { ProviderCredentialFix, providersNeedingCredentialFix } from "../../components/ProviderCredentialFix";
 import { ProviderRequirements } from "../../components/ProviderRequirements";
 import { WorkerStalledNotice } from "../../components/WorkerStalledNotice";
@@ -237,6 +237,7 @@ export default function RunPage({
               runId={runId}
               answeredQuestionIds={snap?.answeredQuestionIds ?? []}
               onAnswersSaved={() => void run.refreshSnapshot()}
+              companions={companionsFrom(run.repoContext)}
             />
           ) : (
             <Panel>

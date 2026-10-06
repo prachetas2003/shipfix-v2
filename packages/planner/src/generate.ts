@@ -4,6 +4,8 @@ import { parseStructured, type LLMGateway } from "@shipfix/llm";
 import { buildSystemPrompt, buildUserPrompt, buildRepairPrompt } from "./prompt";
 import { invalidPlanFallback } from "./fallback";
 import { synthesizeDeterministicPlan } from "./synthesize";
+import { applyPublicEnv } from "./publicEnv";
+import { applySupabaseIntegration } from "./supabaseEnv";
 
 export interface PlannerOptions {
   /** Number of follow-up repair attempts after the first try. Default 1. */
@@ -26,6 +28,17 @@ export interface GeneratePlanResult {
   planSource: PlanSource;
   /** Raw text of the last model response (for debugging/observability). */
   raw: string;
+}
+
+/** The framework (and so the Vercel preset) comes from analyzer evidence, not the model. */
+export function applyDetectedFramework(plan: DeploymentPlanType, ctx: RepoContext): DeploymentPlanType {
+  return {
+    ...plan,
+    services: plan.services.map((svc) => {
+      const signal = ctx.services.find((s) => s.rootDir === svc.rootDir && s.language === "node");
+      return signal ? { ...svc, framework: signal.framework } : svc;
+    }),
+  };
 }
 
 /**
@@ -79,7 +92,10 @@ export async function generatePlan(
     const parsed = parseStructured(res.text, DeploymentPlan);
     if (parsed.ok) {
       return {
-        plan: { ...parsed.data, planSource: "llm" },
+        plan: applySupabaseIntegration(
+          applyPublicEnv(applyDetectedFramework({ ...parsed.data, planSource: "llm" }, ctx), ctx),
+          ctx,
+        ),
         model: res.model,
         attempts,
         usedFallback: false,

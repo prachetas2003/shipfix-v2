@@ -30,7 +30,9 @@ function str(v: unknown): string | null {
 function serviceRole(serviceId: string | null, provider: string | null): "frontend" | "backend" | "database" | "service" {
   if (provider === "vercel" || serviceId === "web" || serviceId === "frontend") return "frontend";
   if (provider === "render" || serviceId === "api" || serviceId === "backend") return "backend";
-  if (provider === "neon" || serviceId === "db" || serviceId === "database") return "database";
+  if (provider === "neon" || provider === "upstash" || serviceId === "db" || serviceId === "database" || serviceId === "cache") {
+    return "database";
+  }
   return "service";
 }
 
@@ -237,8 +239,13 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
       };
     case "provision_started":
       return {
-        title: provider === "neon" ? "Creating Neon database" : "Creating managed database",
-        detail: "ShipFix is provisioning the database before deploying the backend.",
+        title:
+          provider === "neon"
+            ? "Creating Neon database"
+            : provider === "upstash"
+              ? "Creating Upstash Redis database"
+              : "Creating managed database",
+        detail: "ShipFix is provisioning the data store before deploying the app.",
         tone: "progress",
       };
     case "provision_log":
@@ -251,8 +258,8 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
       };
     case "resource_provisioned":
       return {
-        title: "Database is ready",
-        detail: "Neon created the database and ShipFix sealed the connection string for backend wiring.",
+        title: provider === "upstash" ? "Redis is ready" : "Database is ready",
+        detail: `${provider === "upstash" ? "Upstash" : "Neon"} created the database and ShipFix sealed its connection details for wiring into the app.`,
         tone: "success",
         isLive: true,
         url: str(d.host),
@@ -470,6 +477,7 @@ function providerName(provider: string): string {
   if (provider === "vercel") return "Vercel";
   if (provider === "render") return "Render";
   if (provider === "neon") return "Neon";
+  if (provider === "upstash") return "Upstash";
   return provider;
 }
 

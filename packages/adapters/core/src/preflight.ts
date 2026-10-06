@@ -114,6 +114,45 @@ export async function preflightProviderCredentials(
     return { ok: true };
   }
 
+  if (provider === "supabase") {
+    const accessToken = values.accessToken?.trim();
+    if (!accessToken) return { ok: false, message: "Supabase connection needs a personal access token (accessToken)." };
+    const status = await probe(
+      "https://api.supabase.com/v1/projects",
+      { accept: "application/json", authorization: `Bearer ${accessToken}` },
+      fetchImpl,
+    );
+    if (rejected(status)) {
+      return {
+        ok: false,
+        message:
+          "Supabase rejected this access token. Create a new one under Supabase Account > Access Tokens and try again.",
+      };
+    }
+    return { ok: true };
+  }
+
+  if (provider === "upstash") {
+    const email = values.email?.trim();
+    const apiKey = values.apiKey?.trim();
+    if (!email || !apiKey) {
+      return { ok: false, message: "Upstash connection needs your account email (email) and a Management API key (apiKey)." };
+    }
+    const status = await probe(
+      "https://api.upstash.com/v2/redis/databases",
+      { accept: "application/json", authorization: `Basic ${Buffer.from(`${email}:${apiKey}`).toString("base64")}` },
+      fetchImpl,
+    );
+    if (rejected(status)) {
+      return {
+        ok: false,
+        message:
+          "Upstash rejected this email and API key. Create a Management API key under Upstash Account > Management API and try again.",
+      };
+    }
+    return { ok: true };
+  }
+
   // Unknown provider — nothing to validate against.
   return { ok: true };
 }

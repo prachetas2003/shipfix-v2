@@ -39,7 +39,7 @@ packages/
   secrets        Redaction + AES-256-GCM envelope-encryption vault
   observability  Run event logger interface
   adapters/core  ProviderAdapter interface
-  adapters/render  Render web-service adapter (node_api only)
+  adapters/render  Render web-service adapter (Node, Python, Dockerfile)
   adapters/vercel  Vercel static frontend adapter (frontend_static only)
   verifier       Plan-driven HTTP verification (backend, frontend, CORS)
 ```

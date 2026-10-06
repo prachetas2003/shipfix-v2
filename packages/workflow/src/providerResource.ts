@@ -63,6 +63,38 @@ export async function findPersistedProviderResource(
   return null;
 }
 
+export type DeployedResourceRecord = typeof deployedResources.$inferSelect;
+
+/**
+ * Most recent live, sealed managed resource (e.g. a Neon database) for this project
+ * from a previous run. Managed data must survive redeploys, so provisioning reuses it
+ * instead of creating an empty database per run.
+ */
+export async function findReusableManagedResource(
+  db: Database,
+  args: { projectId: string; serviceId: string; provider: string; excludeRunId?: string },
+): Promise<DeployedResourceRecord | null> {
+  const rows = await db
+    .select({ resource: deployedResources })
+    .from(deployedResources)
+    .innerJoin(runs, eq(runs.id, deployedResources.runId))
+    .where(
+      and(
+        eq(runs.projectId, args.projectId),
+        eq(deployedResources.serviceId, args.serviceId),
+        eq(deployedResources.provider, args.provider),
+        eq(deployedResources.status, "live"),
+      ),
+    )
+    .orderBy(desc(deployedResources.createdAt));
+
+  for (const { resource } of rows) {
+    if (args.excludeRunId && resource.runId === args.excludeRunId) continue;
+    if (resource.externalId && resource.encBlob && resource.encIv && resource.encDek) return resource;
+  }
+  return null;
+}
+
 export async function resolveProviderDeployTarget(
   db: Database,
   projectId: string,

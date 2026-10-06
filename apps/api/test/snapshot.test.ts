@@ -109,6 +109,21 @@ describe("deriveLayers", () => {
     expect(layers.fullStack.live).toBe(true);
   });
 
+  it("keeps the data layer failed when Redis failed even though Postgres is live", () => {
+    const rows = [
+      row({ serviceId: "db", kind: "managed_db", provider: "neon", url: "db-host", exposesEnv: "DATABASE_URL" }),
+      row({ serviceId: "cache", kind: "managed_redis", provider: "upstash", url: null, status: "failed", exposesEnv: "REDIS_URL" }),
+      row({ serviceId: "api", provider: "render", url: "https://api.onrender.com" }),
+      row({ serviceId: "web", provider: "vercel", url: "https://web.vercel.app" }),
+    ];
+    const layers = deriveLayers(toSnapshotResources(rows, plan), plan, [
+      { serviceId: "api", check: "health_path", ok: true, skipped: false, statusCode: 200, url: "https://api.onrender.com/health", assumedPath: false },
+      { serviceId: "web", check: "frontend_loads", ok: true, skipped: false, statusCode: 200, url: "https://web.vercel.app/", assumedPath: false },
+    ]);
+    expect(layers.database).toMatchObject({ state: "failed", provider: "upstash" });
+    expect(layers.fullStack.live).toBe(false);
+  });
+
   it("marks frontend not_attempted and full-stack not live when only backend deployed", () => {
     const rows = [row({ serviceId: "api", provider: "render", url: "https://api.onrender.com" })];
     const resources = toSnapshotResources(rows, plan);

@@ -1,10 +1,12 @@
 import type { DeploymentPlan, EnvVar, PlanService } from "@shipfix/contracts";
 import {
+  managedSecretField,
   parseNeonConnectionSecret,
-  runtimeConnectionUrl,
   type NeonConnectionUrls,
 } from "@shipfix/provisioner";
 import type { SecretVault } from "@shipfix/secrets";
+
+const MANAGED_FIELDS = new Set(["connectionUrl", "restUrl", "restToken"]);
 
 /** Row shape needed from deployed_resources for env resolution. */
 export interface DeployedResourceRow {
@@ -16,6 +18,8 @@ export interface DeployedResourceRow {
   encBlob: Buffer | null;
   encIv: Buffer | null;
   encDek: Buffer | null;
+  /** Managed resource carried over from an earlier run (may hold user data). */
+  reused?: boolean;
 }
 
 export type ResolveEnvIssue =
@@ -52,6 +56,11 @@ export interface ResolveServiceEnvOptions {
    * Used after run_inputs for `user_secret`. Never log these.
    */
   projectEnvValues?: ReadonlyMap<string, string>;
+  /**
+   * Values read from connected integrations, keyed by plan ref
+   * (e.g. `supabase.serviceRoleKey`). Never log these.
+   */
+  integrationValues?: ReadonlyMap<string, string>;
 }
 
 /** Question id synthesizer uses for user_secret env vars. */
@@ -105,6 +114,7 @@ async function resolveEnvVar(
   vault: SecretVault,
   runInputValues: ReadonlyMap<string, string> | undefined,
   projectEnvValues: ReadonlyMap<string, string> | undefined,
+  integrationValues: ReadonlyMap<string, string> | undefined,
 ): Promise<{ name: string; value?: string; issue?: ResolveEnvIssue }> {
   if (env.source === "literal") {
     if (env.value == null || env.value === "") {
@@ -132,6 +142,19 @@ async function resolveEnvVar(
     if (fromProject != null && fromProject !== "") {
       return { name: env.name, value: fromProject };
     }
+    return { name: env.name, issue: { code: "missing_secret", envName: env.name } };
+  }
+  if (env.source === "generated_secret") {
+    const generated = projectEnvValues?.get(env.name);
+    if (generated) return { name: env.name, value: generated };
+    return { name: env.name, issue: { code: "missing_secret", envName: env.name } };
+  }
+  if (env.source === "integration") {
+    // A value the user set on the project wins over the connected project.
+    const fromProject = projectEnvValues?.get(env.name);
+    if (fromProject) return { name: env.name, value: fromProject };
+    const fromIntegration = integrationValues?.get(env.ref ?? "");
+    if (fromIntegration) return { name: env.name, value: fromIntegration };
     return { name: env.name, issue: { code: "missing_secret", envName: env.name } };
   }
   if (env.source === "generated_from_service") {
@@ -166,7 +189,7 @@ async function resolveEnvVar(
   }
   if (env.source === "generated_from_managed") {
     const parsed = parseRef(env.ref ?? "");
-    if (!parsed || parsed.field !== "connectionUrl") {
+    if (!parsed || !MANAGED_FIELDS.has(parsed.field)) {
       return {
         name: env.name,
         issue: { code: "unsupported_source", envName: env.name, source: env.ref ?? "" },
@@ -185,15 +208,16 @@ async function resolveEnvVar(
         issue: { code: "managed_not_live", managedId: parsed.id, envName: env.name },
       };
     }
-    const urls = await openManagedConnectionUrls(row, vault);
-    if (!urls) {
+    const secret = await vault.open({ encBlob: row.encBlob, encIv: row.encIv, encDek: row.encDek });
+    // Postgres runtime services get the pooled URL; Redis also exposes its REST pair.
+    const value = managedSecretField(secret, parsed.field);
+    if (!value) {
       return {
         name: env.name,
-        issue: { code: "managed_not_live", managedId: parsed.id, envName: env.name },
+        issue: { code: "unsupported_source", envName: env.name, source: env.ref ?? "" },
       };
     }
-    // Runtime services always get the pooled URL when available.
-    return { name: env.name, value: runtimeConnectionUrl(urls) };
+    return { name: env.name, value };
   }
   return {
     name: env.name,
@@ -232,6 +256,7 @@ export async function resolveServiceEnv(
       vault,
       opts.runInputValues,
       opts.projectEnvValues,
+      opts.integrationValues,
     );
     if (
       opts.deferFrontendOrigins &&

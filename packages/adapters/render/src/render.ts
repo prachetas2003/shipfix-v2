@@ -167,7 +167,28 @@ function renderEnv(input: DeployInput): Record<string, string> {
   };
 }
 
-function envSpecificDetails(input: DeployInput): { buildCommand: string; startCommand: string } {
+const RUNTIME_BY_TYPE: Record<string, "node" | "python" | "docker"> = {
+  node_api: "node",
+  python_api: "python",
+  docker_service: "docker",
+};
+
+export function renderRuntime(service: PlanService): "node" | "python" | "docker" | null {
+  return RUNTIME_BY_TYPE[service.type] ?? null;
+}
+
+/** Paths are relative to the service rootDir, which Render uses as the build root. */
+export function envSpecificDetails(input: DeployInput): Record<string, string> {
+  const runtime = renderRuntime(input.service);
+  if (runtime === "docker") return { dockerfilePath: "./Dockerfile", dockerContext: "." };
+  if (runtime === "python") {
+    const install = input.service.install?.trim() || "pip install -r requirements.txt";
+    const build = input.service.build?.trim();
+    return {
+      buildCommand: build ? `${install} && ${build}` : install,
+      startCommand: input.service.start?.trim() ?? "",
+    };
+  }
   return {
     buildCommand: renderBuildCommand(input.service),
     startCommand: renderStartCommand(input.service),
@@ -182,10 +203,12 @@ function buildCreateBody(input: DeployInput, ownerId: string, name: string): Rec
     repo: `https://github.com/${input.repo.fullName}`,
     branch: input.repo.branch,
     rootDir: input.rootDir || undefined,
-    autoDeploy: "yes",
+    // ShipFix owns deploys (pinned commits, verification after each one); a
+    // provider-side push trigger would race it with unverified builds.
+    autoDeploy: "no",
     envVars: envVarPayload(renderEnv(input)),
     serviceDetails: {
-      runtime: "node",
+      runtime: renderRuntime(input.service) ?? "node",
       plan: "free",
       region: "oregon",
       envSpecificDetails: envSpecificDetails(input),
@@ -196,11 +219,28 @@ function buildCreateBody(input: DeployInput, ownerId: string, name: string): Rec
 function buildUpdateBody(input: DeployInput): Record<string, unknown> {
   return {
     rootDir: input.rootDir || undefined,
-    envVars: envVarPayload(renderEnv(input)),
+    autoDeploy: "no",
+    branch: input.repo.branch,
     serviceDetails: {
       envSpecificDetails: envSpecificDetails(input),
     },
   };
+}
+
+/** Replace the service's full env var set (Render's env vars live on their own endpoint). */
+async function replaceEnvVars(
+  fetchImpl: typeof fetch,
+  base: string,
+  apiKey: string,
+  httpTimeoutMs: number,
+  serviceId: string,
+  env: Record<string, string>,
+): Promise<void> {
+  const res = await apiFetch(fetchImpl, base, `/services/${encodeURIComponent(serviceId)}/env-vars`, apiKey, httpTimeoutMs, {
+    method: "PUT",
+    body: JSON.stringify(envVarPayload(env)),
+  });
+  if (!res.ok) await failBody(res, "replace env vars");
 }
 
 async function triggerDeploy(
@@ -209,10 +249,12 @@ async function triggerDeploy(
   apiKey: string,
   httpTimeoutMs: number,
   serviceId: string,
+  commitSha?: string,
 ): Promise<string | null> {
+  const pinned = commitSha && /^[0-9a-f]{7,40}$/i.test(commitSha) ? { commitId: commitSha } : {};
   const res = await apiFetch(fetchImpl, base, `/services/${encodeURIComponent(serviceId)}/deploys`, apiKey, httpTimeoutMs, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ clearCache: "do_not_clear", ...pinned }),
   });
   if (!res.ok) await failBody(res, "trigger deploy");
   const json = (await parseRenderResponse(res, "trigger deploy", { allowEmptyOk: true })) as {
@@ -361,8 +403,9 @@ function renderFailureKind(message: string): DeployFailureKind {
 }
 
 /**
- * Real Render web-service adapter (REST API, node_api only). Create-or-update by
- * stable service name; triggers a deploy and polls until terminal.
+ * Real Render web-service adapter (REST API: Node, Python, or Dockerfile web
+ * services). Create-or-update by stable service name; triggers a deploy and
+ * polls until terminal.
  */
 export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapter {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -373,7 +416,7 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
 
   return {
     id: "render",
-    supports: ["node_api"],
+    supports: ["node_api", "python_api", "docker_service"],
 
     requiredCredentials() {
       return { provider: "render", required: ["apiKey"], optional: ["ownerId"] };
@@ -384,13 +427,23 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
       if (!apiKey) {
         return { ok: false, externalId: null, publicUrl: null, status: "deploy_failed", logs: "Missing Render apiKey.", failureKind: "setup_blocker" };
       }
-      if (input.service.type !== "node_api") {
+      if (!renderRuntime(input.service)) {
         return {
           ok: false,
           externalId: null,
           publicUrl: null,
           status: "deploy_failed",
-          logs: `Render adapter only supports node_api, not "${input.service.type}".`,
+          logs: `Render adapter only supports node_api, python_api and docker_service, not "${input.service.type}".`,
+        };
+      }
+      if (input.service.type === "python_api" && !input.service.start?.trim()) {
+        return {
+          ok: false,
+          externalId: null,
+          publicUrl: null,
+          status: "deploy_failed",
+          logs: "Python service has no start command.",
+          failureKind: "setup_blocker",
         };
       }
 
@@ -437,6 +490,7 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
               },
             );
             if (!patch.ok) await failBody(patch, "update service");
+            await replaceEnvVars(fetchImpl, base, apiKey, httpTimeoutMs, stored.id, renderEnv(input));
             serviceId = stored.id;
           } else {
             input.onLog?.(
@@ -454,6 +508,7 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
               body: JSON.stringify(buildUpdateBody(input)),
             });
             if (!patch.ok) await failBody(patch, "update service");
+            await replaceEnvVars(fetchImpl, base, apiKey, httpTimeoutMs, existing.id, renderEnv(input));
             serviceId = existing.id;
           } else {
             input.onLog?.(`Render: creating web service "${stableName}"`);
@@ -495,7 +550,7 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
       input.onLog?.(`Render: triggering deploy for ${serviceId}`);
       let deployId: string | null;
       try {
-        deployId = await triggerDeploy(fetchImpl, base, apiKey, httpTimeoutMs, serviceId);
+        deployId = await triggerDeploy(fetchImpl, base, apiKey, httpTimeoutMs, serviceId, input.repo.commitSha);
         if (!deployId) {
           deployId = await findLatestDeployId(fetchImpl, base, apiKey, httpTimeoutMs, serviceId);
         }
@@ -590,12 +645,19 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
     },
 
     async setEnv(externalId, env, credentials) {
+      // Upsert individual keys; other env vars on the service are left untouched.
       const apiKey = credentials.values.apiKey;
-      const res = await apiFetch(fetchImpl, base, `/services/${encodeURIComponent(externalId)}`, apiKey, httpTimeoutMs, {
-        method: "PATCH",
-        body: JSON.stringify({ envVars: envVarPayload(env) }),
-      });
-      if (!res.ok) await failBody(res, "set env");
+      for (const [key, value] of Object.entries(env)) {
+        const res = await apiFetch(
+          fetchImpl,
+          base,
+          `/services/${encodeURIComponent(externalId)}/env-vars/${encodeURIComponent(key)}`,
+          apiKey,
+          httpTimeoutMs,
+          { method: "PUT", body: JSON.stringify({ value }) },
+        );
+        if (!res.ok) await failBody(res, `set env ${key}`);
+      }
     },
 
     async teardown(externalId, credentials) {

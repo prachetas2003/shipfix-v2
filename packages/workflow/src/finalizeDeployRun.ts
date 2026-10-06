@@ -1,4 +1,5 @@
 import type { DeploymentPlan, PlanService } from "@shipfix/contracts";
+import { isWebBackendType } from "@shipfix/contracts";
 import type { Capabilities } from "@shipfix/validator";
 import type { DeployFailureKind } from "@shipfix/adapter-core";
 import { accountPlanVerifySummary } from "@shipfix/verifier";
@@ -117,7 +118,7 @@ export function computeFinalizeDeployOutcome(
   const { provision, backendDeploy, frontendDeploy, verify } = outcome;
   const unsupported = planHasUnsupportedServices(plan, caps);
 
-  const backendIds = planServiceIds(plan, (s) => s.type === "node_api" && s.provider === "render");
+  const backendIds = planServiceIds(plan, (s) => isWebBackendType(s.type) && s.provider === "render");
   const frontendIds = planServiceIds(
     plan,
     (s) => (s.type === "frontend_static" || s.type === "frontend_ssr") && s.provider === "vercel",

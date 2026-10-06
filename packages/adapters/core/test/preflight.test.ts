@@ -70,3 +70,29 @@ describe("preflightProviderCredentials", () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe("preflightProviderCredentials — supabase", () => {
+  it("checks a Supabase access token against the Management API", async () => {
+    const capture = { urls: [] as string[], auth: [] as string[] };
+    const ok = await preflightProviderCredentials("supabase", { accessToken: "sbp_ok" }, fetchWithStatus(200, capture));
+    expect(ok.ok).toBe(true);
+    expect(capture.urls[0]).toBe("https://api.supabase.com/v1/projects");
+    const bad = await preflightProviderCredentials("supabase", { accessToken: "sbp_bad" }, fetchWithStatus(401));
+    expect(bad.ok).toBe(false);
+    expect(bad.message).not.toContain("sbp_bad");
+    expect((await preflightProviderCredentials("supabase", {}, fetchWithStatus(200))).ok).toBe(false);
+  });
+});
+
+describe("preflightProviderCredentials — upstash", () => {
+  it("needs email + API key and checks them with basic auth", async () => {
+    const capture = { urls: [] as string[], auth: [] as string[] };
+    const ok = await preflightProviderCredentials("upstash", { email: "me@x.io", apiKey: "up_ok" }, fetchWithStatus(200, capture));
+    expect(ok.ok).toBe(true);
+    expect(capture.auth[0]).toBe(`Basic ${Buffer.from("me@x.io:up_ok").toString("base64")}`);
+    const bad = await preflightProviderCredentials("upstash", { email: "me@x.io", apiKey: "up_bad" }, fetchWithStatus(401));
+    expect(bad.ok).toBe(false);
+    expect(bad.message).not.toContain("up_bad");
+    expect((await preflightProviderCredentials("upstash", { apiKey: "k" }, fetchWithStatus(200))).ok).toBe(false);
+  });
+});

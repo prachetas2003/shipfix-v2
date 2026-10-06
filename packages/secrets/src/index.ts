@@ -22,7 +22,8 @@ const REDACTION_PATTERNS: RegExp[] = [
   /\bsk-ant-[A-Za-z0-9_\-]{20,}\b/g, // Anthropic-style
   /\bAIza[A-Za-z0-9_\-]{20,}\b/g, // Google API key
   /\bpostgres(?:ql)?:\/\/[^\s'"]+/g, // Postgres connection strings
-  /\b(mysql|redis):\/\/[^\s'"]+/g,
+  /\b(mysql|rediss?):\/\/[^\s'"]+/g,
+  /\b[A-Z0-9_]*REST(?:_API)?_TOKEN\b\s*[:=]\s*["']?[^"',\s}]+["']?/gi, // Upstash / Vercel KV REST token
   /\bx-access-token:[^@\s]+@/g, // tokenized git remote
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
   /\beyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,}\b/g, // JWT

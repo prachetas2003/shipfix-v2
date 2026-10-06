@@ -40,6 +40,13 @@ describe("production env validation", () => {
     expect(result.invalid).toContain("TEMPORAL_TASK_QUEUE must be shipfix-prod in production");
   });
 
+  it("requires an isolated sandbox for the worker", () => {
+    expect(validateProductionEnv(validEnv, "worker").missing).toContain("E2B_API_KEY");
+    const local = validateProductionEnv({ ...validEnv, E2B_API_KEY: "e2b", SHIPFIX_SANDBOX: "local" }, "worker");
+    expect(local.invalid).toContain("SHIPFIX_SANDBOX must be e2b in production");
+    expect(validateProductionEnv({ ...validEnv, E2B_API_KEY: "e2b" }, "worker").ok).toBe(true);
+  });
+
   it("does not enforce production requirements outside production", () => {
     expect(() => assertProductionEnv("worker", { NODE_ENV: "development" })).not.toThrow();
   });

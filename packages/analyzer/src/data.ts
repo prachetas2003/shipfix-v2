@@ -33,6 +33,7 @@ const DEP_TO_KIND: ReadonlyArray<[dep: string, kind: Kind]> = [
   ["redis", "redis"],
   ["ioredis", "redis"],
   ["@upstash/redis", "redis"],
+  ["@vercel/kv", "redis"],
   ["better-sqlite3", "sqlite_local"],
   ["sqlite3", "sqlite_local"],
   ["@aws-sdk/client-s3", "object_storage"],
@@ -46,7 +47,7 @@ function kindFromEnvName(name: string): Kind | null {
     return "postgres";
   }
   if (/^(MYSQL_URL|MYSQL_HOST)$/.test(name)) return "mysql";
-  if (/(REDIS_URL|UPSTASH_REDIS)/.test(name)) return "redis";
+  if (/(REDIS_URL|UPSTASH_REDIS)/.test(name) || /^(KV_URL|KV_REST_API_(URL|TOKEN))$/.test(name)) return "redis";
   return null;
 }
 
@@ -175,6 +176,21 @@ export async function detectDataNeeds(
       existing.detectedFrom = det.detectedFrom;
       existing.migrationTool = det.migrationTool;
     }
+  }
+
+  // A Supabase project already has its Postgres. Unless deployed code reads a
+  // database URL directly, the ORM/driver deps are tooling for that database.
+  const usesSupabase =
+    files.has("supabase/config.toml") || has("@supabase/supabase-js") || has("@supabase/ssr");
+  const pg = byKind.get("postgres");
+  if (pg && usesSupabase && !envRefs.some((r) => kindFromEnvName(r.name) === "postgres")) {
+    return [...byKind.values()]
+      .map((d) =>
+        d === pg
+          ? { ...d, hostedBy: "supabase" as const, migrationTool: "none" as const, evidence: [...d.evidence, "Supabase project"] }
+          : d,
+      )
+      .sort((a, b) => a.kind.localeCompare(b.kind));
   }
 
   return [...byKind.values()].sort((a, b) => a.kind.localeCompare(b.kind));

@@ -1,0 +1,12 @@
+{
+  "name": "workspace",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "typecheck": "tsc --build"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  }
+}

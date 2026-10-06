@@ -57,20 +57,10 @@ export interface SandboxProvider {
     memoryMb?: number;
     diskMb?: number;
     wallClockMs?: number;
+    /** Additional egress hosts for this sandbox only (e.g. the user's database host for migrations). */
+    egressAllow?: string[];
   }): Promise<Sandbox>;
 }
 
-/**
- * TODO: implement E2BSandboxProvider in a sibling file:
- *  - create() spins an E2B sandbox with the resource + egress policy above,
- *  - clone() uses the scoped GitHub App token,
- *  - exec() enforces the timeout and captures output,
- *  - dispose() kills the sandbox.
- * Keep this `index.ts` interface-only so the control plane can't accidentally
- * import an execution path.
- */
-export function createSandboxProvider(): SandboxProvider {
-  throw new Error(
-    "SandboxProvider not implemented yet — see TODO in @shipfix/sandbox.",
-  );
-}
+// This entry point stays interface-only so the control plane can't import an
+// execution path. Workers get a provider from `@shipfix/sandbox/runtime`.

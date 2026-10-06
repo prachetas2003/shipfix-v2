@@ -17,26 +17,8 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CloneSpec, ExecOptions, ExecResult, Sandbox, SandboxProvider } from "./index";
-
-const IGNORED_DIRS = new Set([
-  "node_modules",
-  ".git",
-  "dist",
-  "build",
-  "out",
-  ".next",
-  ".nuxt",
-  ".svelte-kit",
-  ".turbo",
-  ".cache",
-  ".vercel",
-  ".netlify",
-  "coverage",
-  ".idea",
-  ".vscode",
-  "vendor",
-  "__pycache__",
-]);
+import { buildSandboxEnv } from "./env";
+import { IGNORED_DIRS } from "./ignored";
 
 function toPosix(p: string): string {
   return p.split(path.sep).join("/");
@@ -70,7 +52,7 @@ function runProcess(
     const child = spawn(command, args, {
       cwd: opts.cwd,
       shell: opts.shell ?? false,
-      env: { ...process.env, ...opts.env },
+      env: buildSandboxEnv(opts.env),
     });
     let stdout = "";
     let stderr = "";

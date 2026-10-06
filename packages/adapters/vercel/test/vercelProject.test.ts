@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DeployInput } from "@shipfix/adapter-core";
 import type { PlanService } from "@shipfix/contracts";
-import { buildProjectBody, buildProjectPatch, frameworkPreset } from "../src/vercelProject";
+import { buildProjectBody, buildProjectPatch, frameworkPreset, vercelBuildEnv } from "../src/vercelProject";
 
 function input(service: Partial<PlanService>): DeployInput {
   return {
@@ -47,7 +47,25 @@ describe("buildProjectBody / buildProjectPatch", () => {
     const i = input({ type: "frontend_ssr", outputDir: ".next" });
     expect(buildProjectBody(i, "p").outputDirectory).toBeUndefined();
     expect(buildProjectBody(i, "p").framework).toBe("nextjs");
-    expect(buildProjectPatch(i).outputDirectory).toBeUndefined();
+    expect(buildProjectPatch(i).outputDirectory).toBeNull();
     expect(buildProjectPatch(i).framework).toBe("nextjs");
+  });
+});
+
+describe("other server-rendered frameworks", () => {
+  it("maps each framework to its Vercel preset", () => {
+    const preset = (framework: string) => frameworkPreset(input({ type: "frontend_ssr", framework }));
+    expect(preset("nuxt")).toBe("nuxtjs");
+    expect(preset("sveltekit")).toBe("sveltekit");
+    expect(preset("react-router")).toBe("react-router");
+    expect(preset("tanstack-start")).toBeNull();
+  });
+
+  it("builds TanStack Start with no preset and tells Nitro to emit Vercel output", () => {
+    const i = { ...input({ type: "frontend_ssr", framework: "tanstack-start" }), env: { VITE_X: "1" } };
+    expect(buildProjectPatch(i).framework).toBeNull();
+    expect(vercelBuildEnv(i)).toEqual({ VITE_X: "1", NITRO_PRESET: "vercel" });
+    expect(vercelBuildEnv({ ...i, env: { NITRO_PRESET: "vercel-edge" } })).toEqual({ NITRO_PRESET: "vercel-edge" });
+    expect(vercelBuildEnv(input({ type: "frontend_ssr", framework: "next" }))).toEqual({});
   });
 });

@@ -8,6 +8,7 @@ export {
   type ReconcileStuckRunResult,
   type ReconcileStuckRunsOptions,
   type ReconcileStuckRunsSummary,
+  type WorkflowLiveness,
 } from "./reconcileStuckRuns.js";
 export {
   revalidatePlanForRun,

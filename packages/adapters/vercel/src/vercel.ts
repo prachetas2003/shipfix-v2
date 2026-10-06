@@ -8,7 +8,7 @@ import type {
 import { resolveGitRepoId } from "./resolveGitRepoId.js";
 import { failVercelBody, parseVercelJson, VercelApiError } from "./vercelHttp.js";
 import { buildGitSource, VercelRepoIdError } from "./vercelGit.js";
-import { buildProjectBody, buildProjectPatch } from "./vercelProject.js";
+import { buildProjectBody, buildProjectPatch, vercelBuildEnv } from "./vercelProject.js";
 import { setProjectEnv, VercelEnvConflictError } from "./vercelEnv.js";
 import {
   DEFAULT_VERCEL_DEPLOY_TIMEOUT_MS,
@@ -219,6 +219,35 @@ async function upsertProject(
   return created.id;
 }
 
+/**
+ * Stop Vercel from building every git push on its own: ShipFix triggers pinned,
+ * verified deploys. Best-effort — a failure here must not block the deploy.
+ */
+async function disableGitPushDeployments(
+  fetchImpl: typeof fetch,
+  base: string,
+  token: string,
+  teamId: string | undefined,
+  httpTimeoutMs: number,
+  projectId: string,
+  onLog?: (line: string) => void,
+): Promise<void> {
+  try {
+    const res = await vercelApiFetch(
+      fetchImpl,
+      base,
+      `/v9/projects/${encodeURIComponent(projectId)}`,
+      token,
+      teamId,
+      httpTimeoutMs,
+      { method: "PATCH", body: JSON.stringify({ gitProviderOptions: { createDeployments: "disabled" } }) },
+    );
+    if (!res.ok) onLog?.(`Vercel: could not disable push-triggered deployments (HTTP ${res.status}).`);
+  } catch {
+    onLog?.("Vercel: could not disable push-triggered deployments.");
+  }
+}
+
 async function triggerGitDeployment(
   fetchImpl: typeof fetch,
   base: string,
@@ -414,11 +443,13 @@ export function createVercelAdapter(options: VercelOptions = {}): ProviderAdapte
           failureKind: err.failureKind,
         };
       }
+      await disableGitPushDeployments(fetchImpl, base, token, teamId, httpTimeoutMs, projectId, input.onLog);
 
-      if (Object.keys(input.env).length > 0) {
-        input.onLog?.(`Vercel: setting ${Object.keys(input.env).length} build env var(s)`);
+      const buildEnv = vercelBuildEnv(input);
+      if (Object.keys(buildEnv).length > 0) {
+        input.onLog?.(`Vercel: setting ${Object.keys(buildEnv).length} build env var(s)`);
         try {
-          await setProjectEnv(fetchImpl, base, token, teamId, httpTimeoutMs, projectId, input.env, input.onLog);
+          await setProjectEnv(fetchImpl, base, token, teamId, httpTimeoutMs, projectId, buildEnv, input.onLog);
         } catch (e) {
           const err = deployError(e);
           return {

@@ -9,6 +9,11 @@ export interface GithubAppConfig {
   appId: string;
   privateKey: string;
   webhookSecret?: string;
+  /** OAuth client credentials of the App, used to prove which user owns an installation. */
+  clientId?: string;
+  clientSecret?: string;
+  /** Public slug, for building the install URL (https://github.com/apps/<slug>/installations/new). */
+  slug?: string;
 }
 
 /** Load GitHub App config from process.env. Returns null when unset (public-only mode). */
@@ -28,7 +33,105 @@ export function loadGithubAppConfigFromEnv(
   }
   privateKey = privateKey.replace(/\\n/g, "\n");
   const webhookSecret = env.GITHUB_WEBHOOK_SECRET?.trim() || undefined;
-  return { appId, privateKey, webhookSecret };
+  const clientId = env.GITHUB_APP_CLIENT_ID?.trim() || undefined;
+  const clientSecret = env.GITHUB_APP_CLIENT_SECRET?.trim() || undefined;
+  const slug = env.GITHUB_APP_SLUG?.trim() || undefined;
+  return { appId, privateKey, webhookSecret, clientId, clientSecret, slug };
+}
+
+export function githubAppInstallUrl(config: GithubAppConfig | null, state?: string): string | null {
+  if (!config?.slug) return null;
+  const qs = state ? `?state=${encodeURIComponent(state)}` : "";
+  return `https://github.com/apps/${config.slug}/installations/new${qs}`;
+}
+
+const GITHUB_HEADERS = {
+  Accept: "application/vnd.github+json",
+  "User-Agent": "shipfix",
+  "X-GitHub-Api-Version": "2022-11-28",
+};
+
+/** Exchange a GitHub App user-authorization `code` for a user-to-server token. */
+export async function exchangeGithubUserCode(
+  config: GithubAppConfig,
+  code: string,
+  opts?: { fetchImpl?: typeof fetch },
+): Promise<string> {
+  if (!config.clientId || !config.clientSecret) {
+    throw new Error("GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET are required to verify installations.");
+  }
+  const fetchImpl = opts?.fetchImpl ?? fetch;
+  const res = await fetchImpl("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "shipfix" },
+    body: JSON.stringify({ client_id: config.clientId, client_secret: config.clientSecret, code }),
+  });
+  if (!res.ok) throw new Error(`GitHub OAuth exchange failed (${res.status}).`);
+  const json = (await res.json()) as { access_token?: string; error?: string };
+  if (!json.access_token) throw new Error(`GitHub OAuth exchange failed (${json.error ?? "no token"}).`);
+  return json.access_token;
+}
+
+export interface GithubUserInstallation {
+  installationId: string;
+  accountLogin: string;
+  accountType: string;
+}
+
+/** Installations of this App the authenticated user can access (admin or member). */
+export async function listGithubUserInstallations(
+  userToken: string,
+  opts?: { fetchImpl?: typeof fetch },
+): Promise<GithubUserInstallation[]> {
+  const fetchImpl = opts?.fetchImpl ?? fetch;
+  const out: GithubUserInstallation[] = [];
+  for (let page = 1; page <= 10; page++) {
+    const res = await fetchImpl(`https://api.github.com/user/installations?per_page=100&page=${page}`, {
+      headers: { ...GITHUB_HEADERS, Authorization: `Bearer ${userToken}` },
+    });
+    if (!res.ok) throw new Error(`Listing GitHub installations failed (${res.status}).`);
+    const json = (await res.json()) as {
+      installations?: Array<{ id: number; account?: { login?: string; type?: string } }>;
+    };
+    const batch = json.installations ?? [];
+    for (const inst of batch) {
+      out.push({
+        installationId: String(inst.id),
+        accountLogin: inst.account?.login ?? "",
+        accountType: inst.account?.type ?? "User",
+      });
+    }
+    if (batch.length < 100) break;
+  }
+  return out;
+}
+
+/** The repo's real default branch (never assume "main"). */
+export async function resolveGithubDefaultBranch(
+  repoFullName: string,
+  opts?: { token?: string | null; fetchImpl?: typeof fetch },
+): Promise<{ branch: string } | { error: string; message: string }> {
+  const fetchImpl = opts?.fetchImpl ?? fetch;
+  try {
+    const res = await fetchImpl(`https://api.github.com/repos/${repoFullName}`, {
+      headers: { ...GITHUB_HEADERS, ...(opts?.token ? { Authorization: `Bearer ${opts.token}` } : {}) },
+    });
+    if (res.status === 404) {
+      return {
+        error: "repo_not_found",
+        message: `Could not find ${repoFullName} on GitHub. Check the name, or install the ShipFix GitHub App for private repos.`,
+      };
+    }
+    if (!res.ok) {
+      return { error: "github_lookup_failed", message: `GitHub returned ${res.status} while looking up ${repoFullName}.` };
+    }
+    const json = (await res.json()) as { default_branch?: string };
+    const branch = json.default_branch?.trim();
+    if (!branch) return { error: "github_lookup_failed", message: "GitHub did not return a default branch." };
+    return { branch };
+  } catch {
+    return { error: "github_lookup_failed", message: "Could not reach GitHub to look up the repository." };
+  }
 }
 
 export function createGithubAppJwt(config: GithubAppConfig, nowSec = Math.floor(Date.now() / 1000)): string {
@@ -104,27 +207,35 @@ export async function findInstallationIdForRepo(
 }
 
 /**
- * Best-effort clone token for a repo. Empty string when GitHub App is not configured
- * or the app is not installed on the repo (public clone still works).
+ * Best-effort clone token for a repo, scoped to the requesting tenant. Only
+ * installations in `allowedInstallationIds` (the ones the project owner has proven
+ * they control) are ever used, so one user can never clone through another user's
+ * installation. Empty string means "clone anonymously" (public repos still work).
  */
 export async function resolveCloneToken(args: {
   repoFullName: string;
   installationId?: string | null;
+  allowedInstallationIds: readonly string[];
   config?: GithubAppConfig | null;
   fetchImpl?: typeof fetch;
 }): Promise<string> {
   const config = args.config === undefined ? loadGithubAppConfigFromEnv() : args.config;
-  if (!config) return "";
+  if (!config || args.allowedInstallationIds.length === 0) return "";
+  const allowed = new Set(args.allowedInstallationIds);
   try {
     let installationId = args.installationId?.trim() || null;
+    if (installationId && !allowed.has(installationId)) installationId = null;
     if (!installationId) {
-      installationId = await findInstallationIdForRepo(config, args.repoFullName, {
+      const found = await findInstallationIdForRepo(config, args.repoFullName, {
         fetchImpl: args.fetchImpl,
       });
+      installationId = found && allowed.has(found) ? found : null;
     }
     if (!installationId) return "";
+    const repoName = args.repoFullName.split("/")[1];
     return await createInstallationAccessToken(config, installationId, {
       fetchImpl: args.fetchImpl,
+      repositories: repoName ? [repoName] : undefined,
     });
   } catch {
     return "";

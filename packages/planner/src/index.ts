@@ -13,4 +13,11 @@
 export { generatePlan, type GeneratePlanResult, type PlannerOptions } from "./generate";
 export { synthesizeDeterministicPlan } from "./synthesize";
 export { invalidPlanFallback } from "./fallback";
+export { applyPublicEnv } from "./publicEnv";
+export {
+  applySupabaseIntegration,
+  supabaseFieldFor,
+  SUPABASE_INTEGRATION_ID,
+  SUPABASE_PROJECT_QUESTION_ID,
+} from "./supabaseEnv";
 export { buildSystemPrompt, buildUserPrompt, buildRepairPrompt } from "./prompt";

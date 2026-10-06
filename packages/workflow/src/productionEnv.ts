@@ -31,9 +31,20 @@ function present(env: NodeJS.ProcessEnv, name: string): boolean {
   return Boolean(env[name]?.trim());
 }
 
-export function validateProductionEnv(env: NodeJS.ProcessEnv = process.env): ProductionEnvValidation {
+export function validateProductionEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  service: "api" | "worker" = "api",
+): ProductionEnvValidation {
   const missing: string[] = REQUIRED_PRODUCTION_ENV.filter((name) => !present(env, name));
   const invalid: string[] = [];
+
+  if (service === "worker") {
+    if (!present(env, "E2B_API_KEY")) missing.push("E2B_API_KEY");
+    const sandbox = env.SHIPFIX_SANDBOX?.trim().toLowerCase();
+    if (sandbox && sandbox !== "e2b") {
+      invalid.push("SHIPFIX_SANDBOX must be e2b in production");
+    }
+  }
 
   if (env.AUTH_MODE && env.AUTH_MODE !== "clerk") {
     invalid.push("AUTH_MODE must be clerk in production");
@@ -66,7 +77,7 @@ export function assertProductionEnv(
 ): void {
   if (env.NODE_ENV !== "production") return;
 
-  const result = validateProductionEnv(env);
+  const result = validateProductionEnv(env, serviceName);
   if (result.ok) return;
 
   const parts = [

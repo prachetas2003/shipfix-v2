@@ -87,7 +87,9 @@ pnpm --filter @shipfix/worker start
 Environment:
 
 ```env
-NODE_ENV=development
+NODE_ENV=production
+SHIPFIX_SANDBOX=e2b
+E2B_API_KEY=
 DATABASE_URL=
 SHIPFIX_MASTER_KEY=
 TEMPORAL_ADDRESS=
@@ -101,7 +103,7 @@ ANTHROPIC_API_KEY=
 NEON_ORG_ID=
 ```
 
-Alpha limitation: the current repo-analysis sandbox is still the local/dev sandbox. The worker uses `NODE_ENV=development` until the production E2B sandbox provider is implemented.
+Repo code (clone, analysis, migrations) runs in per-run E2B microVMs with an egress allowlist. The worker refuses to start runs with the host-side dev sandbox when `NODE_ENV=production`.
 
 ## 3. Vercel
 

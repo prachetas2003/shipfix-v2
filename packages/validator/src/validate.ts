@@ -6,6 +6,8 @@ import type {
   RepoContext,
   WiringEdge,
 } from "@shipfix/contracts";
+import type { ManagedKind } from "@shipfix/contracts";
+import { IntegrationField, isVercelSsrFramework, isWebBackendType, MANAGED_ENV_FIELDS, SECRET_INTEGRATION_FIELDS } from "@shipfix/contracts";
 import { redact } from "@shipfix/secrets";
 import type { Capabilities } from "./capabilities";
 import { issueToBlocker, isValidationBlockerTitle, type ValidationIssue } from "./issues";
@@ -35,6 +37,16 @@ export interface ValidatePlanOptions {
   /** Env var names satisfied via durable project env (B2). */
   satisfiedEnvNames?: ReadonlySet<string>;
 }
+
+const SSR_SUPPORT_TEXT = "Next.js, Nuxt, Remix, React Router, SvelteKit and TanStack Start";
+
+const SSR_UNSUPPORTED_HINT: Record<string, string> = {
+  "tanstack-start-node":
+    " TanStack Start needs the Nitro Vite plugin (the `nitro` package) to build for Vercel.",
+  "sveltekit-node":
+    " SvelteKit needs @sveltejs/adapter-auto or @sveltejs/adapter-vercel to build for Vercel.",
+  "remix-cloudflare": " This Remix app is built for Cloudflare Pages, which ShipFix doesn't deploy to yet.",
+};
 
 function secretQuestionId(serviceId: string, envName: string): string {
   return `secret-${serviceId}-${envName}`;
@@ -91,6 +103,8 @@ function checkCommand(
   }
 }
 
+const BROWSER_ENV_PREFIX_RE = /^(VITE_|NEXT_PUBLIC_|REACT_APP_|PUBLIC_|EXPO_PUBLIC_|NUXT_PUBLIC_|GATSBY_)/;
+
 function hasScript(ctx: RepoContext, rootDir: string, script: string): boolean {
   return Boolean(ctx.services.find((s) => s.rootDir === rootDir)?.scripts?.[script]);
 }
@@ -99,14 +113,19 @@ function checkEnvVar(
   service: PlanService,
   env: EnvVar,
   serviceIds: Set<string>,
-  managedIds: Set<string>,
+  managedKinds: ReadonlyMap<string, ManagedKind>,
+  publicValues: Set<string>,
   add: (i: ValidationIssue) => void,
 ): void {
   const path = `services.${service.id}.env.${env.name}`;
+  if (env.source === "generated_secret" && BROWSER_ENV_PREFIX_RE.test(env.name)) {
+    add({ code: "env_generated_secret_public", severity: "fatal", message: `"${env.name}" on "${service.id}" is compiled into the browser bundle, so ShipFix will not put a generated secret in it.`, path });
+    return;
+  }
   if (env.source === "literal") {
     if (env.value == null || env.value === "") {
       add({ code: "env_literal_missing_value", severity: "fatal", message: `Literal env "${env.name}" on "${service.id}" has no value.`, path });
-    } else if (redact(env.value) !== env.value) {
+    } else if (!publicValues.has(env.value) && redact(env.value) !== env.value) {
       add({ code: "env_literal_secret_shaped", severity: "fatal", message: `Literal env "${env.name}" on "${service.id}" looks like a secret value and must not be embedded in the plan.`, path });
     }
     return;
@@ -114,17 +133,79 @@ function checkEnvVar(
   if (env.source === "generated_from_service" || env.source === "generated_from_managed") {
     const ref = env.ref ?? "";
     const [refId, field] = ref.split(".");
-    const validPool = env.source === "generated_from_service" ? serviceIds : managedIds;
-    const validField =
+    const managedKind = refId ? managedKinds.get(refId) : undefined;
+    const valid =
       env.source === "generated_from_service"
-        ? field === "publicUrl" || field === "origin"
-        : field === "connectionUrl";
-    if (!refId || !validPool.has(refId) || !validField) {
+        ? !!refId && serviceIds.has(refId) && (field === "publicUrl" || field === "origin")
+        : managedKind !== undefined && MANAGED_ENV_FIELDS[managedKind].includes(field ?? "");
+    if (!valid) {
       add({
         code: "env_ref_unresolved",
         severity: "fatal",
-        message: `Generated env "${env.name}" on "${service.id}" references "${ref || "(empty)"}", which does not resolve to a valid ${env.source === "generated_from_service" ? "service.publicUrl/origin" : "managed.connectionUrl"}.`,
+        message: `Generated env "${env.name}" on "${service.id}" references "${ref || "(empty)"}", which does not resolve to a valid ${env.source === "generated_from_service" ? "service.publicUrl/origin" : "managed-service field"}.`,
         path,
+      });
+      return;
+    }
+    if (env.source === "generated_from_managed" && (service.type === "frontend_static" || BROWSER_ENV_PREFIX_RE.test(env.name))) {
+      add({ code: "env_managed_secret_public", severity: "fatal", message: `"${env.name}" on "${service.id}" would put a ${managedKind} credential into the browser bundle.`, path });
+    }
+  }
+}
+
+/** Question id a plan uses to ask which existing project an integration points at. */
+export function integrationProjectQuestionId(integrationId: string): string {
+  return `integration-${integrationId}-project`;
+}
+
+/**
+ * Integration env must point at a declared integration and a known field,
+ * secret fields never go to browser-compiled names, and the user must have
+ * connected the provider (or set every such env on the project themselves).
+ */
+function checkIntegrations(
+  plan: DeploymentPlan,
+  caps: Capabilities,
+  satisfiedQs: ReadonlySet<string>,
+  satisfiedEnvs: ReadonlySet<string>,
+  add: (i: ValidationIssue) => void,
+): void {
+  const integrations = new Map((plan.integrations ?? []).map((i) => [i.id, i]));
+  const envByIntegration = new Map<string, string[]>();
+  for (const s of plan.services) {
+    for (const e of s.env) {
+      if (e.source !== "integration") continue;
+      const path = `services.${s.id}.env.${e.name}`;
+      const [id, field] = (e.ref ?? "").split(".");
+      const parsedField = IntegrationField.safeParse(field);
+      if (!id || !integrations.has(id) || !parsedField.success) {
+        add({ code: "env_ref_unresolved", severity: "fatal", message: `"${e.name}" on "${s.id}" references "${e.ref ?? "(empty)"}", which is not a declared integration value.`, path });
+        continue;
+      }
+      if (SECRET_INTEGRATION_FIELDS.has(parsedField.data) && (s.type === "frontend_static" || BROWSER_ENV_PREFIX_RE.test(e.name))) {
+        add({ code: "env_integration_secret_public", severity: "fatal", message: `"${e.name}" on "${s.id}" would put the ${parsedField.data} into the browser bundle.`, path });
+        continue;
+      }
+      envByIntegration.set(id, [...(envByIntegration.get(id) ?? []), e.name]);
+    }
+  }
+  for (const [id, names] of envByIntegration) {
+    const integration = integrations.get(id)!;
+    const allSetByUser = names.every((n) => satisfiedEnvs.has(n));
+    if (!caps.integrations.has(integration.provider) && !allSetByUser) {
+      add({
+        code: "integration_not_connected",
+        severity: "needs_input",
+        message: `Connect your ${integration.provider} account so ShipFix can fill ${[...new Set(names)].join(", ")} from your existing project.`,
+        path: `integrations.${id}`,
+      });
+    }
+    if (!integration.projectRef && !allSetByUser && !satisfiedQs.has(integrationProjectQuestionId(id))) {
+      add({
+        code: "integration_project_unknown",
+        severity: "needs_input",
+        message: `ShipFix couldn't tell which ${integration.provider} project this app uses. Answer the setup question with the project ref.`,
+        path: `integrations.${id}`,
       });
     }
   }
@@ -135,7 +216,9 @@ function generatedEnvWiringEdge(service: PlanService, env: EnvVar): WiringEdge |
   const [refId, field] = (env.ref ?? "").split(".");
   if (!refId || !field) return null;
   if (env.source === "generated_from_service" && field !== "publicUrl" && field !== "origin") return null;
-  if (env.source === "generated_from_managed" && field !== "connectionUrl") return null;
+  if (env.source === "generated_from_managed" && field !== "connectionUrl" && field !== "restUrl" && field !== "restToken") {
+    return null;
+  }
   return {
     fromServiceId: refId,
     fromField: field as WiringEdge["fromField"],
@@ -177,8 +260,10 @@ export function validatePlan(
 
   const serviceIds = new Set(plan.services.map((s) => s.id));
   const managedIds = new Set(plan.managed.map((m) => m.id));
+  const managedKinds = new Map(plan.managed.map((m) => [m.id, m.kind]));
   const allIds = new Set([...serviceIds, ...managedIds]);
   const scriptsByRoot = new Map(ctx.services.map((s) => [s.rootDir, s.scripts]));
+  const publicValues = new Set((ctx.publicEnv ?? []).map((v) => v.value));
 
   // ── Services exist + commands grounded + env refs valid ───────────────────
   for (const svc of plan.services) {
@@ -208,30 +293,67 @@ export function validatePlan(
         path: `services.${svc.id}.start`,
       });
     }
-    for (const env of svc.env) checkEnvVar(svc, env, serviceIds, managedIds, add);
+    const signal = ctx.services.find((s) => s.rootDir === svc.rootDir);
+    if (svc.type === "python_api") {
+      if (!svc.start || !svc.install) {
+        add({
+          code: "backend_start_missing",
+          severity: "fatal",
+          message: `Python service "${svc.id}" needs install and start commands before ShipFix can deploy it to Render.`,
+          path: `services.${svc.id}.start`,
+        });
+      } else if (svc.start !== signal?.inferredRun?.start) {
+        add({
+          code: "python_start_ungrounded",
+          severity: "needs_input",
+          message: `Python service "${svc.id}" start command "${svc.start}" was not found in the repo (no Procfile or detected app entry point runs it). Confirm how the app starts before deploying.`,
+          path: `services.${svc.id}.start`,
+        });
+      }
+    }
+    if (svc.type === "docker_service" && !signal?.hasDockerfile) {
+      add({
+        code: "docker_file_missing",
+        severity: "fatal",
+        message: `Service "${svc.id}" is planned as a Docker service, but "${svc.rootDir || "/"}" has no Dockerfile.`,
+        path: `services.${svc.id}`,
+      });
+    }
+    for (const env of svc.env) checkEnvVar(svc, env, serviceIds, managedKinds, publicValues, add);
   }
 
+  const deployedAs = (rootDir: string, types: readonly string[]): boolean =>
+    plan.services.some((s) => s.rootDir === rootDir && types.includes(s.type));
   for (const signal of ctx.services) {
     if (signal.language === "python") {
+      if (deployedAs(signal.rootDir, ["python_api", "docker_service"])) continue;
       add({
         code: "repo_python_unsupported",
         severity: "fatal",
-        message: `Detected a Python${signal.framework ? `/${signal.framework}` : ""} service at "${signal.rootDir || "/"}". ShipFix does not auto-deploy Python/FastAPI apps in this MVP.`,
+        message:
+          signal.framework === "python"
+            ? `Detected a Python project at "${signal.rootDir || "/"}" without a recognizable web framework (FastAPI, Flask, Django, Streamlit, Gradio, Chainlit) or a Dockerfile. ShipFix can't tell how to serve it.`
+            : `Detected a Python/${signal.framework} service at "${signal.rootDir || "/"}", but ShipFix couldn't find how it starts. Add a Procfile ("web: <start command>") or a Dockerfile.`,
         path: `repo.services.${signal.rootDir || "/"}`,
       });
     } else if (signal.language === "docker" || signal.framework === "docker-compose") {
+      if (signal.framework === "docker" && deployedAs(signal.rootDir, ["docker_service"])) continue;
       add({
         code: "repo_docker_unsupported",
         severity: "fatal",
-        message: `Detected a Docker-based service at "${signal.rootDir || "/"}". ShipFix does not auto-deploy Docker-only or docker-compose apps in this MVP.`,
+        message:
+          signal.framework === "docker-compose"
+            ? `Detected a docker-compose app at "${signal.rootDir || "/"}". ShipFix deploys single Dockerfile services, not multi-container compose stacks.`
+            : signal.role === "backend"
+              ? `Detected a Dockerfile service at "${signal.rootDir || "/"}" that this plan does not deploy.`
+              : `Detected a Dockerfile at "${signal.rootDir || "/"}" with no EXPOSE line, so ShipFix can't tell whether it serves HTTP. Add "EXPOSE <port>" to the Dockerfile.`,
         path: `repo.services.${signal.rootDir || "/"}`,
       });
-    } else if (signal.role === "fullstack" && signal.framework !== "next") {
-      // Next.js on Vercel is in the supported slice; other SSR frameworks are not.
+    } else if (signal.role === "fullstack" && !isVercelSsrFramework(signal.framework)) {
       add({
         code: "repo_ssr_unsupported",
         severity: "fatal",
-        message: `Detected ${signal.framework} / SSR-style app at "${signal.rootDir || "/"}". ShipFix auto-deploys Next.js on Vercel, but does not auto-deploy ${signal.framework} apps in this MVP.`,
+        message: `Detected ${signal.framework} / SSR-style app at "${signal.rootDir || "/"}". ShipFix auto-deploys ${SSR_SUPPORT_TEXT} on Vercel, but not this setup.${SSR_UNSUPPORTED_HINT[signal.framework] ?? ""}`,
         path: `repo.services.${signal.rootDir || "/"}`,
       });
     } else if (signal.role === "unknown") {
@@ -404,8 +526,10 @@ export function validatePlan(
     if (!edge.toEnvName) {
       add({ code: "wiring_empty_env", severity: "fatal", message: `Wiring edge ${i} does not name a target env var.`, path: `wiring[${i}]` });
     }
-    const fromIsManaged = managedIds.has(edge.fromServiceId);
-    const fieldOk = edge.fromField === "connectionUrl" ? fromIsManaged : !fromIsManaged;
+    const fromKind = managedKinds.get(edge.fromServiceId);
+    const fieldOk = fromKind
+      ? MANAGED_ENV_FIELDS[fromKind].includes(edge.fromField)
+      : edge.fromField === "publicUrl" || edge.fromField === "origin";
     if (allIds.has(edge.fromServiceId) && !fieldOk) {
       add({ code: "wiring_bad_field", severity: "fatal", message: `Wiring edge ${i} uses field "${edge.fromField}" with an incompatible source.`, path: `wiring[${i}]` });
     }
@@ -444,6 +568,8 @@ export function validatePlan(
     }
   }
 
+  checkIntegrations(plan, caps, satisfiedQs, satisfiedEnvs, add);
+
   // ── Verification path grounding (route evidence) ───────────────────────────
   checkVerificationGrounding(plan, ctx, add);
 
@@ -462,7 +588,7 @@ export function validatePlan(
   // verifier can probe alternatives instead of failing hard on a single 404.
   // Candidates come only from analyzer evidence — never invented.
   const servicesWithCandidates = plan.services.map((svc) => {
-    if (svc.type !== "node_api" && svc.type !== "python_api" && svc.type !== "frontend_ssr") {
+    if (!isWebBackendType(svc.type) && svc.type !== "frontend_ssr") {
       return svc;
     }
     // Plans built outside Zod parsing may omit the defaulted array.

@@ -4,6 +4,9 @@ import { detectServices } from "./services";
 import { detectMonorepoTool } from "./monorepo";
 import { detectEnvAndUrls } from "./env";
 import { detectDataNeeds } from "./data";
+import { detectPublicEnv } from "./publicEnv";
+import { detectSupabase } from "./supabase";
+import { nearestRoot } from "./util";
 
 export interface AnalyzeInput {
   repoFullName: string;
@@ -28,12 +31,25 @@ export async function analyzeRepo(
   const fileList = await source.listFiles();
   const files = new Set(fileList);
 
-  const services = await detectServices(source, files);
+  const { services, libraries, companions } = await detectServices(source, files);
   const serviceRoots = services.map((s) => s.rootDir);
 
+  // Code in desktop apps, CLIs, examples, etc. must not add env or data needs to the web app.
+  const companionRoots = companions.map((c) => c.rootDir);
+  const allRoots = [...serviceRoots, ...companionRoots];
+  const appFiles = new Set(
+    fileList.filter((f) => {
+      const owner = nearestRoot(f, allRoots);
+      return !companionRoots.includes(owner) || serviceRoots.includes(owner);
+    }),
+  );
+
   const monorepoTool = detectMonorepoTool(files);
-  const { envRefs, hardcodedUrls } = await detectEnvAndUrls(source, files, serviceRoots);
-  const dataNeeds = await detectDataNeeds(source, files, envRefs);
+  const pythonRoots = new Set(services.filter((s) => s.language === "python").map((s) => s.rootDir));
+  const { envRefs, hardcodedUrls } = await detectEnvAndUrls(source, appFiles, serviceRoots, libraries, pythonRoots);
+  const dataNeeds = await detectDataNeeds(source, appFiles, envRefs);
+  const publicEnv = await detectPublicEnv(source, appFiles, serviceRoots);
+  const supabase = await detectSupabase(source, appFiles, serviceRoots, envRefs, publicEnv);
 
   const fileTree = fileList.slice(0, MAX_FILE_TREE);
 
@@ -45,6 +61,9 @@ export async function analyzeRepo(
     dataNeeds,
     envRefs,
     hardcodedUrls,
+    publicEnv,
+    companions,
+    supabase,
     monorepoTool,
   });
 }

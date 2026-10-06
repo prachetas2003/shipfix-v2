@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { api, type PlanView, type RunEventRow } from "../lib/api";
 import { deriveRequiredProviders, missingProviders } from "../lib/planRequirements";
@@ -10,8 +9,9 @@ import { colors, inputStyle, mono } from "../lib/theme";
 import { WorkerStalledNotice } from "../components/WorkerStalledNotice";
 import { ControlPlaneConsistencyNotice } from "../components/ControlPlaneConsistencyNotice";
 import { FixGuidance } from "../components/FixGuidance";
+import { GithubConnect } from "../components/GithubConnect";
 import { OutcomeBanner } from "../components/OutcomeBanner";
-import { PlanPanel } from "../components/PlanPanel";
+import { companionsFrom, PlanPanel } from "../components/PlanPanel";
 import { ProviderRequirements } from "../components/ProviderRequirements";
 import { Stepper } from "../components/Stepper";
 import { Timeline } from "../components/Timeline";
@@ -37,7 +37,6 @@ function planFailureMessage(events: RunEventRow[]): string {
 }
 
 export default function NewDeploymentPage(): React.ReactElement {
-  const router = useRouter();
   const [step, setStep] = useState(0);
   const [repo, setRepo] = useState("");
   const [planRunId, setPlanRunId] = useState<string | null>(null);
@@ -93,13 +92,14 @@ export default function NewDeploymentPage(): React.ReactElement {
   };
 
   const startDeploy = async () => {
+    const sourceRunId = deployRunId ?? planRunId;
+    if (!sourceRunId) return;
     setStarting(true);
     setErr(null);
     try {
-      const id = await api.startRun("deploy", repo);
+      const id = await api.startDeployFromRun(sourceRunId);
       setDeployRunId(id);
       setStep(3);
-      router.push(`/runs/${id}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -146,7 +146,7 @@ export default function NewDeploymentPage(): React.ReactElement {
         <Panel className="sf-slide-up">
           <h2 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 600 }}>Repository</h2>
           <p style={{ color: colors.dim, fontSize: "0.9rem", lineHeight: 1.6, margin: "0.45rem 0 0" }}>
-            Vite and Next.js frontends on Vercel, Node APIs on Render, Postgres on Neon. Other stacks get an honest diagnosis.
+            Vite, Next.js, TanStack Start and other server-rendered apps on Vercel; Node, Python (FastAPI, Flask, Streamlit) and Dockerfile services on Render; Postgres on Neon, Redis on Upstash. Other stacks get an honest diagnosis.
           </p>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: "1rem" }}>
             <input
@@ -163,6 +163,7 @@ export default function NewDeploymentPage(): React.ReactElement {
               {starting ? "Analyzing…" : "Analyze repo"}
             </Button>
           </div>
+          <GithubConnect />
         </Panel>
       )}
 
@@ -204,6 +205,7 @@ export default function NewDeploymentPage(): React.ReactElement {
             answeredQuestionIds={run.snapshot?.answeredQuestionIds ?? []}
             onAnswersSaved={() => void run.refreshSnapshot()}
             onPlanRevalidated={(p) => setCapturedPlan(p)}
+            companions={companionsFrom(run.repoContext)}
           />
           <ProviderRequirements plan={capturedPlan} connected={connected} onConnected={refreshProviders} allowUpdate />
           <div style={{ display: "flex", gap: 10, marginTop: "1.25rem", flexWrap: "wrap" }}>
@@ -255,6 +257,13 @@ export default function NewDeploymentPage(): React.ReactElement {
           <WorkerStalledNotice show={run.workerStalled && !run.controlPlaneMismatch} />
           <ControlPlaneConsistencyNotice show={run.controlPlaneMismatch} />
           <Timeline events={run.events} />
+          {deployRunId && (
+            <div style={{ marginTop: "1rem" }}>
+              <Link href={`/runs/${deployRunId}`} style={{ textDecoration: "none" }}>
+                <Button variant="ghost">Open full run details</Button>
+              </Link>
+            </div>
+          )}
         </section>
       )}
 

@@ -5,6 +5,7 @@
 
 import { migrateConnectionUrl, type NeonConnectionUrls } from "@shipfix/provisioner";
 import type { Sandbox } from "@shipfix/sandbox";
+import { installForMigration } from "./migrationInstall";
 
 export function findDrizzleConfigPath(files: string[], preferredRootDir?: string): string | null {
   const configs = files.filter((f) => /(^|\/)drizzle\.config\.(ts|js|mjs|cjs)$/.test(f));
@@ -37,6 +38,11 @@ export function drizzleMigrateCommand(packageManager: string): string {
   return "npx drizzle-kit migrate";
 }
 
+/** Schema sync for repos using the `drizzle-kit push` workflow (no migration files). */
+export function drizzlePushCommand(packageManager: string): string {
+  return drizzleMigrateCommand(packageManager).replace("drizzle-kit migrate", "drizzle-kit push --force");
+}
+
 export interface DrizzleMigrateResult {
   ok: boolean;
   skipped: boolean;
@@ -47,27 +53,45 @@ export interface DrizzleMigrateResult {
 }
 
 /**
- * Run `drizzle-kit migrate` with the **direct** Neon URL.
+ * Bring the database schema up to date with the **direct** Neon URL:
+ * `drizzle-kit migrate` when the repo ships migrations; otherwise
+ * `drizzle-kit push --force`, but only on a database ShipFix just created
+ * (empty, so nothing can be lost). A reused database without migrations is
+ * left untouched rather than risk destructive schema changes.
  */
 export async function runDrizzleMigrateDeploy(input: {
   sandbox: Sandbox;
   configPath: string;
   packageManager: string;
   urls: NeonConnectionUrls;
+  /** True when the database was provisioned in this run (no existing data). */
+  freshDatabase: boolean;
   timeoutMs?: number;
 }): Promise<DrizzleMigrateResult> {
   const files = await input.sandbox.list();
-  if (!hasDrizzleMigrations(files, input.configPath)) {
+  const hasMigrations = hasDrizzleMigrations(files, input.configPath);
+  if (!hasMigrations && !input.freshDatabase) {
     return {
       ok: true,
       skipped: true,
-      skipReason: "no_migrations_folder",
-      detail: `Drizzle config found at ${input.configPath} but no drizzle/ migrations — skipping migrate.`,
+      skipReason: "reused_database_without_migrations",
+      detail: `Drizzle config found at ${input.configPath} but no drizzle/ migrations, and the database already holds data — not pushing schema changes automatically. Add migrations (drizzle-kit generate) to have ShipFix apply them safely.`,
     };
   }
 
+  const install = await installForMigration({
+    sandbox: input.sandbox,
+    files,
+    anchorPath: input.configPath,
+    packageManager: input.packageManager,
+  });
+  if (!install.ok) return { ok: false, skipped: false, detail: redactConnectionStrings(install.detail) };
+
   const direct = migrateConnectionUrl(input.urls);
-  const command = drizzleMigrateCommand(input.packageManager);
+  const command = hasMigrations
+    ? drizzleMigrateCommand(input.packageManager)
+    : drizzlePushCommand(input.packageManager);
+  const verb = hasMigrations ? "drizzle-kit migrate" : "drizzle-kit push";
   const cwd = input.configPath.includes("/")
     ? input.configPath.slice(0, input.configPath.lastIndexOf("/"))
     : ".";
@@ -84,17 +108,17 @@ export async function runDrizzleMigrateDeploy(input: {
   const detail = redactConnectionStrings(combined).slice(0, 2000);
 
   if (result.timedOut) {
-    return { ok: false, skipped: false, exitCode: result.exitCode, detail: `drizzle-kit migrate timed out. ${detail}` };
+    return { ok: false, skipped: false, exitCode: result.exitCode, detail: `${verb} timed out. ${detail}` };
   }
   if (result.exitCode !== 0) {
     return {
       ok: false,
       skipped: false,
       exitCode: result.exitCode,
-      detail: detail || `drizzle-kit migrate exited ${result.exitCode}`,
+      detail: detail || `${verb} exited ${result.exitCode}`,
     };
   }
-  return { ok: true, skipped: false, exitCode: 0, detail: detail || "drizzle-kit migrate succeeded." };
+  return { ok: true, skipped: false, exitCode: 0, detail: detail || `${verb} succeeded.` };
 }
 
 function redactConnectionStrings(text: string): string {

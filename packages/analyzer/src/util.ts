@@ -46,6 +46,7 @@ export interface PackageJson {
   type?: string;
   packageManager?: string;
   workspaces?: unknown;
+  bin?: string | Record<string, string>;
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;

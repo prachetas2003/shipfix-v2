@@ -1,6 +1,7 @@
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { schema } from "./schema";
+import { eq } from "drizzle-orm";
+import { githubInstallations, schema } from "./schema";
 
 export * from "./schema";
 export {
@@ -24,4 +25,13 @@ export type Database = NodePgDatabase<typeof schema>;
 export function createDb(connectionString: string): Database {
   const pool = new pg.Pool({ connectionString });
   return drizzle(pool, { schema });
+}
+
+/** GitHub App installation ids this user has proven they control. */
+export async function ownedGithubInstallationIds(db: Database, userId: string): Promise<string[]> {
+  const rows = await db
+    .select({ installationId: githubInstallations.installationId })
+    .from(githubInstallations)
+    .where(eq(githubInstallations.userId, userId));
+  return rows.map((r) => r.installationId);
 }

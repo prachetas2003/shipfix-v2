@@ -128,7 +128,7 @@ describe("next-app", () => {
 });
 
 describe("unsupported repo signals", () => {
-  it("detects FastAPI/Python as an unsupported backend signal", async () => {
+  it("detects a FastAPI backend with its start command and routes", async () => {
     const ctx = await analyzeFixture("fastapi-app");
     expect(ctx.services).toHaveLength(1);
     expect(ctx.services[0]).toMatchObject({
@@ -136,7 +136,9 @@ describe("unsupported repo signals", () => {
       framework: "fastapi",
       role: "backend",
       packageManager: "pip",
+      inferredRun: { start: "uvicorn main:app --host 0.0.0.0 --port $PORT" },
     });
+    expect(ctx.services[0].routeCandidates[0]?.path).toBe("/health");
   });
 
   it("detects Dockerfile-only repos instead of returning no services", async () => {

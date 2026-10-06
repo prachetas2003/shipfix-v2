@@ -7,11 +7,12 @@ import type {
   ServiceType,
   PlanService,
 } from "@shipfix/contracts";
+import { isWebBackendType } from "@shipfix/contracts";
 import {
   analyzeRepo as runAnalyzer,
   repoSourceFromSandbox,
 } from "@shipfix/analyzer";
-import { createLocalDevSandboxProvider } from "@shipfix/sandbox/dev";
+import { createRunSandboxProvider } from "@shipfix/sandbox/runtime";
 import { createSafePostgresSink, createRunLogger, type RunLogger } from "@shipfix/observability";
 import { createLLMGateway } from "@shipfix/llm";
 import { generatePlan as runPlanner } from "@shipfix/planner";
@@ -27,7 +28,8 @@ import { createVercelAdapter } from "@shipfix/adapter-vercel";
 import {
   ProvisionerRegistry,
   createNeonProvisioner,
-  runtimeConnectionUrl,
+  createUpstashProvisioner,
+  isRedisSecret,
   type ManagedProviderId,
 } from "@shipfix/provisioner";
 import { verifyFromPlan, diagnosisFromVerifyOutcome, diagnosisForMigrationFailure, diagnosisForEnvUnresolved } from "@shipfix/verifier";
@@ -40,8 +42,14 @@ import {
   findDrizzleConfigPath,
   runDrizzleMigrateDeploy,
 } from "./drizzleMigrate";
+import { ensureGeneratedSecrets } from "./generatedSecrets";
+import { resolveIntegrationValues, usedIntegrationIds, type IntegrationValuesResult } from "./integrationValues";
 import { buildDeployFailureGuidance } from "./deployFailureGuidance";
-import { resolveProviderDeployTarget } from "./providerResource";
+import {
+  findReusableManagedResource,
+  resolveProviderDeployTarget,
+  stableProviderResourceName,
+} from "./providerResource";
 import {
   computeFinalizeDeployOutcome,
   evaluateDeployGate,
@@ -62,6 +70,7 @@ import {
   deployedResources,
   runInputs,
   projectEnvVars,
+  ownedGithubInstallationIds,
   type Database,
 } from "@shipfix/db";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
@@ -77,7 +86,7 @@ import {
 } from "./controlPlaneConsistency";
 
 /**
- * Temporal ACTIVITIES — the only side-effecting units.
+ * Temporal ACTIVITIES â€” the only side-effecting units.
  *
  * Activities (not the workflow) do I/O: sandbox, analyzer, DB, run-event sink.
  * They are individually retryable and isolated; the workflow stays deterministic
@@ -85,14 +94,14 @@ import {
  *
  * Implemented: analyzeRepo + completeRun + failRun (analyze_only) and
  * proposePlan + finalizePlanRun (plan). Real deploy/provision/verify activities
- * remain explicit stubs — no fake capability.
+ * remain explicit stubs â€” no fake capability.
  */
 
 const notImplemented = (name: string): never => {
   throw new Error(`Activity "${name}" not implemented yet.`);
 };
 
-// ── Lazily-initialized control-plane DB (one pool per worker process) ────────
+// â”€â”€ Lazily-initialized control-plane DB (one pool per worker process) â”€â”€â”€â”€â”€â”€â”€â”€
 let _db: Database | undefined;
 function getDb(): Database {
   if (!_db) {
@@ -138,9 +147,10 @@ async function loadRun(
   };
 }
 
-// ── Registries + vault (one per worker process) ──────────────────────────────
+// â”€â”€ Registries + vault (one per worker process) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const provisioners = new ProvisionerRegistry();
 provisioners.register(createNeonProvisioner());
+provisioners.register(createUpstashProvisioner());
 
 const adapters = new AdapterRegistry();
 adapters.register(createRenderAdapter());
@@ -299,6 +309,7 @@ function providerConsoleUrl(
   const id = encodeURIComponent(externalId);
   if (provider === "render") return `https://dashboard.render.com/web/${id}`;
   if (provider === "neon") return `https://console.neon.tech/app/projects/${id}`;
+  if (provider === "upstash") return `https://console.upstash.com/redis/${id}`;
   if (provider === "vercel") {
     const team = opts?.teamId?.trim();
     const name = opts?.resourceName?.trim();
@@ -347,7 +358,7 @@ function providerReadyForRuntime(provider: string): boolean {
 }
 
 /**
- * Real system capabilities = registered providers ∩ the credentials this user
+ * Real system capabilities = registered providers âˆ© the credentials this user
  * has actually connected. No adapters are registered, so deploy `providers`
  * stays empty (services can't deploy yet); managed provisioning becomes
  * available only for providers the user connected.
@@ -370,7 +381,7 @@ async function loadCapabilities(db: Database, userId: string): Promise<Capabilit
     }
   }
 
-  return buildCapabilities(providerServiceTypes, managed);
+  return buildCapabilities(providerServiceTypes, managed, connected.has("supabase") ? ["supabase"] : []);
 }
 
 async function loadPlan(db: Database, runId: string): Promise<DeploymentPlan> {
@@ -394,6 +405,7 @@ async function loadDeployedRows(db: Database, runId: string): Promise<DeployedRe
     encBlob: r.encBlob,
     encIv: r.encIv,
     encDek: r.encDek,
+    reused: Boolean((r.meta as { reusedFromRunId?: unknown } | null)?.reusedFromRunId),
   }));
 }
 
@@ -421,12 +433,17 @@ async function loadRunInputValues(
   return map;
 }
 
-/** Open durable project env vars keyed by name. Values must never be logged. */
+/**
+ * Open durable project env vars keyed by name, first creating any
+ * `generated_secret` values the plan needs. Values must never be logged.
+ */
 async function loadProjectEnvValues(
   db: Database,
   projectId: string,
   vault: SecretVault,
+  plan: DeploymentPlan,
 ): Promise<Map<string, string>> {
+  await ensureGeneratedSecrets(db, projectId, plan, vault);
   const rows = await db.select().from(projectEnvVars).where(eq(projectEnvVars.projectId, projectId));
   const map = new Map<string, string>();
   for (const row of rows) {
@@ -443,6 +460,35 @@ async function loadProjectEnvValues(
     }
   }
   return map;
+}
+
+/**
+ * Read env values from connected integrations (e.g. the app's Supabase
+ * project) for the plan. Values must never be logged; problems are user-safe.
+ */
+async function loadIntegrationValues(
+  db: Database,
+  userId: string,
+  plan: DeploymentPlan,
+  vault: SecretVault,
+  runInputValues: ReadonlyMap<string, string>,
+): Promise<IntegrationValuesResult> {
+  if (usedIntegrationIds(plan).size === 0) return { values: new Map(), problems: [] };
+  const accounts = await db.select().from(providerAccounts).where(eq(providerAccounts.userId, userId));
+  const credentials = new Map<string, Record<string, string>>();
+  for (const a of accounts) {
+    if (a.provider === "supabase") credentials.set(a.provider, await decryptProviderCredentials(vault, a));
+  }
+  return resolveIntegrationValues(plan, credentials, runInputValues);
+}
+
+/** Integration env names the user has not overridden on the project. */
+function integrationEnvStillNeeded(plan: DeploymentPlan, projectEnvValues: ReadonlyMap<string, string>): string[] {
+  const names = new Set<string>();
+  for (const s of plan.services) {
+    for (const e of s.env) if (e.source === "integration" && !projectEnvValues.get(e.name)) names.add(e.name);
+  }
+  return [...names];
 }
 
 /**
@@ -537,7 +583,7 @@ export async function analyzeRepo(runId: string): Promise<RepoContext> {
   await setStatus(db, runId, "analyzing");
   await logger.stage("analyzing", `Analyzing ${repoFullName}`);
 
-  const provider = createLocalDevSandboxProvider();
+  const provider = createRunSandboxProvider();
   const sandbox = await provider.create({ runId });
 
   try {
@@ -548,6 +594,7 @@ export async function analyzeRepo(runId: string): Promise<RepoContext> {
     const token = await resolveCloneToken({
       repoFullName,
       installationId: githubInstallationId,
+      allowedInstallationIds: await ownedGithubInstallationIds(db, run.userId),
     });
     await sandbox.clone({ repoFullName, sha: run.commitSha, token });
 
@@ -612,8 +659,26 @@ export async function failRun(runId: string, message: string): Promise<void> {
     return;
   }
 
-  await setStatus(db, runId, "failed", true);
   const logger = createRunLogger(runId, createSafePostgresSink(db));
+  const liveResources = (
+    await db.select({ status: deployedResources.status }).from(deployedResources).where(eq(deployedResources.runId, runId))
+  ).filter((r) => r.status === "live").length;
+
+  // Live infrastructure (e.g. a provisioned database, a deployed backend) is useful
+  // evidence even when a later step broke, so the honest terminal state is
+  // "diagnosed", not "failed".
+  if (liveResources > 0 && !isControlPlaneConsistencyMessage(message)) {
+    await setStatus(db, runId, "diagnosed", true);
+    const failure = failureEventForMessage(message);
+    await logger.error(failure.title, { event: failure.event, message, liveResources });
+    await logger.stage(
+      "diagnosed",
+      `${liveResources} resource(s) are live, but the deploy did not finish: ${message}`,
+    );
+    return;
+  }
+
+  await setStatus(db, runId, "failed", true);
 
   if (isControlPlaneConsistencyMessage(message)) {
     await logger.error(
@@ -683,7 +748,7 @@ export async function proposePlan(runId: string, ctx: RepoContext): Promise<Depl
   try {
     // Lazy: repos planned deterministically never touch the model, so they
     // must not require LLM config or consume LLM usage. The LLM path still
-    // throws a clear, actionable error if backend-owned env vars are unset —
+    // throws a clear, actionable error if backend-owned env vars are unset â€”
     // we never fall back to a mock planner.
     const gateway = lazyGateway(() =>
       meteredGateway(createLLMGateway(), db, {
@@ -765,7 +830,7 @@ export async function proposePlan(runId: string, ctx: RepoContext): Promise<Depl
 
   if (downgraded) {
     await logger.warn(
-      "Deployment is not available in this build — the validator downgraded the plan. It is delivered as a diagnosis/preview.",
+      "Deployment is not available in this build â€” the validator downgraded the plan. It is delivered as a diagnosis/preview.",
       {
         event: "plan_downgraded",
         from: result.plan.classification,
@@ -787,7 +852,7 @@ export async function finalizePlanRun(
   const logger = createRunLogger(runId, createSafePostgresSink(db));
   if (classification === "diagnose_only") {
     await setStatus(db, runId, "diagnosed", true);
-    await logger.stage("diagnosed", "Deployment not available in this build — diagnosis ready");
+    await logger.stage("diagnosed", "Deployment not available in this build â€” diagnosis ready");
   } else {
     await setStatus(db, runId, "succeeded", true);
     await logger.stage("succeeded", "Deployment plan ready");
@@ -804,7 +869,7 @@ export async function gateDeploy(runId: string): Promise<{ allow: boolean }> {
   const db = getDb();
   const logger = createRunLogger(runId, createSafePostgresSink(db));
 
-  // C2: flip Yellow→Green when secrets/project env are already answered.
+  // C2: flip Yellowâ†’Green when secrets/project env are already answered.
   try {
     const { revalidatePlanForRun } = await import("./revalidatePlan");
     const rev = await revalidatePlanForRun(db, runId);
@@ -839,9 +904,11 @@ export async function gateDeploy(runId: string): Promise<{ allow: boolean }> {
   // seconds as a clear setup blocker, not after a ten-minute deploy attempt.
   if (gate.allow) {
     const { run } = await loadRun(db, runId);
+    const usesIntegrations = usedIntegrationIds(plan).size > 0;
     const requiredProviders = new Set<string>([
       ...plan.services.map((s) => s.provider),
       ...plan.managed.filter((m) => m.mode === "provision" && m.provider).map((m) => m.provider!),
+      ...(usesIntegrations ? (plan.integrations ?? []).map((i) => i.provider) : []),
     ]);
     const accounts = await db
       .select()
@@ -868,9 +935,37 @@ export async function gateDeploy(runId: string): Promise<{ allow: boolean }> {
         await setStatus(db, runId, "diagnosed", true);
         await logger.stage(
           "diagnosed",
-          `Deploy not started — the ${provider} credential was rejected. Reconnect the account and rerun deploy.`,
+          `Deploy not started â€” the ${provider} credential was rejected. Reconnect the account and rerun deploy.`,
         );
         return { allow: false };
+      }
+    }
+
+    // Read the existing project's values now, so a wrong or missing project
+    // fails before any resource exists rather than mid-deploy.
+    if (usesIntegrations) {
+      const runInputValues = await loadRunInputValues(db, runId, vault);
+      const projectEnvValues = await loadProjectEnvValues(db, run.projectId, vault, plan);
+      const stillNeeded = integrationEnvStillNeeded(plan, projectEnvValues);
+      if (stillNeeded.length > 0) {
+        const { values, problems } = await loadIntegrationValues(db, run.userId, plan, vault, runInputValues);
+        const missing = plan.services.flatMap((s) =>
+          s.env.filter((e) => e.source === "integration" && stillNeeded.includes(e.name) && !values.has(e.ref ?? "")),
+        );
+        if (missing.length > 0) {
+          const message =
+            problems[0] ??
+            `Your connected Supabase project did not provide ${[...new Set(missing.map((e) => e.name))].join(", ")}. Set them on the app, then rerun deploy.`;
+          await logger.error(message, {
+            event: "deploy_setup_blocker",
+            provider: "supabase",
+            failureKind: "setup_blocker",
+            code: "integration_unavailable",
+          });
+          await setStatus(db, runId, "diagnosed", true);
+          await logger.stage("diagnosed", `Deploy not started — ${message}`);
+          return { allow: false };
+        }
       }
     }
     return { allow: true };
@@ -938,7 +1033,7 @@ export async function provisionManagedServices(runId: string): Promise<Provision
     const provisioner = provisioners.get(m.provider as ManagedProviderId);
     if (!provisioner) {
       summary.skipped.push({ id: m.id, reason: "no_provisioner" });
-      await logger.warn(`No provisioner registered for "${m.provider}" — skipping ${m.id}.`, {
+      await logger.warn(`No provisioner registered for "${m.provider}" â€” skipping ${m.id}.`, {
         event: "provision_skipped",
         managedId: m.id,
         provider: m.provider,
@@ -967,6 +1062,65 @@ export async function provisionManagedServices(runId: string): Promise<Provision
       continue;
     }
 
+    const previous = await findReusableManagedResource(db, {
+      projectId: run.projectId,
+      serviceId: m.id,
+      provider: m.provider,
+      excludeRunId: runId,
+    });
+    if (previous) {
+      const exposed = {
+        name: previous.exposesEnv || m.exposesEnv || "DATABASE_URL",
+        value: await vault.open({
+          encDek: previous.encDek!,
+          encBlob: previous.encBlob!,
+          encIv: previous.encIv!,
+        }),
+      };
+      const reuseVerdict = await provisioner.verify(exposed);
+      if (reuseVerdict.ok) {
+        await db.insert(deployedResources).values({
+          runId,
+          serviceId: m.id,
+          kind: previous.kind,
+          provider: m.provider,
+          externalId: previous.externalId,
+          url: previous.url,
+          status: "live",
+          exposesEnv: exposed.name,
+          encBlob: previous.encBlob,
+          encIv: previous.encIv,
+          encDek: previous.encDek,
+          meta: {
+            ...resourceMeta({ provider: m.provider, externalId: previous.externalId }),
+            reusedFromRunId: previous.runId,
+          },
+        });
+        summary.provisioned.push(m.id);
+        await logger.log(`Reusing existing ${m.kind} for "${m.id}" (data preserved)`, {
+          event: "resource_reused",
+          managedId: m.id,
+          provider: m.provider,
+          kind: m.kind,
+          externalId: previous.externalId,
+          host: previous.url,
+          reusedFromRunId: previous.runId,
+        });
+        await logger.log(`Verification for "${m.id}": reachable`, {
+          event: "verification",
+          check: "db_connect",
+          managedId: m.id,
+          ok: true,
+          detail: reuseVerdict.detail,
+        });
+        continue;
+      }
+      await logger.warn(
+        `Previous ${m.kind} for "${m.id}" is no longer reachable; provisioning a new one.`,
+        { event: "resource_reuse_failed", managedId: m.id, externalId: previous.externalId, detail: reuseVerdict.detail },
+      );
+    }
+
     // Decrypt credentials JUST-IN-TIME (never persisted/logged in the clear).
     const credValues = JSON.parse(
       await vault.open({ encDek: account.encDek, encBlob: account.encBlob, encIv: account.encIv }),
@@ -991,7 +1145,7 @@ export async function provisionManagedServices(runId: string): Promise<Provision
     });
 
     const result = await provisioner.provision({
-      resourceName: `shipfix-${runId}-${m.id}`,
+      resourceName: stableProviderResourceName(run.projectId, m.id),
       managed: m,
       credentials,
       onLog: (line) => void logger.log(line, { event: "provision_log", managedId: m.id }),
@@ -1035,7 +1189,9 @@ export async function provisionManagedServices(runId: string): Promise<Provision
               serviceId: m.id,
               evidence: { detail: verdict.detail },
               action:
-                "Confirm the Neon project is live and DATABASE_URL is wired to the backend, then retry deploy.",
+                m.kind === "redis"
+                  ? `Confirm the Upstash database is active and ${m.exposesEnv} is wired to the app, then retry deploy.`
+                  : `Confirm the Neon project is live and ${m.exposesEnv} is wired to the backend, then retry deploy.`,
             },
           }),
     };
@@ -1052,7 +1208,7 @@ export async function provisionManagedServices(runId: string): Promise<Provision
         exposesEnv: m.exposesEnv,
         meta: resourceMeta({ provider: m.provider, externalId: result.externalId }),
       });
-      await logger.error(`Database verification failed for "${m.id}".`, verifyPayload);
+      await logger.error(`${m.kind === "redis" ? "Redis" : "Database"} verification failed for "${m.id}".`, verifyPayload);
       continue;
     }
 
@@ -1129,13 +1285,28 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
     plan.services.find((s) => s.type === "frontend_ssr")?.install?.split(/\s+/)[0] ??
     "npm";
 
-  const provider = createLocalDevSandboxProvider();
-  const sandbox = await provider.create({ runId: `${runId}-migrate` });
+  const dbHosts: string[] = [];
+  for (const m of targets) {
+    const row = deployedRows.find((r) => r.serviceId === m.id && r.status === "live");
+    const urls = row ? await openManagedConnectionUrls(row, vault) : null;
+    if (!urls) continue;
+    for (const raw of [urls.pooled, urls.direct]) {
+      try {
+        if (raw) dbHosts.push(new URL(raw).hostname);
+      } catch {
+        /* unparseable URLs are reported by the migration step itself */
+      }
+    }
+  }
+
+  const provider = createRunSandboxProvider();
+  const sandbox = await provider.create({ runId: `${runId}-migrate`, egressAllow: dbHosts });
 
   try {
     const token = await resolveCloneToken({
       repoFullName,
       installationId: githubInstallationId,
+      allowedInstallationIds: await ownedGithubInstallationIds(db, run.userId),
     });
     await sandbox.clone({ repoFullName, sha: run.commitSha, token });
     const files = await sandbox.list();
@@ -1191,6 +1362,7 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
           configPath,
           packageManager,
           urls,
+          freshDatabase: !row.reused,
         });
       } else {
         const schemaPath = findPrismaSchemaPath(files, preferredRoot || undefined);
@@ -1215,6 +1387,7 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
           schemaPath,
           packageManager,
           urls,
+          freshDatabase: !row.reused,
         });
       }
 
@@ -1282,7 +1455,7 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
 }
 
 /**
- * Deploy backend services from the validated plan (this slice: Render node_api only).
+ * Deploy backend services from the validated plan (Render web services: Node, Python, Dockerfile).
  * Resolves env (including sealed DATABASE_URL) in trusted worker code, then
  * calls the real adapter. Never logs secret env values.
  */
@@ -1296,10 +1469,10 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
 
   const summary: DeploySummary = { deployed: [], failed: [], skipped: [] };
   const backendTargets = plan.services.filter(
-    (s) => s.type === "node_api" && s.provider === "render",
+    (s) => isWebBackendType(s.type) && s.provider === "render",
   );
   if (backendTargets.length === 0) {
-    await logger.log("No Render node_api services in plan.", { event: "deploy_skipped" });
+    await logger.log("No Render backend services in plan.", { event: "deploy_skipped" });
     return summary;
   }
 
@@ -1313,7 +1486,8 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
   const accountByProvider = new Map(accounts.map((a) => [a.provider, a]));
   const deployedRows = await loadDeployedRows(db, runId);
   const runInputValues = await loadRunInputValues(db, runId, vault);
-  const projectEnvValues = await loadProjectEnvValues(db, run.projectId, vault);
+  const projectEnvValues = await loadProjectEnvValues(db, run.projectId, vault, plan);
+  const { values: integrationValues } = await loadIntegrationValues(db, run.userId, plan, vault, runInputValues);
 
   if (!adapters.has("render") || !accountByProvider.has("render")) {
     for (const s of backendTargets) {
@@ -1329,7 +1503,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
 
   for (const svc of backendTargets) {
     const types = caps.providers.get("render");
-    if (!types?.has("node_api")) {
+    if (!types?.has(svc.type)) {
       summary.skipped.push({ id: svc.id, reason: "capability_missing" });
       continue;
     }
@@ -1348,6 +1522,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
       deferFrontendOrigins: true,
       runInputValues,
       projectEnvValues,
+      integrationValues,
     });
     if (issues.length > 0) {
       summary.skipped.push({ id: svc.id, reason: issues[0]?.code ?? "env_unresolved" });
@@ -1517,10 +1692,12 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
 
     const deployedRows = await loadDeployedRows(db, runId);
     const runInputValues = await loadRunInputValues(db, runId, vault);
-    const projectEnvValues = await loadProjectEnvValues(db, run.projectId, vault);
+    const projectEnvValues = await loadProjectEnvValues(db, run.projectId, vault, plan);
+    const { values: integrationValues } = await loadIntegrationValues(db, run.userId, plan, vault, runInputValues);
     const { env, issues } = await resolveServiceEnv(svc, plan, deployedRows, vault, {
       runInputValues,
       projectEnvValues,
+      integrationValues,
     });
     if (issues.length > 0) {
       summary.skipped.push({ id: svc.id, reason: issues[0]?.code ?? "env_unresolved" });
@@ -1579,12 +1756,12 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
         kind === "provider_limit"
           ? `Vercel refused to create another project for this GitHub repo because the repo is already connected to too many Vercel projects. Delete old Vercel projects or reuse an existing project.`
           : kind === "provider_env_conflict"
-            ? `Vercel could not update an environment variable after retrying. This is a provider-side env conflict — rerun Deploy after ShipFix replaces the variable, or check the Vercel project settings.`
+            ? `Vercel could not update an environment variable after retrying. This is a provider-side env conflict â€” rerun Deploy after ShipFix replaces the variable, or check the Vercel project settings.`
           : kind === "setup_blocker"
             ? result.logs?.trim() ||
               `Deploy blocked for "${svc.id}": update the Vercel connection (token/teamId/GitHub link), then retry.`
             : kind === "timeout"
-              ? `Frontend "${svc.id}" deployment timed out on Vercel. Backend and database may still be live — check Vercel deployment logs or rerun Deploy.`
+              ? `Frontend "${svc.id}" deployment timed out on Vercel. Backend and database may still be live â€” check Vercel deployment logs or rerun Deploy.`
               : `Deploy failed for "${svc.id}".`;
       await logger.error(setupMsg, {
         event:
@@ -1651,7 +1828,7 @@ export interface WireDeferredSummary {
 
 /**
  * After the frontend is live, apply deferred backend env (CORS_ORIGIN / web.origin)
- * via Render setEnv + redeploy so verification can prove frontend→backend reachability.
+ * via Render setEnv + redeploy so verification can prove frontendâ†’backend reachability.
  */
 export async function wireDeferredBackendEnv(runId: string): Promise<WireDeferredSummary> {
   const db = getDb();
@@ -1665,7 +1842,7 @@ export async function wireDeferredBackendEnv(runId: string): Promise<WireDeferre
     (w) =>
       w.fromServiceId === "web" &&
       (w.fromField === "origin" || w.fromField === "publicUrl") &&
-      plan.services.some((s) => s.id === w.toServiceId && s.type === "node_api"),
+      plan.services.some((s) => s.id === w.toServiceId && isWebBackendType(s.type)),
   );
   if (deferredEdges.length === 0) {
     await logger.log("No deferred backend origin wiring.", { event: "env_wire_skipped" });
@@ -1679,7 +1856,7 @@ export async function wireDeferredBackendEnv(runId: string): Promise<WireDeferre
     for (const id of backendIds) {
       summary.skipped.push({ id, reason: "frontend_not_live" });
     }
-    await logger.warn("Frontend is not live — cannot wire CORS origins yet.", {
+    await logger.warn("Frontend is not live â€” cannot wire CORS origins yet.", {
       event: "env_wire_skipped",
       reason: "frontend_not_live",
     });
@@ -1723,9 +1900,11 @@ export async function wireDeferredBackendEnv(runId: string): Promise<WireDeferre
       continue;
     }
 
+    const runInputValues = await loadRunInputValues(db, runId, vault);
     const { env, issues } = await resolveServiceEnv(svc, plan, deployedRows, vault, {
-      runInputValues: await loadRunInputValues(db, runId, vault),
-      projectEnvValues: await loadProjectEnvValues(db, run.projectId, vault),
+      runInputValues,
+      projectEnvValues: await loadProjectEnvValues(db, run.projectId, vault, plan),
+      integrationValues: (await loadIntegrationValues(db, run.userId, plan, vault, runInputValues)).values,
     });
     if (issues.length > 0) {
       summary.failed.push(backendId);
@@ -1807,11 +1986,8 @@ export async function wireDeferredBackendEnv(runId: string): Promise<WireDeferre
     }
   }
 
-  if (summary.failed.length > 0) {
-    throw new Error(
-      `Failed to wire frontend origin into backend (${summary.failed.join(", ")}).`,
-    );
-  }
+  // Wiring failures are recorded above and surface through verification (the CORS
+  // check fails) and finalizeDeployRun, which keeps live services visible.
   return summary;
 }
 
@@ -1853,17 +2029,21 @@ export async function verifyDeployedPlan(runId: string): Promise<PlanVerifySumma
     for (const check of plan.verification.filter((c) => c.check === "db_connect")) {
       const row = managedRows.find((r) => r.serviceId === check.serviceId && r.status === "live");
       if (!row) continue;
-      const urls = await openManagedConnectionUrls(row, vault);
-      if (urls) dbConnections[check.serviceId] = runtimeConnectionUrl(urls);
+      if (!row.encBlob || !row.encIv || !row.encDek) continue;
+      // The sealed secret itself; each provisioner's verify knows how to read it.
+      dbConnections[check.serviceId] = await vault.open({ encBlob: row.encBlob, encIv: row.encIv, encDek: row.encDek });
     }
   }
 
   const neon = createNeonProvisioner();
+  const upstash = createUpstashProvisioner();
   const resourceRefs = live.map((r) => ({ serviceId: r.serviceId, publicUrl: r.url! }));
   const outcomes = await verifyFromPlan(plan, resourceRefs, {
     dbConnections,
-    verifyDbConnect: async (connectionString) =>
-      neon.verify({ name: "DATABASE_URL", value: connectionString }),
+    verifyDbConnect: async (secret) =>
+      isRedisSecret(secret)
+        ? upstash.verify({ name: "REDIS_URL", value: secret })
+        : neon.verify({ name: "DATABASE_URL", value: secret }),
   });
 
   for (const o of outcomes) {
@@ -1885,7 +2065,7 @@ export async function verifyDeployedPlan(runId: string): Promise<PlanVerifySumma
       continue;
     }
     // On fallback substitution the passing probe is the last result, not the
-    // first — report the URL/status that actually proved (or disproved) health.
+    // first â€” report the URL/status that actually proved (or disproved) health.
     const decisive = o.results.find((r) => r.ok) ?? primary;
     const diagnosis = diagnosisFromVerifyOutcome(o, plan, resourceRefs);
     await logger.log(
@@ -1926,7 +2106,7 @@ export async function finalizeDeployRun(runId: string, outcome: DeployRunOutcome
   await logger.stage(result.status, result.message);
 }
 
-// ── Deploy-mode activities (intentionally unimplemented beyond this slice) ───
+// â”€â”€ Deploy-mode activities (intentionally unimplemented beyond this slice) â”€â”€â”€
 
 /**
  * Bounded recovery after deploy: re-verify, and for CORS failures re-wire
@@ -1989,7 +2169,7 @@ export async function verifySystem(runId: string): Promise<{
     actions.push("verifyDeployedPlan");
     verify = await verifyDeployedPlan(runId);
     if (verify.failed.length === 0) {
-      await logger.log("Recovery succeeded — verification passed after rewiring origins.", {
+      await logger.log("Recovery succeeded â€” verification passed after rewiring origins.", {
         event: "recovery_succeeded",
         attempts,
       });
@@ -2009,7 +2189,7 @@ export async function verifySystem(runId: string): Promise<{
   return { ok: verify.failed.length === 0, verify, attempts, actions };
 }
 
-/** Legacy finalize stub — deploy mode uses finalizeDeployRun. */
+/** Legacy finalize stub â€” deploy mode uses finalizeDeployRun. */
 export async function finalize(_runId: string, _ok: boolean): Promise<void> {
   return notImplemented("finalize");
 }

@@ -160,7 +160,14 @@ export function ConnectProvider({
                 aria-label={`${guide.name} ${field.label}`}
               />
             ))}
-            <Button onClick={() => void connect()} disabled={saving || value.trim().length === 0}>
+            <Button
+              onClick={() => void connect()}
+              disabled={
+                saving ||
+                value.trim().length === 0 ||
+                (guide.optionalFields ?? []).some((f) => f.required && !(optionalValues[f.field] ?? "").trim())
+              }
+            >
               {saving ? "Saving…" : connected ? `Update ${guide.name}` : `Connect ${guide.name}`}
             </Button>
           </div>

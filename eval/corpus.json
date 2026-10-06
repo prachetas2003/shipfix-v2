@@ -1,0 +1,2128 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "../packages/analyzer/test/fixtures/golden-fullstack",
+      "category": "fixture",
+      "source": "curated",
+      "expect": "deployable",
+      "notes": "Vite + Express + Postgres pnpm workspace"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/golden-next",
+      "category": "fixture",
+      "source": "curated",
+      "expect": "deployable",
+      "notes": "Next.js App Router + Postgres"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/golden-next-api",
+      "category": "fixture",
+      "source": "curated",
+      "expect": "deployable",
+      "notes": "Next.js + Express + Postgres pnpm workspace"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/replit-pnpm-workspace",
+      "category": "fixture",
+      "expect": "deployable",
+      "notes": "Replit Agent pnpm workspace: Express + Vite + Drizzle Postgres, libs and mockup sandbox"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/lovable-supabase",
+      "category": "fixture",
+      "expect": "deployable",
+      "notes": "Lovable Vite + Supabase with committed public .env (anon key), plus a service-role key that must stay private"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/vite-frontend",
+      "category": "fixture",
+      "source": "curated"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/next-app",
+      "category": "fixture",
+      "source": "curated"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/express-backend",
+      "category": "fixture",
+      "source": "curated"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/vite-express-split",
+      "category": "fixture",
+      "source": "curated"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/prisma-postgres",
+      "category": "fixture",
+      "source": "curated"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/drizzle-postgres",
+      "category": "fixture",
+      "source": "curated"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/pnpm-workspace",
+      "category": "fixture",
+      "source": "curated"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/hardcoded-localhost",
+      "category": "fixture",
+      "source": "curated"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/fastapi-app",
+      "category": "fixture",
+      "source": "curated"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/docker-only",
+      "category": "fixture",
+      "source": "curated"
+    },
+    {
+      "path": "../packages/analyzer/test/fixtures/docker-compose-only",
+      "category": "fixture",
+      "source": "curated"
+    },
+    {
+      "repo": "vercel/ai-chatbot",
+      "category": "starter",
+      "source": "curated",
+      "notes": "Next.js + Drizzle Postgres + auth"
+    },
+    {
+      "repo": "vercel/nextjs-subscription-payments",
+      "category": "starter",
+      "source": "curated",
+      "notes": "Next.js + Supabase + Stripe"
+    },
+    {
+      "repo": "vercel/commerce",
+      "category": "starter",
+      "source": "curated"
+    },
+    {
+      "repo": "vercel/platforms",
+      "category": "starter",
+      "source": "curated"
+    },
+    {
+      "repo": "nextjs/saas-starter",
+      "category": "starter",
+      "source": "curated",
+      "notes": "Next.js + Drizzle Postgres + Stripe"
+    },
+    {
+      "repo": "shadcn-ui/taxonomy",
+      "category": "starter",
+      "source": "curated",
+      "notes": "Next.js + Prisma"
+    },
+    {
+      "repo": "mckaywrigley/chatbot-ui",
+      "category": "starter",
+      "source": "curated",
+      "notes": "Next.js + Supabase"
+    },
+    {
+      "repo": "t3-oss/create-t3-turbo",
+      "category": "starter",
+      "source": "curated",
+      "notes": "Turbo monorepo"
+    },
+    {
+      "repo": "remix-run/indie-stack",
+      "category": "starter",
+      "source": "curated",
+      "notes": "Remix + Prisma SQLite"
+    },
+    {
+      "repo": "remix-run/blues-stack",
+      "category": "starter",
+      "source": "curated",
+      "notes": "Remix + Prisma Postgres"
+    },
+    {
+      "repo": "wasp-lang/open-saas",
+      "category": "starter",
+      "source": "curated"
+    },
+    {
+      "repo": "fastapi/full-stack-fastapi-template",
+      "category": "starter",
+      "source": "curated",
+      "notes": "FastAPI + React + Postgres"
+    },
+    {
+      "repo": "nestjs/typescript-starter",
+      "category": "starter",
+      "source": "curated"
+    },
+    {
+      "repo": "microsoft/TypeScript-Node-Starter",
+      "category": "starter",
+      "source": "curated",
+      "notes": "Express + Mongo"
+    },
+    {
+      "repo": "hagopj13/node-express-boilerplate",
+      "category": "starter",
+      "source": "curated",
+      "notes": "Express + Mongo"
+    },
+    {
+      "repo": "w3tecch/express-typescript-boilerplate",
+      "category": "starter",
+      "source": "curated"
+    },
+    {
+      "repo": "sahat/hackathon-starter",
+      "category": "starter",
+      "source": "curated",
+      "notes": "Express + Mongo"
+    },
+    {
+      "repo": "gothinkster/node-express-realworld-example-app",
+      "category": "tutorial",
+      "source": "curated",
+      "notes": "Express + Prisma"
+    },
+    {
+      "repo": "gothinkster/react-redux-realworld-example-app",
+      "category": "tutorial",
+      "source": "curated",
+      "notes": "CRA frontend"
+    },
+    {
+      "repo": "sveltejs/realworld",
+      "category": "tutorial",
+      "source": "curated",
+      "notes": "SvelteKit"
+    },
+    {
+      "repo": "adrianhajdin/project_mern_memories",
+      "category": "tutorial",
+      "source": "curated",
+      "notes": "client/ + server/ split MERN"
+    },
+    {
+      "repo": "adrianhajdin/ecommerce_sanity_stripe",
+      "category": "tutorial",
+      "source": "curated"
+    },
+    {
+      "repo": "bradtraversy/proshop_mern",
+      "category": "tutorial",
+      "source": "curated",
+      "notes": "MERN with root server + frontend/"
+    },
+    {
+      "repo": "umami-software/umami",
+      "category": "oss",
+      "source": "curated",
+      "notes": "Next.js + Prisma Postgres"
+    },
+    {
+      "repo": "dubinc/dub",
+      "category": "oss",
+      "source": "curated",
+      "notes": "Turbo monorepo"
+    },
+    {
+      "repo": "documenso/documenso",
+      "category": "oss",
+      "source": "curated",
+      "notes": "Turbo monorepo"
+    },
+    {
+      "repo": "calcom/cal.com",
+      "category": "oss",
+      "source": "curated",
+      "notes": "Large Turbo monorepo"
+    },
+    {
+      "repo": "excalidraw/excalidraw",
+      "category": "oss",
+      "source": "curated",
+      "notes": "Yarn workspaces Vite app"
+    },
+    {
+      "repo": "lobehub/lobe-chat",
+      "category": "oss",
+      "source": "curated"
+    },
+    {
+      "repo": "ChatGPTNextWeb/NextChat",
+      "category": "oss",
+      "source": "curated"
+    },
+    {
+      "repo": "formbricks/formbricks",
+      "category": "oss",
+      "source": "curated"
+    },
+    {
+      "repo": "twentyhq/twenty",
+      "category": "oss",
+      "source": "curated",
+      "notes": "Nx monorepo"
+    },
+    {
+      "repo": "hoppscotch/hoppscotch",
+      "category": "oss",
+      "source": "curated"
+    },
+    {
+      "repo": "expressjs/express",
+      "category": "negative",
+      "source": "curated",
+      "expect": "diagnose_only",
+      "notes": "Library, not an app"
+    },
+    {
+      "repo": "tj/commander.js",
+      "category": "negative",
+      "source": "curated",
+      "expect": "diagnose_only",
+      "notes": "Library, not an app"
+    },
+    {
+      "repo": "octocat/Hello-World",
+      "category": "negative",
+      "source": "curated",
+      "expect": "diagnose_only",
+      "notes": "No code"
+    },
+    {
+      "repo": "igreja-cbrio/SISTEMA_INTEGRADO_CBRIO",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Slotimob/slotimob-home-hub",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "mahdikhadri526-hue/maarifgestion",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "lizzystannah/aqkianda",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Miiles01/flow-ai-studio",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "dreamfuse/your-cv-creator",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "andersonmarquesoficial1980-cyber/canteirointeligente",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "denadoolin-careflow/careflowplanner",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Suyanka21/SECURITY-APP",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Priyanshuu5/sharma-krishan-website",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "dcantonoliveira-cloud/stock-savvy-spread",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "GabrielScrin/dash-sheet-8engage-vercel",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "serpa45/noov-app",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "ericobrito/invest-vision-monthly",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "FabienGB69/qitconcierge",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "proyectofrozz/frozz-web",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "ctuite11/allagentconnect",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "kisame098/remix-of-react-design-replica",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "jonathanavis96/all-done-sites-platform",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "alexandermj1/texas-burial-beauty",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "lulashoppenjamo-code/pixel-perfect",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "tomlav5/sideline-coach-assistant",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "fredriklichtenstein-netizen/pif",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "phanlam2593/lienminhliendoanh",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "YourEyes-dev/youreyesnovo",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "sistemas-fetely/sncf",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "luisms-3939/Flow",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "vaboustani-source/gfh-planning-journal",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Devpy220/leviescalas",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "nathanhu-sudo/digital-twin-gardener",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "lunari-eduardo/lunari-studio",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "andreghiggi/quick-jot",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "KhayiCollective/stylysapp",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "implantarhconsultoria-coder/rh-prospera-hub-70cb89a5",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "medtraie/iloca",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "ironstripe/yeti-alpine-booking",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "gseberino/marineflow-erp",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "TLAINE63/d365-svenska-guiden",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Holagpt-ai/hedgefun-insights",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Tech24Virtual/24h-virtual",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "mschoolfielddesign/portfolio",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "miller275/crypto-freedom-hub",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "JMBBotha/field-link-sync",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "douglassantos-soldiers/fit-companion",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "tajwar-razib/tajwar-razib",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Rf0303Bf3004/skate-club-hub",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "thevaidik/scifi-empire-portfolio",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "hosamyaserturkey-ops/yard-wise-flows",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "caleb-fynewever/cozy-bundle-maker",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Diegoung/holistic-haven-react",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "pedrofeithosa/convite-Pedro-e-Clara",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Iamjimmyblaq/smarthiring",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "soufianechinoune-prog/eats-hub-central",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "alexignaciomkt/a2tickets360",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "RassoulEbrahimi/fitssai-coach",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "RGMThech/NGHair-landigpage",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "winstonwilliamsiii/Mosaic_Tek",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "1LeoDurand/sejourcasaminga",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "RecruitigEntrepreneur/hire-speedy-ai",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Entaltek/entaltek-applied-energy",
+      "category": "lovable",
+      "source": "discover:\"Welcome to your Lovable project\" in:readme"
+    },
+    {
+      "repo": "Myrhythm0106/myrhythmapp",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "Zohaibq112/Anita-Portfolio",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "nkmulle-png/rq-test",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "RGGinnovation/landing-page-builder",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "pacjr/WebProc",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "autonomia2025/recepcionistaai",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "danielmariano93-hub/goal-driven-glow",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "CDO-Coaching/auto-host-forge",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "kingpumpski/harmony-health-hub",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "Ndzin77/cardapiobrasafood",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "ronicomercial19-eng/ninefitpro",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "businessanjos/roiboy",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "airchiteckt/my-personal-hub",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "weybridgelodge-sys/bright-lodge-spark",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "AssistantVirtualAI/attach-app-creator-8134a2fa",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "lucasmartins197/life-path-flow-b10902ec",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "dgarauj04/FoodMeet",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "malevcode/comediq-7d092b89",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "EnkiConsul/foodgestao",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "jjking321/guesty-owner-connect",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "livcharpentier/areca-asso",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "ASPaes/aspdoctorsaas",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "ERICKSON-492/joyful-design-theme",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "rezarafeie/rafiei-global-vision",
+      "category": "lovable",
+      "source": "discover:\"lovable.dev\" in:readme"
+    },
+    {
+      "repo": "aquryhasai-source/Nur-Islamic-AI",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "sphinx2046/suxin-news-aggregator",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "heymegabyte/claude-skills",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "mujtahidaktanto/Rumahagen",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "DayZAnder/llm-os",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "onedrop-io/onedrop",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "ndswimming92/boxed2Built",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "ankitkapur1992-hlido/hlido-public",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "mehtaaashi05/mgt3745-hw5",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "brianv1976/paradox-travel-network",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "lingm5851-ui/ai-news",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "Prompt-Frenzy/ai-directory",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "Spirit-Hacker/Forge-AI",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "Luigi-Ciapparelli/K9World",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "aayushsoni-ai/ScrapeAi",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "RemyLoveLogicAI/RemysBolt",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "sunderbrinkquentin-coder/DYD-LIVE0505",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "irfansofyana/my-awesome-stars",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "Samrudh2006/Brahma",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "alexar76/aicom",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "cjldw/newaicoding",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "QAInsights/awesome-ai-tools",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "ARUNAGIRINATHAN-K/awesome-ai-agents-2026",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "Chicha202608/tume-mahjong",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "varshan6369/-edusense-01",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "somerandomguy-coder/base44-superagent-test",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "varshan6369/Edusense-App",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "shredthaGNAR/list-of-my-starred-repos",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "aben1188/my-star-repos",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "AIComposerApp/vixcee-studios",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "byoungju-web/coverfo",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "pablocaeg/sloptotal",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "SoldatovAlexander/AI_Process_Architect_SelfHosted",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "promptslab/Awesome-Prompt-Engineering",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "NeoAnthropocene/agents-united",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "sairam212/aws_prompt_Eengineering",
+      "category": "bolt",
+      "source": "discover:\"bolt.new\" in:readme"
+    },
+    {
+      "repo": "hi0001234d/nexpath",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "fladare124/ai-percent-to-prompts-calculator",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "humora2504/vibeproof",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "Alpha-Park/genpark-css-layout-shift-cls-optimizer-skill",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "alphaparkinc/genpark-css-layout-shift-cls-optimizer-skill",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "Alpha-Park/genpark-openapi-to-mock-service-synthesizer-skill",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "alphaparkinc/genpark-openapi-to-mock-service-synthesizer-skill",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "Alpha-Park/genpark-fullstack-env-variable-drift-resolver-skill",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "alphaparkinc/genpark-fullstack-env-variable-drift-resolver-skill",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "Alpha-Park/genpark-client-side-hydration-runtime-error-triage-skill",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "alphaparkinc/genpark-client-side-hydration-runtime-error-triage-skill",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "Alpha-Park/genpark-vibe-coding-ast-component-patcher-skill",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "alphaparkinc/genpark-vibe-coding-ast-component-patcher-skill",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "robdmac/talkito",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "WiolaWysopal/TickTrack",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "thakuravinashji/BrewHaven",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "zebbern/Devonz",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "mhathegreat/forge-code",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "Lilli-Ai/vayots-dzor-wine-tour",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "apolocine/nextjs-mostajs-orm-starter",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "apolocine/hono-mostajs-orm-starter",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "apolocine/fastify-mostajs-orm-starter",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "apolocine/express-mostajs-orm-starter",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "nirnawati-expt/islamic-tally-counter-webclient",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "Jusharra/professional-portfolio",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "decoded-cipher/zentro-ai",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "Gerome-Elassaad/CodingIT",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "aaronksaunders/bolt-expo-payload-main-video",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "gundy27/r10review-public",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "tushar2704/VibeCode",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "Datayolk/next-embedded-stripe-form",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "Juniorduc44/ama_bolt",
+      "category": "bolt",
+      "source": "discover:topic:bolt-new"
+    },
+    {
+      "repo": "tscircuit/tscircuit.com",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "JDofDenver/Concrete",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "lsk7209/temon",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "curtishustler10/redline-studio",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "marcelviana/octavia",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "ivolivares/iolivares.com-v2025",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "nitsuah/farm-3j",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "Birotreelan/chatbot_v1-12",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "bridgeocean/StockFlow-Gapper-Screener",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "backendcommunity/v3-masteringbackend",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "anashamad9/ppp",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "nanguoyu/Profiles",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "juampi92/daily-ai-gulf-of-mexico",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "anuranjan87/copycat",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "iluvios/v0-johan-portfolio",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "justinkanet-tech/paygo_latest-version",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "growthoutcome-code/v0-invisibleships",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "dzianisv/VibeBrowserProductPage",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "techshare101/clinicalscribe",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "Tomoya-Izumi/v0-homepage",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "suprabho/promad-portfolio",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "karanarora-aideveloper/stack-ai-tools",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "Youssef22Ashraf/portfolio",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "Brudolfer/coatisolution.com-z2",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "azc-company/ai-model-agent",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "smit061205/SIH_26006",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "LB110223/v0-new-project",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "the-wbs-project/aec-integrations",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "cxb2523/solo-batch-20260929-004-026-claude-artifact-runner",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "cxb2523/solo-batch-20260929-004-009-claude-artifact-runner",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "limelightarabesque224/ai-native-frontend-bootcamp",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "clentfort/adameter",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "lyra-solenne/AliFullStack",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "Conversation-Blink-AI/AI-Call-Center-Conversation",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "ififi2017/Off-Work-Countdown",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "ZpFhnu/vibe-coding-cases",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "YahyaSaadaoui/AgenticAiFrontEnd",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "XiaomingX/indie-hacker-tools-plus",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "cxb2523/solo-batch-20260929-004-003-claude-artifact-runner",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "cxb2523/solo-batch-20260929-005-019-claude-artifact-runner",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "cxb2523/solo-batch-20260929-005-018-claude-artifact-runner",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "cxb2523/solo-batch-20260929-005-005-claude-artifact-runner",
+      "category": "v0",
+      "source": "discover:\"v0.dev\" in:readme"
+    },
+    {
+      "repo": "sarahrittertech-commits/turniplearningapp",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "Hassen02020/EasyV4",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "Pelagians/Cage",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "wolfknight21/v0-portoflio-cmbc",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "belovedchibuikem/smart-housing-pro",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "bautistacaputo96-prog/v0-stock-management-app",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "atlasonecontact/atlas-one-erp",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "raulzarzadev/keabelmet",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "oakghana/newattendanceapp",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "kevinalyk/v0-rip-new-project",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "Arco-list/arco",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "elcodigodeabi/v0-univvy-marketplace-design",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "Anujjaglan9423/v0-hssc-cet-test-landing",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "OpusCoda/v0-vercel-import",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "cjl26rg2/Void-Script",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "emcghee73/older_ca_lfp_projections",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "barnagestoria-commits/PROYECTO-BARNA-GESTORIA",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "Vox-Dei-Build/v0-imvelo-wealth",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "francozeta/kocteau",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "spikevenki-a11y/banker-dashboard-app",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "FurquanAnwer/mozammilakhtarportfolio",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "Lemans47/TALLERPRO",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "K-ODI/NODE51",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "SharafatKarim/sharafatkarim.github.io",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "visionmatricinstitute-sys/website",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "fertadeo/mfcomputers-nextjs",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "munyaglitch/Tinashe-2.0",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "blitzind/v0-app-equipify-ai",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "vercel/v0-sdk",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "ArktikLabs/arktik.id",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "NABY-S/My-Portfolio",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "kimyunzae/WELLINS-V3",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "jfibra/fhi-global",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "ANIFASUMBA/v0-greeting",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "azzu90/boom-cafe-website",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "hongkongexpert/skybizcentre-mira",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "minhajuddinm/thunderhacks-2026",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "Hussein-M-AbuShawish/O2-Gaza-Project",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "warmregards/Endoscopia-del-Mayab",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "masachika-kamada/ChatGPT-Ctrl-Enter-Sender",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "mattzktrade/zksportstrade",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "Ilyes-Neguir/SEAMTECH-search",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "superdandi/skynet-monitor",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "k0d0minio/firedough",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "FumiakiC/chumon-hub",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "alex12714/maranafa-camp",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "luckymancvp/checkflow",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "woorichicken/solhun-web-page",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "Bhanu-Prakash-medi/v0-vinod-health-trends-dashboard",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "sagarbharti8989/jewellary_software",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "Kutcher1945/air-quality",
+      "category": "v0",
+      "source": "discover:\"v0.app\" in:readme"
+    },
+    {
+      "repo": "spec-kitty/spec-kitty",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "avibe-bot/avibe",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "linny006/cursor-rules-live",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "takimdigital/deckhand-skill",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "Zeus-Deus/codemux",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "parcellie/jobscout",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "agent-of-empires/agent-of-empires",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "gamesbyai/catalog",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "receptron/mulmoterminal",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "vibld/vibld",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "Diplomat-ai/diplomat-agent",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "eugenelim/agent-ready-repo",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "automagik-dev/genie",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "omid-io/vibe-ui-suite",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "pnnnhan99/awesome-free-dev-tools",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "pnnnhan99/awesome-vietnam-open-data",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "exisz/IsItStable",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "shipstatic/mcp",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "pnnnhan99/awesome-copy-paste-ui",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "shipstatic/n8n",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "shipstatic/ship",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "AMaynes/neurotrace-eeg-studio",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "footnote42/pong-redux",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "Glad-oboedacaccia408/design.md",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "herreravalenz6620/context-compression",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "fonscutup654/ELAI-DevKit",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "conservationunpalatableness659/Claude-Generated-Reddit-for-LLMs",
+      "category": "vibe",
+      "source": "discover:topic:vibe-coding"
+    },
+    {
+      "repo": "carmex/GemBot",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "aminoqr/intern-net",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "eriknson/living-site",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "RongleCat/awesome-grok-bot",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "11010tianyi/awesome-ai-coding-projects",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "hazeljiang0107-del/Individual-Project-MSTU",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "alexper490/personal-os",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "edungee/chineduokeke.com",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "kleosr/orangesor-cursortheme",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "KaranPatel7301/Patel_Karan_SWE_CaseStudy",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "inge1980/fullstack_ai-candidate-assistant",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "Robinhill85/honest-cart",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "Venkateshh-10/tenderwatch-india",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "ayushi683/qla-backend",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "onkaryelam1-ship-it/gtm-enrichment-framework",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "n-zad/cr-deck-organizer",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "zebrazones/example-studio-slot",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "xretraces/quorum",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "Vikas7678/BLCKBOX-DMS",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "MeagerPotato/orbital-agronomist",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "adamisom/rapid-photo-upload",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "thvb1133/Fleek_Cursor",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "japsimar-soin/uv-ticketing",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "bsuraj-2699/quest-evaluator",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "SilenZcience/cat_win",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "Gnurdle/grog",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "Muhammad-Talha990/Vigilant-Eye",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "HasnathAhmedTamim/orgflow-saas-platform",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "lyp0614-hi/wander",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "Lucimad007/sales-admin-agent",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "loridj11/CLI-MIDI-player",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "ysm-dev/cpdown",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "MuzamilWasif/VIGILANT-EYE",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "antimirov/trackremux",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "asap-protocol/asap-protocol",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "junsang-dong/goorm-260917-news",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "Plorigo/plorigo",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "sanikantv/cursor-ultra-notes",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "anim710/octopisaas_z.anim710",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "lovecoding516/pipeline-sensor-readings",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "jupiter221208/pdf-qa-chat",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "ahkamboh/scrolltape",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "nikhiljain1203/distributed-document-search-service",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "rakhmonovquvonchbek/fern",
+      "category": "vibe",
+      "source": "discover:\"built with cursor\" in:readme"
+    },
+    {
+      "repo": "synccosYB/yazory",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "rapidreview-io/Merv",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "makgan21/WerkParts-Collision-Manager",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "obeidpeter/valo-pay",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "tinsleygalyean/word-smash",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "kellington/ZouZou",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "ajreynolds112-lang/SkillSet-by-Me",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "Mindburn-Labs/helm-ai-kernel",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "dialling/skillhub",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "deltaxmodules/codetacvibe",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "froglogic60/frog-logic-shop",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "sfigas01/Modern-Trivia",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "fabriciopamplona/Tudo-Sobre-Cannabis",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "Sangini-spec/vireo-support-intelligence",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "delian/ddflow-mcp",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "AIPMAndy/andy-follows",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "YenLinWu/Python_Web_Crawling_Practical_Applications",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "RYOITABASHI/Shelly",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "leoncuhk/awesome-llm-bench",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "blamejs/exceptd-skills",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "hanishrao/collective-ai-tools",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "UN-OCHA/vibe_coding_trend_data",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "hgko1207/awesome-ai-coding-kr",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "SwissSavage/-BUILD.Store",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    },
+    {
+      "repo": "TopProjectsCreator/code-canvas-complete",
+      "category": "replit",
+      "source": "discover:\"replit agent\" in:readme"
+    }
+  ],
+  "excluded": [
+    "1iry/multi-agent-architecture-advisor",
+    "ANest58/omarchy-fan-control",
+    "ASHHADgit87/PE-Task-1",
+    "ASHHADgit87/PE-Task-2",
+    "ASHHADgit87/PE-Task-4",
+    "Abhilashchary/Abhilashchary",
+    "AgentListIO/awesome-agent-list",
+    "Akshayasri18/Doctor-website",
+    "Andre-Benedetti/Andre-Portfolio",
+    "Ashishranjan1/multi-tenant-notification-service",
+    "BigBoySlave/Agents-Prompts",
+    "CLIEMTE/ffmpeg-skill",
+    "CharleGutierrez/hagibis",
+    "Clouderavine/Bolt-New-Web-Development-Agent-Professional-Complete-Edition",
+    "Continuum-AI-Corp/Orca-AI-Incident-Archive",
+    "Corn7012/Claude-Code-Design-AI",
+    "Cynone-com/AI-Powered-No-Code-Website-Builder-SaaS-Platform",
+    "Divine-vision-visiondivine21/less-tokens",
+    "GetStream/awesome-ai-news",
+    "Liamwolf56/Liamwolf56",
+    "Meizu1330/neural-context-archive",
+    "MichelKerkmeester/prompt-improver_multi-framework-and-format",
+    "Neil10000/vibe-coding-starter-kit",
+    "Pandemic-spode596/codex-island-app",
+    "Pold911/vibe-code-security-audit",
+    "SamanthaJeanneb/SamanthaJeanneb",
+    "Vegaleonele/github-polls-voter-auth",
+    "WDev9911/shipmate-platform-backend",
+    "Zaid-maker/my-awesome-stars-list",
+    "aarambhaaryal/markdown-courses-canvas",
+    "abenteuergeist/awesome-ai-tools-for-builders",
+    "abrahemy319-png/mcp-webasyst-codex-toolkit",
+    "actions-marketplace-validations/thrash-d_slop-linter",
+    "acvnace/awesome-vibe-coding-resources",
+    "alex-hoyeol-choi/ainews-reports",
+    "alexyjoven/alexyjoven",
+    "andyholst/ai-matrix-trends",
+    "angad-14/Movie-Booking-System",
+    "arach/awesome-agent-clients",
+    "azizjaz7890/claude-code-deep-dive",
+    "babylontoolkit/agent",
+    "byst4nder/starList",
+    "ceduardorodrig/STENIO-SENTINEL",
+    "coderabbitai/skills",
+    "conn-castle/agent-layer",
+    "cursorkey/my-starred",
+    "cyber725/style-layer-essence",
+    "dakotac1994/awesome-ai-sandboxes",
+    "dalisoft/awesome-ai-coding",
+    "deathscy3708/claude-code",
+    "derravi/AI_Commad_Center",
+    "dkrnr/pokelearn",
+    "enhansome/enhansome-AITreasureBox",
+    "enhansome/enhansome-Awesome-AITools",
+    "enhansome/enhansome-Awesome-Prompt-Engineering",
+    "enhansome/enhansome-Awesome-independent-tools",
+    "enhansome/enhansome-ai-agents-2026",
+    "enhansome/enhansome-ai-devtools",
+    "enhansome/enhansome-evals",
+    "enhansome/enhansome-llm-services",
+    "enhansome/enhansome-molt-ecosystem",
+    "enhansome/enhansome-open-ai-developer-tools",
+    "enhansome/enhansome-site-for-developers",
+    "enhansome/enhansome-vibe-coding-resources",
+    "erpycode/ai-hub",
+    "eyup-ops/free-nocode-saas-prompts",
+    "firasalmostaysser/Ai-product-operations-",
+    "haabe/mycelium",
+    "hardcor3nl/vibe-pricing-index",
+    "hiddenexee/Bolt.new-Account-Creator",
+    "hironbiswas57-droid/AI-Assisted-UI-Design-Vercel-v0-vs-Meta-AI",
+    "humaidhahm/opencode-pentester",
+    "i3sam/i3sam",
+    "ihorkhamuliak/focus-ai-library",
+    "ikaijua/Awesome-AITools",
+    "ixu42/ixu42.github.io",
+    "jenni2910/serena-superpowers-kit",
+    "jerrylususu/bookmark-collection",
+    "jydesign/vibegrove",
+    "lappemic/awesome-ai-built-games",
+    "lucianavanosf/Clase-IA-para-abogados",
+    "luckypushkarna/luckypushkarna",
+    "maddiedreese/vibe-coding-for-beginners",
+    "maddiedreese/vibe-coding-tools",
+    "mahimpro0123/orchestra-ctl",
+    "mahmoudelmarakshy/affirm-flows-demo",
+    "marcoalfa30/claude-skills-vibe-toolkit",
+    "maurobonfietti/remote-jobs",
+    "mflow888/piper-chromium-sapi5",
+    "nam271212/strategic-advisor-orchestrator",
+    "narrowin/awesome-generative-ui",
+    "nicuk/did-ai-really-fix-it",
+    "octobersky14/project-4",
+    "pabeledp/pabeledp",
+    "pandego/awesome-agentic",
+    "pickerrelict689/ai_agent_cli_guide",
+    "pranavesh-n/pranavesh-n",
+    "promptctl/links-issue-tracker",
+    "push44-app/push44",
+    "rafaelmateo123/Arena-of-Autonomous-Threads",
+    "reenahot496/claude-code",
+    "ripienaar/free-for-dev",
+    "rohitguta2432/blog-index",
+    "sfdfddfs13QWE/advisor-strategy-skill",
+    "snapxmin/AIDreamingTrue",
+    "soycodetrail/vibe-coding-gallery",
+    "sunildh4270/Lupen",
+    "supfox/cursor-free-trial-reset",
+    "thrash-d/slop-linter",
+    "tubasa821004-hash/social-manipulation-radar",
+    "tykimos/ai-whatchelin",
+    "valencipriota/standing-orders",
+    "vdutts7/vibecode-prompt-generator",
+    "vincenttardieu/Anthropic-Cybersecurity-Skills",
+    "wagey-gg/wagey-gg-remote-tech-jobs",
+    "xiaomao8090/godot_game",
+    "xskylineae-ai/x-skyline-al",
+    "y-gokcen/gpt2-surprisal-demo",
+    "zeeshan1693/zeeshan1693"
+  ]
+}

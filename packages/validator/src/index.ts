@@ -6,11 +6,17 @@
  * classification toward `diagnose_only`, and appends user-facing blockers. It
  * never deploys, never executes repo code, and never trusts the model's word.
  */
-export { validatePlan, type ValidationResult, type ValidatePlanOptions } from "./validate";
+export {
+  validatePlan,
+  integrationProjectQuestionId,
+  type ValidationResult,
+  type ValidatePlanOptions,
+} from "./validate";
 export {
   emptyCapabilities,
   capabilities,
   type Capabilities,
+  type IntegrationProvider,
   type ManagedProvider,
 } from "./capabilities";
 export { issueToBlocker, isValidationBlockerTitle, type ValidationIssue, type IssueSeverity } from "./issues";

@@ -64,6 +64,29 @@ export const providerAccounts = pgTable(
   }),
 );
 
+// ── GitHub App installations a user has proven they control (via GitHub OAuth) ─
+// The only source of truth for which installation tokens may be minted on a
+// user's behalf. Never inferred from repo names or webhook payloads.
+export const githubInstallations = pgTable(
+  "github_installations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    installationId: text("installation_id").notNull(),
+    accountLogin: text("account_login").notNull(),
+    accountType: text("account_type").notNull().default("User"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqUserInstallation: uniqueIndex("github_installations_user_installation_unique").on(
+      t.userId,
+      t.installationId,
+    ),
+  }),
+);
+
 // ── A connected repo ─────────────────────────────────────────────────────────
 export const projects = pgTable(
   "projects",
@@ -243,6 +266,7 @@ export const workerHeartbeats = pgTable("worker_heartbeats", {
 export const schema = {
   users,
   providerAccounts,
+  githubInstallations,
   projects,
   runs,
   runEvents,

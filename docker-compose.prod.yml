@@ -54,6 +54,7 @@ services:
       - .env.production
     environment:
       NODE_ENV: production
+      SHIPFIX_SANDBOX: e2b
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
       TEMPORAL_TASK_QUEUE: shipfix-prod

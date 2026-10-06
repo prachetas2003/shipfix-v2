@@ -14,6 +14,7 @@ function providerName(provider: string | null | undefined): string {
   if (provider === "vercel") return "Vercel";
   if (provider === "render") return "Render";
   if (provider === "neon") return "Neon";
+  if (provider === "upstash") return "Upstash";
   return provider;
 }
 

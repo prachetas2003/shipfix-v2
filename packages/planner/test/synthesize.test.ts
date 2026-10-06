@@ -54,6 +54,8 @@ function makeCtx(overrides: Partial<RepoContext> = {}): RepoContext {
     ],
     hardcodedUrls: [],
     monorepoTool: "none",
+    publicEnv: [],
+    companions: [],
     ...overrides,
   };
 }
@@ -149,11 +151,22 @@ describe("synthesizeDeterministicPlan", () => {
     });
   });
 
-  it("returns null for non-Next SSR repos (Nuxt fullstack)", () => {
+  it("returns null for SSR setups Vercel can't serve", () => {
+    const ctx = makeCtx({
+      services: [frontendSignal({ framework: "tanstack-start-node", role: "fullstack" })],
+    });
+    expect(synthesizeDeterministicPlan(ctx)).toBeNull();
+  });
+
+  it("plans Nuxt as a server-rendered Vercel app", () => {
     const ctx = makeCtx({
       services: [frontendSignal({ framework: "nuxt", role: "fullstack" })],
     });
-    expect(synthesizeDeterministicPlan(ctx)).toBeNull();
+    expect(synthesizeDeterministicPlan(ctx)?.services[0]).toMatchObject({
+      type: "frontend_ssr",
+      framework: "nuxt",
+      outputDir: null,
+    });
   });
 
   it("returns null for Python services", () => {
@@ -163,11 +176,59 @@ describe("synthesizeDeterministicPlan", () => {
     expect(synthesizeDeterministicPlan(ctx)).toBeNull();
   });
 
-  it("returns null for non-postgres data needs", () => {
+  it("returns null for Redis the app never points at an env var (it would dial localhost)", () => {
     const ctx = makeCtx({
       dataNeeds: [{ kind: "redis", detectedFrom: "dep", migrationTool: "none", evidence: [] }],
     });
     expect(synthesizeDeterministicPlan(ctx)).toBeNull();
+  });
+
+  it("returns null for data stores ShipFix can't provision", () => {
+    const ctx = makeCtx({
+      dataNeeds: [{ kind: "mysql", detectedFrom: "dep", migrationTool: "none", evidence: [] }],
+    });
+    expect(synthesizeDeterministicPlan(ctx)).toBeNull();
+  });
+
+  it("provisions Upstash Redis for a Next.js app and wires TCP and REST env", () => {
+    const next = frontendSignal({
+      rootDir: "",
+      framework: "next",
+      role: "fullstack",
+      scripts: { dev: "next dev", build: "next build" },
+      evidence: ["package.json"],
+    });
+    const ctx = makeCtx({
+      services: [next],
+      dataNeeds: [
+        { kind: "postgres", detectedFrom: "dep", migrationTool: "none", evidence: [] },
+        { kind: "redis", detectedFrom: "dep", migrationTool: "none", evidence: [] },
+      ],
+      envRefs: [
+        { name: "DATABASE_URL", service: "", required: true },
+        { name: "REDIS_URL", service: "", required: true },
+        { name: "UPSTASH_REDIS_REST_URL", service: "", required: true },
+        { name: "UPSTASH_REDIS_REST_TOKEN", service: "", required: true },
+        { name: "NEXT_PUBLIC_REDIS_URL", service: "", required: false },
+      ],
+    });
+    const plan = synthesizeDeterministicPlan(ctx)!;
+    expect(() => DeploymentPlan.parse(plan)).not.toThrow();
+    expect(plan.classification).toBe("deployable");
+    expect(plan.deployOrder).toEqual(["db", "cache", "web"]);
+    expect(plan.managed.find((m) => m.id === "cache")).toMatchObject({ kind: "redis", provider: "upstash", exposesEnv: "REDIS_URL" });
+    const env = Object.fromEntries(plan.services[0]!.env.map((e) => [e.name, e.ref ?? e.source]));
+    expect(env).toMatchObject({
+      REDIS_URL: "cache.connectionUrl",
+      UPSTASH_REDIS_REST_URL: "cache.restUrl",
+      UPSTASH_REDIS_REST_TOKEN: "cache.restToken",
+    });
+    expect(env.NEXT_PUBLIC_REDIS_URL).toBeUndefined();
+    expect(plan.goal).toContain("Upstash Redis");
+
+    const caps = capabilities({ vercel: ["frontend_static", "frontend_ssr"], render: ["node_api"] }, ["neon", "upstash"]);
+    const { issues } = validatePlan(plan, ctx, caps);
+    expect(issues.filter((i) => i.severity !== "warning")).toEqual([]);
   });
 
   it("returns null when the backend has no start script", () => {
@@ -393,5 +454,154 @@ describe("generatePlan deterministic-first", () => {
     const result = validatePlan(plan!, ctx, caps);
     expect(result.issues).toHaveLength(0);
     expect(result.plan.classification).toBe("deployable");
+  });
+});
+
+describe("unwired env: public values, generated secrets, optional refs", () => {
+  const pub = (name: string, value: string, service = "web") => ({ name, value, file: `${service}/.env`, service });
+
+  it("fills committed public values as literals and aliases them for server code", () => {
+    const plan = synthesizeDeterministicPlan(
+      makeCtx({
+        envRefs: [
+          { name: "DATABASE_URL", service: "server", required: true },
+          { name: "SUPABASE_URL", service: "server", required: true },
+          { name: "SUPABASE_ANON_KEY", service: "server", required: true },
+          { name: "SUPABASE_KEY", service: "server", required: true },
+          { name: "VITE_SUPABASE_URL", service: "web", required: true },
+        ],
+        publicEnv: [pub("VITE_SUPABASE_URL", "https://x.supabase.co"), pub("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_x")],
+      }),
+    );
+    const env = (id: string) => plan?.services.find((s) => s.id === id)?.env ?? [];
+    expect(env("web")).toContainEqual({ name: "VITE_SUPABASE_URL", source: "literal", value: "https://x.supabase.co" });
+    expect(env("api")).toContainEqual({ name: "SUPABASE_URL", source: "literal", value: "https://x.supabase.co" });
+    expect(env("api")).toContainEqual({ name: "SUPABASE_ANON_KEY", source: "literal", value: "sb_publishable_x" });
+    expect(plan?.questions.map((q) => q.id)).toEqual(["secret-api-SUPABASE_KEY"]);
+  });
+
+  it("generates server secrets but never browser ones", () => {
+    const plan = synthesizeDeterministicPlan(
+      makeCtx({
+        envRefs: [
+          { name: "DATABASE_URL", service: "server", required: true },
+          { name: "CRON_SECRET", service: "server", required: true },
+          { name: "AUTH_SECRET", service: "server", required: false },
+          { name: "VITE_JWT_SECRET", service: "web", required: true },
+        ],
+      }),
+    );
+    const api = plan?.services.find((s) => s.id === "api");
+    expect(api?.env).toContainEqual({ name: "CRON_SECRET", source: "generated_secret" });
+    expect(api?.env).toContainEqual({ name: "AUTH_SECRET", source: "generated_secret" });
+    expect(plan?.questions.map((q) => q.id)).toEqual(["secret-web-VITE_JWT_SECRET"]);
+  });
+
+  it("does not ask for refs that always have a code fallback", () => {
+    const plan = synthesizeDeterministicPlan(
+      makeCtx({
+        envRefs: [
+          { name: "DATABASE_URL", service: "server", required: true },
+          { name: "LOG_LEVEL", service: "server", required: false },
+        ],
+      }),
+    );
+    expect(plan?.questions).toEqual([]);
+    expect(plan?.services.find((s) => s.id === "api")?.env.map((e) => e.name)).not.toContain("LOG_LEVEL");
+  });
+});
+
+describe("applyPublicEnv", () => {
+  it("turns LLM user_secret entries for committed public names into literals and drops their questions", async () => {
+    const { applyPublicEnv } = await import("../src/index");
+    const ctx = makeCtx({ publicEnv: [{ name: "VITE_SUPABASE_URL", value: "https://x.supabase.co", file: "web/.env", service: "web" }] });
+    const base = synthesizeDeterministicPlan(makeCtx())!;
+    const plan = {
+      ...base,
+      services: base.services.map((s) =>
+        s.id === "web"
+          ? { ...s, env: [...s.env, { name: "VITE_SUPABASE_URL", source: "user_secret" as const }, { name: "VITE_OTHER", source: "user_secret" as const }] }
+          : s,
+      ),
+      questions: [
+        { id: "secret-web-VITE_SUPABASE_URL", prompt: "url?", kind: "secret" as const, blocksServiceIds: ["web"] },
+        { id: "secret-web-VITE_OTHER", prompt: "other?", kind: "secret" as const, blocksServiceIds: ["web"] },
+      ],
+    };
+    const out = applyPublicEnv(plan, ctx);
+    const web = out.services.find((s) => s.id === "web");
+    expect(web?.env).toContainEqual({ name: "VITE_SUPABASE_URL", source: "literal", value: "https://x.supabase.co" });
+    expect(web?.env).toContainEqual({ name: "VITE_OTHER", source: "user_secret" });
+    expect(out.questions.map((q) => q.id)).toEqual(["secret-web-VITE_OTHER"]);
+  });
+});
+
+describe("existing Supabase project", () => {
+  const supabaseCtx = (overrides: Partial<RepoContext> = {}) =>
+    makeCtx({
+      envRefs: [
+        { name: "DATABASE_URL", service: "server", required: true },
+        { name: "SUPABASE_URL", service: "server", required: true },
+        { name: "SUPABASE_SERVICE_ROLE_KEY", service: "server", required: true },
+        { name: "VITE_SUPABASE_URL", service: "web", required: true },
+        { name: "VITE_SUPABASE_ANON_KEY", service: "web", required: true },
+        { name: "VITE_SUPABASE_SERVICE_ROLE_KEY", service: "web", required: true },
+      ],
+      supabase: { projectRef: "abcdefghijklmnopqrst", evidence: ["supabase/config.toml"] },
+      ...overrides,
+    });
+
+  it("reads URL and keys from the connected project instead of asking, but never puts the service-role key in the browser", () => {
+    const plan = synthesizeDeterministicPlan(supabaseCtx());
+    const env = (id: string) => plan?.services.find((s) => s.id === id)?.env ?? [];
+    expect(env("api")).toContainEqual({ name: "SUPABASE_URL", source: "integration", ref: "supabase.url" });
+    expect(env("api")).toContainEqual({ name: "SUPABASE_SERVICE_ROLE_KEY", source: "integration", ref: "supabase.serviceRoleKey" });
+    expect(env("web")).toContainEqual({ name: "VITE_SUPABASE_ANON_KEY", source: "integration", ref: "supabase.anonKey" });
+    expect(env("web")).toContainEqual({ name: "VITE_SUPABASE_SERVICE_ROLE_KEY", source: "user_secret" });
+    expect(plan?.integrations).toEqual([{ id: "supabase", provider: "supabase", projectRef: "abcdefghijklmnopqrst" }]);
+    expect(plan?.questions.map((q) => q.id)).toEqual(["secret-web-VITE_SUPABASE_SERVICE_ROLE_KEY"]);
+  });
+
+  it("asks which project when the repo doesn't say", () => {
+    const plan = synthesizeDeterministicPlan(supabaseCtx({ supabase: { projectRef: null, evidence: [] } }));
+    expect(plan?.questions.map((q) => q.id)).toContain("integration-supabase-project");
+    expect(plan?.classification).toBe("needs_setup");
+  });
+
+  it("validates as deployable once Supabase is connected, and needs setup until then", () => {
+    const ctx = supabaseCtx({
+      envRefs: [
+        { name: "DATABASE_URL", service: "server", required: true },
+        { name: "SUPABASE_SERVICE_ROLE_KEY", service: "server", required: true },
+        { name: "VITE_SUPABASE_URL", service: "web", required: true },
+      ],
+    });
+    const plan = synthesizeDeterministicPlan(ctx)!;
+    const caps = (connected: boolean) =>
+      capabilities({ vercel: ["frontend_static"], render: ["node_api"] }, ["neon"], connected ? ["supabase"] : []);
+    expect(validatePlan(plan, ctx, caps(true)).plan.classification).toBe("deployable");
+    const pending = validatePlan(plan, ctx, caps(false));
+    expect(pending.plan.classification).toBe("needs_setup");
+    expect(pending.issues.map((i) => i.code)).toContain("integration_not_connected");
+  });
+
+  it("converts Supabase secrets in LLM plans and drops their questions", async () => {
+    const { applySupabaseIntegration } = await import("../src/index");
+    const base = synthesizeDeterministicPlan(makeCtx())!;
+    const plan = {
+      ...base,
+      services: base.services.map((s) =>
+        s.id === "api" ? { ...s, env: [...s.env, { name: "SUPABASE_SERVICE_ROLE_KEY", source: "user_secret" as const }] } : s,
+      ),
+      questions: [{ id: "secret-api-SUPABASE_SERVICE_ROLE_KEY", prompt: "?", kind: "secret" as const, blocksServiceIds: ["api"] }],
+    };
+    const out = applySupabaseIntegration(plan, supabaseCtx({ supabase: { projectRef: null, evidence: [] } }));
+    expect(out.services.find((s) => s.id === "api")?.env).toContainEqual({
+      name: "SUPABASE_SERVICE_ROLE_KEY",
+      source: "integration",
+      ref: "supabase.serviceRoleKey",
+    });
+    expect(out.questions.map((q) => q.id)).toEqual(["integration-supabase-project"]);
+    expect(out.integrations).toEqual([{ id: "supabase", provider: "supabase", projectRef: null }]);
   });
 });

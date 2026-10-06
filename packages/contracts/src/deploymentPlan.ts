@@ -30,6 +30,31 @@ export const ServiceType = z.enum([
 ]);
 export type ServiceType = z.infer<typeof ServiceType>;
 
+/** Long-running HTTP services deployed as Render web services. */
+export const RENDER_WEB_SERVICE_TYPES: readonly ServiceType[] = ["node_api", "python_api", "docker_service"];
+
+export function isWebBackendType(type: string | undefined): boolean {
+  return (RENDER_WEB_SERVICE_TYPES as readonly string[]).includes(type ?? "");
+}
+
+/**
+ * Server-rendered frameworks deployed to Vercel as frontend_ssr, mapped to the
+ * Vercel framework preset. null = no preset: the build writes Vercel's Build
+ * Output API itself (Nitro with NITRO_PRESET=vercel).
+ */
+export const VERCEL_SSR_PRESETS: Readonly<Record<string, string | null>> = {
+  next: "nextjs",
+  nuxt: "nuxtjs",
+  remix: "remix",
+  "react-router": "react-router",
+  sveltekit: "sveltekit",
+  "tanstack-start": null,
+};
+
+export function isVercelSsrFramework(framework: string | undefined): boolean {
+  return framework !== undefined && Object.prototype.hasOwnProperty.call(VERCEL_SSR_PRESETS, framework);
+}
+
 export const ManagedKind = z.enum(["postgres", "redis", "object_storage"]);
 export type ManagedKind = z.infer<typeof ManagedKind>;
 
@@ -43,13 +68,38 @@ export const EnvVarSource = z.enum([
   "generated_from_managed", // e.g. Neon DATABASE_URL -> backend env
   "provider_injected", // platform provides it (PORT, etc.)
   "literal", // a known, non-secret default
+  "generated_secret", // random value ShipFix creates once per project and keeps sealed (CRON_SECRET, AUTH_SECRET)
+  "integration", // read at deploy time from a connected existing project (ref "supabase.serviceRoleKey")
 ]);
 export type EnvVarSource = z.infer<typeof EnvVarSource>;
+
+/** Values an integration can supply, addressed as `<integrationId>.<field>`. */
+export const IntegrationField = z.enum(["url", "anonKey", "serviceRoleKey", "projectRef"]);
+export type IntegrationField = z.infer<typeof IntegrationField>;
+
+/** Fields that are secret and must never reach a browser bundle. */
+export const SECRET_INTEGRATION_FIELDS: ReadonlySet<IntegrationField> = new Set(["serviceRoleKey"]);
+
+/**
+ * An existing external project the app already talks to (not provisioned or
+ * deployed by ShipFix). Env values are read from it at deploy time.
+ */
+export const PlanIntegration = z.object({
+  id: z.string(),
+  provider: z.enum(["supabase"]),
+  /** Null when the repo doesn't say which project; resolved at deploy time. */
+  projectRef: z.string().nullable(),
+});
+export type PlanIntegration = z.infer<typeof PlanIntegration>;
 
 export const EnvVar = z.object({
   name: z.string(),
   source: EnvVarSource,
-  /** For generated_*: "serviceId.publicUrl" | "managedId.connectionUrl" | "serviceId.origin". */
+  /**
+   * For generated_*: "serviceId.publicUrl" | "serviceId.origin" | "managedId.connectionUrl"
+   * (Redis also "managedId.restUrl" | "managedId.restToken").
+   * For integration: "integrationId.<IntegrationField>".
+   */
   ref: z.string().optional(),
   /** ONLY for source === "literal". Must never carry a secret. */
   value: z.string().optional(),
@@ -62,6 +112,11 @@ export const PlanService = z.object({
   type: ServiceType,
   provider: PlanProvider,
   rootDir: z.string(),
+  /**
+   * Detected framework ("next", "tanstack-start", ...). Picks the Vercel preset
+   * for frontend_ssr. Plans persisted before this field are Next.js.
+   */
+  framework: z.string().optional(),
   install: z.string().nullable(),
   build: z.string().nullable(),
   start: z.string().nullable(),
@@ -93,10 +148,18 @@ export const ManagedService = z.object({
 });
 export type ManagedService = z.infer<typeof ManagedService>;
 
+/** Fields a managed service exposes as `<managedId>.<field>`, by kind. */
+export const MANAGED_ENV_FIELDS: Readonly<Record<ManagedKind, readonly string[]>> = {
+  postgres: ["connectionUrl"],
+  // restUrl/restToken serve @upstash/redis and Vercel KV style clients.
+  redis: ["connectionUrl", "restUrl", "restToken"],
+  object_storage: ["connectionUrl"],
+};
+
 /** First-class service-graph edge: source field -> target service env var. */
 export const WiringEdge = z.object({
   fromServiceId: z.string(),
-  fromField: z.enum(["publicUrl", "connectionUrl", "origin"]),
+  fromField: z.enum(["publicUrl", "connectionUrl", "origin", "restUrl", "restToken"]),
   toServiceId: z.string(),
   toEnvName: z.string(),
 });
@@ -163,6 +226,8 @@ export const DeploymentPlan = z.object({
   classification: PlanClassification,
   services: z.array(PlanService),
   managed: z.array(ManagedService).default([]),
+  /** Optional because plans persisted before integrations existed lack it. */
+  integrations: z.array(PlanIntegration).optional(),
   wiring: z.array(WiringEdge).default([]),
   /** Topologically ordered ids of services + managed services. */
   deployOrder: z.array(z.string()),

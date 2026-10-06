@@ -16,12 +16,24 @@ async function authHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export async function withAuthQuery(url: string): Promise<string> {
-  if (AUTH_MODE === "dev") return url;
-  const token = await tokenProvider();
-  if (!token) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
+/**
+ * EventSource URL for a run's timeline. Uses a 60s run-scoped ticket so the
+ * session token never appears in a URL.
+ */
+export async function streamUrl(runId: string): Promise<string> {
+  const base = `${API_BASE}/runs/${runId}/events`;
+  if (AUTH_MODE === "dev") return base;
+  const res = await fetch(`${API_BASE}/runs/${runId}/events/ticket`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify({}),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 401 && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+  }
+  if (!res.ok || typeof body.ticket !== "string") throw new Error(body.message ?? `HTTP ${res.status}`);
+  return `${base}?ticket=${encodeURIComponent(body.ticket)}`;
 }
 
 export type LayerRole = "database" | "backend" | "frontend" | "other";
@@ -181,11 +193,13 @@ export interface PlanVerification {
   check: string;
   target?: string;
 }
+export interface PlanIntegration { id: string; provider: string; projectRef: string | null }
 export interface PlanView {
   goal: string;
   classification: "deployable" | "needs_setup" | "diagnose_only";
   services: PlanService[];
   managed: PlanManaged[];
+  integrations?: PlanIntegration[];
   wiring: PlanWiring[];
   deployOrder: string[];
   questions: PlanQuestion[];
@@ -367,6 +381,29 @@ export const api = {
       window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
     }
     if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+  },
+
+  listGithubInstallations: () =>
+    getJson<{
+      configured: boolean;
+      claimable: boolean;
+      installUrl: string | null;
+      installations: Array<{ installationId: string; accountLogin: string; accountType: string }>;
+    }>("/github/installations"),
+
+  async claimGithubInstallation(code: string, installationId?: string): Promise<{ accounts: string[] }> {
+    const res = await fetch(`${API_BASE}/github/installations/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify(installationId ? { code, installationId } : { code }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    const installations = (body.installations ?? []) as Array<{ accountLogin: string }>;
+    return { accounts: installations.map((i) => i.accountLogin) };
   },
 
   async connectProvider(provider: string, values: Record<string, string>): Promise<void> {

@@ -40,3 +40,6 @@ jobs:
       # (analyze -> deterministic plan -> validate must stay deployable).
       - name: Test
         run: pnpm test
+
+      - name: Eval (offline fixture corpus)
+        run: pnpm eval run -- --category fixture --fail-on-regression

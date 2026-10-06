@@ -43,6 +43,13 @@
       "when": 1783722000000,
       "tag": "0005_github_push_deploy",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783723000000,
+      "tag": "0006_github_installations",
+      "breakpoints": true
     }
   ]
 }

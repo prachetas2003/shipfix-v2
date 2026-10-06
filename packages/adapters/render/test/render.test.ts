@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { PlanService } from "@shipfix/contracts";
 import { createRenderAdapter } from "../src/index";
+import { envSpecificDetails, renderRuntime } from "../src/render";
 
 const service: PlanService = {
   id: "api",
@@ -302,10 +303,13 @@ describe("createRenderAdapter", () => {
   });
 
   it("updates an existing service by name instead of creating duplicate", async () => {
+    const bodies: Record<string, unknown> = {};
     const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
       const method = init?.method ?? "GET";
+      if (init?.body) bodies[`${method} ${u.replace("https://render.test/v1", "")}`] = JSON.parse(String(init.body));
       if (u.includes("/owners")) return jsonResponse([{ owner: { id: "own_1" } }]);
+      if (u.endsWith("/services/srv_existing/env-vars") && method === "PUT") return jsonResponse([]);
       if (u.includes("/deploys") && method === "POST") {
         return jsonResponse({ deploy: { id: "dpl_1", status: "created" } });
       }
@@ -327,14 +331,29 @@ describe("createRenderAdapter", () => {
     const render = createRenderAdapter({ fetchImpl: fakeFetch, apiBase: "https://render.test/v1", pollIntervalMs: 1 });
     const result = await render.deploy({
       service,
-      repo: { fullName: "acme/app", branch: "main" },
+      repo: { fullName: "acme/app", branch: "main", commitSha: "abcdef1234567" },
       rootDir: "",
       resourceName: "shipfix-run-api",
-      env: {},
+      env: { DATABASE_URL: "postgres://x" },
       credentials: { provider: "render", values: { apiKey: "k" } },
     });
     expect(result.ok).toBe(true);
     expect(result.externalId).toBe("srv_existing");
+    expect(bodies["PUT /services/srv_existing/env-vars"]).toContainEqual({ key: "DATABASE_URL", value: "postgres://x" });
+    expect(bodies["PATCH /services/srv_existing"]).not.toHaveProperty("envVars");
+    expect(bodies["PATCH /services/srv_existing"]).toMatchObject({ autoDeploy: "no" });
+    expect(bodies["POST /services/srv_existing/deploys"]).toMatchObject({ commitId: "abcdef1234567" });
+  });
+
+  it("setEnv upserts individual keys without replacing the rest", async () => {
+    const calls: string[] = [];
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${String(url).replace("https://render.test/v1", "")} ${init?.body ?? ""}`);
+      return jsonResponse({});
+    }) as unknown as typeof fetch;
+    const render = createRenderAdapter({ fetchImpl: fakeFetch, apiBase: "https://render.test/v1" });
+    await render.setEnv!("srv_1", { CORS_ORIGIN: "https://web.app" }, { provider: "render", values: { apiKey: "k" } });
+    expect(calls).toEqual(['PUT /services/srv_1/env-vars/CORS_ORIGIN {"value":"https://web.app"}']);
   });
 
   it("rejects non-node_api service types", async () => {
@@ -348,5 +367,42 @@ describe("createRenderAdapter", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.logs).toContain("node_api");
+  });
+
+  describe("runtime per service type", () => {
+    const input = (svc: PlanService) => ({
+      service: svc,
+      repo: { fullName: "a/b", branch: "main" },
+      rootDir: svc.rootDir,
+      env: {},
+      credentials: { provider: "render" as const, values: { apiKey: "k" } },
+    });
+
+    it("builds Python services with pip and the plan's start command", () => {
+      const svc: PlanService = {
+        ...service,
+        type: "python_api",
+        install: "pip install -r requirements.txt gunicorn",
+        build: null,
+        start: 'gunicorn "app:app" --bind 0.0.0.0:$PORT',
+      };
+      expect(renderRuntime(svc)).toBe("python");
+      expect(envSpecificDetails(input(svc))).toEqual({
+        buildCommand: "pip install -r requirements.txt gunicorn",
+        startCommand: 'gunicorn "app:app" --bind 0.0.0.0:$PORT',
+      });
+    });
+
+    it("builds Docker services from the Dockerfile in the service root", () => {
+      const svc: PlanService = { ...service, type: "docker_service", install: null, build: null, start: null };
+      expect(renderRuntime(svc)).toBe("docker");
+      expect(envSpecificDetails(input(svc))).toEqual({ dockerfilePath: "./Dockerfile", dockerContext: "." });
+    });
+
+    it("refuses a Python service with no start command", async () => {
+      const render = createRenderAdapter({ fetchImpl: (async () => jsonResponse({})) as unknown as typeof fetch });
+      const result = await render.deploy(input({ ...service, type: "python_api", start: null }));
+      expect(result).toMatchObject({ ok: false, failureKind: "setup_blocker" });
+    });
   });
 });

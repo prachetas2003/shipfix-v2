@@ -51,10 +51,12 @@ services:
     buildCommand: corepack enable && corepack prepare pnpm@9.15.4 --activate && pnpm install --frozen-lockfile && pnpm --filter @shipfix/worker build
     startCommand: pnpm --filter @shipfix/worker start
     envVars:
-      # Alpha note: the current repo-analysis sandbox is still the local/dev sandbox.
-      # Keep this as development until the production E2B sandbox provider lands.
       - key: NODE_ENV
-        value: development
+        value: production
+      - key: SHIPFIX_SANDBOX
+        value: e2b
+      - key: E2B_API_KEY
+        sync: false
       - key: TEMPORAL_NAMESPACE
         value: default
       - key: TEMPORAL_TASK_QUEUE

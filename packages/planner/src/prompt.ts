@@ -48,15 +48,24 @@ HARD RULES (violations make the plan invalid):
 
 AUTO-DEPLOYABLE SLICE (what ShipFix can actually execute today):
 - "vercel" + "frontend_static" (Vite/static frontends)
-- "vercel" + "frontend_ssr" (Next.js apps — Vercel builds and serves them)
+- "vercel" + "frontend_ssr" (server-rendered apps whose service framework is
+  next, nuxt, remix, react-router, sveltekit or tanstack-start — Vercel builds
+  and serves them)
 - "render" + "node_api" (Node/Express-style APIs)
+- "render" + "python_api" ONLY when the repo service has an inferredRun — use
+  its install and start commands verbatim
+- "render" + "docker_service" (built from the service's own Dockerfile; set
+  install/build/start to null) for a service with a Dockerfile that serves HTTP
 - managed "neon" + "postgres"
+- managed "upstash" + "redis" (wire REDIS_URL-style names to "<id>.connectionUrl",
+  UPSTASH_REDIS_REST_URL / KV_REST_API_URL to "<id>.restUrl", and
+  UPSTASH_REDIS_REST_TOKEN / KV_REST_API_TOKEN to "<id>.restToken")
 ONLY these provider+type combinations may be classification "deployable".
 
 EVERYTHING ELSE IS DIAGNOSIS-ONLY. If the app needs anything outside the slice
-above — "python_api", "worker", "docker_service", "railway",
-"supabase", "upstash", redis, object storage, Nuxt/Remix SSR, Docker-only
-apps, non-JS stacks — you MUST set classification "diagnose_only" and explain it
+above — "worker", "railway", docker-compose apps, Python services with
+neither an inferredRun nor a Dockerfile, provisioning "supabase", object
+storage, other SSR frameworks — you MUST set classification "diagnose_only" and explain it
 with blockers. Do NOT propose a "deployable" plan for unsupported stacks; the
 validator will force it to RED anyway, so be honest up front. You may still
 describe the unsupported service for diagnosis, but never imply ShipFix will
@@ -65,19 +74,41 @@ deploy it.
 The schema enums below intentionally include unsupported values so you can
 describe them for DIAGNOSIS — listing one does NOT mean ShipFix can deploy it.
 
-If the app needs database migrations, keep them out of scope: ShipFix
-provisions the database but does NOT run migrations. Note this as a blocker and
-prefer "needs_setup".
+Database schema: ShipFix runs Prisma and Drizzle migrations itself (set the
+managed service's "migration" to "prisma" or "drizzle"); for repos without
+migration files it pushes the schema into a freshly provisioned database. Any
+other migration tool is out of scope: note it as a blocker and prefer
+"needs_setup".
 
 ENV WIRING:
 - "generated_from_service": ref "serviceId.publicUrl" or "serviceId.origin".
-- "generated_from_managed": ref "managedId.connectionUrl".
+- "generated_from_managed": ref "managedId.connectionUrl" (Redis also
+  "managedId.restUrl" / "managedId.restToken"). Server-side names only.
 - "provider_injected": platform-provided (e.g. PORT).
 - "user_secret": the user must supply it — also add a matching question.
-- "literal": only for known NON-secret defaults (never a credential).
+- "literal": only for known NON-secret defaults (never a credential). For names
+  in publicEnvNames (browser-public values committed to the repo), use source
+  "literal" with no value and do not ask the user — ShipFix fills them in.
+- "generated_secret": app-owned random signing secrets (CRON_SECRET,
+  AUTH_SECRET, NEXTAUTH_SECRET, JWT_SECRET, SESSION_SECRET). Never for
+  provider-issued keys and never for browser-exposed (VITE_/NEXT_PUBLIC_) names.
 - Add a wiring edge for each generated env var, including managed secrets like
   db.connectionUrl -> api.DATABASE_URL and service URLs like api.publicUrl ->
   web.VITE_API_URL.
+
+HOSTED DATA:
+- A dataNeed with hostedBy (e.g. "supabase") already exists on that platform.
+  Do not add a managed service for it; the app reaches it through its own
+  client env (e.g. SUPABASE_URL + anon key).
+- An app that talks to an EXISTING Supabase project (RepoContext.supabase) is
+  not "needs supabase provisioning" — it stays in the slice. Mark its
+  SUPABASE_* env (URL, anon/publishable key, service-role key) as
+  "user_secret"; ShipFix reads them from the user's connected Supabase project.
+
+COMPANIONS:
+- RepoContext.companions lists packages that are not web deploy targets
+  (desktop/mobile clients, CLIs, MCP servers, agent tooling, docs, examples,
+  helper scripts). Never create services for them.
 
 OUTPUT FORMAT:
 Return ONLY a single JSON object — no markdown, no code fences, no commentary —
@@ -94,9 +125,9 @@ matching this DeploymentPlan schema exactly:
     "install": string|null,
     "build": string|null,
     "start": string|null,
-    "outputDir": string|null,             // static frontends only; null for frontend_ssr (Vercel builds Next itself)
+    "outputDir": string|null,             // static frontends only; null for frontend_ssr (Vercel builds it itself)
     "healthCheckPath": string|null,       // backends; optional grounded API route for frontend_ssr
-    "env": [{ "name": string, "source": "user_secret"|"generated_from_service"|"generated_from_managed"|"provider_injected"|"literal", "ref"?: string, "value"?: string }],
+    "env": [{ "name": string, "source": "user_secret"|"generated_from_service"|"generated_from_managed"|"provider_injected"|"literal"|"generated_secret", "ref"?: string, "value"?: string }],
     "evidence": string[]                  // RepoContext file paths that justify this
   }],
   "managed": [{
@@ -107,7 +138,7 @@ matching this DeploymentPlan schema exactly:
     "exposesEnv": string,                 // e.g. "DATABASE_URL"
     "migration": "prisma"|"drizzle"|"django"|"alembic"|"none"
   }],
-  "wiring": [{ "fromServiceId": string, "fromField": "publicUrl"|"connectionUrl"|"origin", "toServiceId": string, "toEnvName": string }],
+  "wiring": [{ "fromServiceId": string, "fromField": "publicUrl"|"connectionUrl"|"origin"|"restUrl"|"restToken", "toServiceId": string, "toEnvName": string }],
   "deployOrder": string[],                // every service id AND managed id, topologically ordered
   "questions": [{ "id": string, "prompt": string, "kind": "secret"|"choice"|"confirm", "options"?: string[], "default"?: string, "blocksServiceIds": string[] }],
   "blockers": [{ "severity": "fatal"|"needs_input"|"warning", "title": string, "explanation": string, "action": string, "autoFixable": boolean, "evidence": string[] }],
@@ -130,6 +161,9 @@ function summarizeRepoContext(ctx: RepoContext): string {
       dataNeeds: ctx.dataNeeds,
       envRefs: ctx.envRefs,
       hardcodedUrls: ctx.hardcodedUrls,
+      publicEnvNames: [...new Set((ctx.publicEnv ?? []).map((v) => v.name))],
+      companions: (ctx.companions ?? []).map((c) => ({ rootDir: c.rootDir, kind: c.kind })),
+      supabase: ctx.supabase ? { usesExistingProject: true } : undefined,
       fileTree: tree,
       excludedSensitiveOrLowSignalFileCount: ctx.fileTree.length - safeTree.length,
       fileTreeTruncatedCount: truncated > 0 ? truncated : undefined,

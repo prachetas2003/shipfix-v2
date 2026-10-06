@@ -1,0 +1,22 @@
+/** Directories pruned from sandbox file listings (vendored, generated, or VCS state). */
+export const IGNORED_DIRS: ReadonlySet<string> = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "out",
+  ".next",
+  ".nuxt",
+  ".svelte-kit",
+  ".turbo",
+  ".cache",
+  ".vercel",
+  ".netlify",
+  "coverage",
+  ".idea",
+  ".vscode",
+  "vendor",
+  "__pycache__",
+  ".venv",
+  "venv",
+]);

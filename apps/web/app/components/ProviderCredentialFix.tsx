@@ -37,7 +37,13 @@ export function providersNeedingCredentialFix(events: RunEventRow[]): ProviderId
       (event === "deploy_failed" &&
         /permission|HTTP 401|HTTP 403|unauthorized|forbidden|token|teamId|GitHub connection/i.test(detail));
     if (!isProviderIssue) continue;
-    if (provider === "vercel" || provider === "render" || provider === "neon") {
+    if (
+      provider === "vercel" ||
+      provider === "render" ||
+      provider === "neon" ||
+      provider === "upstash" ||
+      provider === "supabase"
+    ) {
       found.add(provider);
     }
   }

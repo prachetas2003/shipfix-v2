@@ -5,6 +5,9 @@ import {
   verifyGithubWebhookSignature,
   shouldAutoDeployPush,
   resolveGithubBranchSha,
+  resolveCloneToken,
+  resolveGithubDefaultBranch,
+  listGithubUserInstallations,
 } from "../src/index";
 
 describe("createGithubAppJwt", () => {
@@ -60,6 +63,90 @@ describe("shouldAutoDeployPush", () => {
         "main",
       ).ok,
     ).toBe(false);
+  });
+});
+
+describe("resolveCloneToken tenant scoping", () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const config = { appId: "1", privateKey: privateKey.export({ type: "pkcs8", format: "pem" }).toString() };
+
+  function fakeGithub(installationForRepo: number) {
+    const tokenRequests: string[] = [];
+    const fetchImpl = (async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("/installation")) {
+        return new Response(JSON.stringify({ id: installationForRepo }), { status: 200 });
+      }
+      const m = u.match(/installations\/(\d+)\/access_tokens/);
+      if (m) {
+        tokenRequests.push(m[1]!);
+        return new Response(JSON.stringify({ token: `ghs_${m[1]}` }), { status: 201 });
+      }
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+    return { fetchImpl, tokenRequests };
+  }
+
+  it("refuses an installation the requesting user has not claimed", async () => {
+    const gh = fakeGithub(42);
+    const token = await resolveCloneToken({
+      repoFullName: "victim/private",
+      allowedInstallationIds: ["7"],
+      config,
+      fetchImpl: gh.fetchImpl,
+    });
+    expect(token).toBe("");
+    expect(gh.tokenRequests).toEqual([]);
+  });
+
+  it("ignores a stale project installation id that is not owned", async () => {
+    const gh = fakeGithub(42);
+    const token = await resolveCloneToken({
+      repoFullName: "victim/private",
+      installationId: "42",
+      allowedInstallationIds: [],
+      config,
+      fetchImpl: gh.fetchImpl,
+    });
+    expect(token).toBe("");
+  });
+
+  it("mints a repo-scoped token for an owned installation", async () => {
+    const gh = fakeGithub(42);
+    const token = await resolveCloneToken({
+      repoFullName: "me/private",
+      allowedInstallationIds: ["42"],
+      config,
+      fetchImpl: gh.fetchImpl,
+    });
+    expect(token).toBe("ghs_42");
+  });
+});
+
+describe("resolveGithubDefaultBranch", () => {
+  it("returns the repo's default branch", async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ default_branch: "master" }), { status: 200 })) as typeof fetch;
+    expect(await resolveGithubDefaultBranch("acme/app", { fetchImpl })).toEqual({ branch: "master" });
+  });
+
+  it("reports missing repos", async () => {
+    const fetchImpl = (async () => new Response("{}", { status: 404 })) as typeof fetch;
+    const r = await resolveGithubDefaultBranch("acme/nope", { fetchImpl });
+    expect("error" in r && r.error).toBe("repo_not_found");
+  });
+});
+
+describe("listGithubUserInstallations", () => {
+  it("maps installations the user can access", async () => {
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({ installations: [{ id: 5, account: { login: "acme", type: "Organization" } }] }),
+        { status: 200 },
+      )) as typeof fetch;
+    expect(await listGithubUserInstallations("ghu_x", { fetchImpl })).toEqual([
+      { installationId: "5", accountLogin: "acme", accountType: "Organization" },
+    ]);
   });
 });
 

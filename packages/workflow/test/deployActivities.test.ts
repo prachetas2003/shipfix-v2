@@ -126,7 +126,7 @@ vi.mock("@shipfix/db", () => {
     execute: async () => [],
   };
 
-  return { ...tables, createDb: () => db };
+  return { ...tables, createDb: () => db, ownedGithubInstallationIds: async () => [] };
 });
 
 vi.mock("@shipfix/observability", () => {

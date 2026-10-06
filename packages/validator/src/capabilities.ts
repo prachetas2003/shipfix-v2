@@ -16,21 +16,26 @@ export interface Capabilities {
   readonly providers: ReadonlyMap<PlanProvider, ReadonlySet<ServiceType>>;
   /** managed providers a provisioner can create. */
   readonly managedProviders: ReadonlySet<ManagedProvider>;
+  /** Existing-project integrations the user has connected (env read at deploy time). */
+  readonly integrations: ReadonlySet<IntegrationProvider>;
 }
+
+export type IntegrationProvider = "supabase";
 
 /** No deploy/provision capability (the current reality of this build). */
 export function emptyCapabilities(): Capabilities {
-  return { providers: new Map(), managedProviders: new Set() };
+  return { providers: new Map(), managedProviders: new Set(), integrations: new Set() };
 }
 
 /** Type-safe builder, handy for the worker activity and tests. */
 export function capabilities(
   providerServiceTypes: Partial<Record<PlanProvider, ServiceType[]>>,
   managedProviders: ManagedProvider[] = [],
+  integrations: IntegrationProvider[] = [],
 ): Capabilities {
   const providers = new Map<PlanProvider, ReadonlySet<ServiceType>>();
   for (const [provider, types] of Object.entries(providerServiceTypes)) {
     if (types) providers.set(provider as PlanProvider, new Set(types));
   }
-  return { providers, managedProviders: new Set(managedProviders) };
+  return { providers, managedProviders: new Set(managedProviders), integrations: new Set(integrations) };
 }

@@ -25,6 +25,47 @@ function fakeDb(
 }
 
 describe("reconcileStuckRuns", () => {
+  it("leaves runs alone while their Temporal workflow is still running", async () => {
+    const db = fakeDb(
+      [{ id: "00000000-0000-0000-0000-000000000010", status: "planning", startedAt: new Date() } as never],
+      [],
+    );
+    const summary = await reconcileStuckRuns(db, {
+      dryRun: true,
+      planTransitionOlderThanMs: 1,
+      workflowLiveness: async () => "running",
+    });
+    expect(summary.examined).toBe(1);
+    expect(summary.results).toEqual([]);
+  });
+
+  it("still reconciles runs whose workflow has closed or vanished", async () => {
+    const db = fakeDb(
+      [{ id: "00000000-0000-0000-0000-000000000011", status: "wiring", startedAt: new Date(0) } as never],
+      [{ status: "live" }],
+    );
+    const summary = await reconcileStuckRuns(db, {
+      dryRun: true,
+      olderThanMs: 1,
+      workflowLiveness: async () => "not_found",
+    });
+    expect(summary.results[0]).toMatchObject({ previousStatus: "wiring", newStatus: "diagnosed" });
+  });
+
+  it("reconciles a running workflow past the hard cap", async () => {
+    const db = fakeDb(
+      [{ id: "00000000-0000-0000-0000-000000000012", status: "deploying", startedAt: new Date(0) } as never],
+      [],
+    );
+    const summary = await reconcileStuckRuns(db, {
+      dryRun: true,
+      olderThanMs: 1,
+      maxRunMs: 1000,
+      workflowLiveness: async () => "running",
+    });
+    expect(summary.results).toHaveLength(1);
+  });
+
   it("treats awaiting_input as non-terminal and preserves live resources as diagnosed", async () => {
     const db = fakeDb(
       [{ id: "00000000-0000-0000-0000-000000000001", status: "awaiting_input" }],

@@ -55,10 +55,11 @@ async function loadCapabilitiesForUser(db: Database, userId: string): Promise<Ca
 
   const managed: ManagedProvider[] = [];
   if (connected.has("neon")) managed.push("neon");
+  if (connected.has("upstash")) managed.push("upstash");
   const providerServiceTypes: Partial<Record<PlanProvider, ServiceType[]>> = {};
-  if (connected.has("render")) providerServiceTypes.render = ["node_api"];
+  if (connected.has("render")) providerServiceTypes.render = ["node_api", "python_api", "docker_service"];
   if (connected.has("vercel")) providerServiceTypes.vercel = ["frontend_static", "frontend_ssr"];
-  return buildCapabilities(providerServiceTypes, managed);
+  return buildCapabilities(providerServiceTypes, managed, connected.has("supabase") ? ["supabase"] : []);
 }
 
 /**

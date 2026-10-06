@@ -11,10 +11,24 @@ const NON_TERMINAL_STATUSES = [
   "awaiting_input",
   "provisioning",
   "deploying",
+  "wiring",
   "verifying",
 ] as const;
 
+/** Runs whose workflow is still executing are left alone until this hard cap. */
+const DEFAULT_MAX_RUN_MS = 3 * 60 * 60 * 1000;
+
+export type WorkflowLiveness = "running" | "closed" | "not_found" | "unknown";
+
 export interface ReconcileStuckRunsOptions {
+  /**
+   * Ask Temporal whether a run's workflow is still executing. Runs reported as
+   * "running" are never reconciled before `maxRunMs`; timing heuristics only
+   * apply to runs whose workflow is gone, closed, or unknown.
+   */
+  workflowLiveness?: (runId: string) => Promise<WorkflowLiveness>;
+  /** Hard cap for a still-running workflow (default 3 hours). */
+  maxRunMs?: number;
   /** Mark runs stuck longer than this (default 20 minutes). */
   olderThanMs?: number;
   /** Mark queued runs as stuck faster because no worker progress has happened. */
@@ -55,8 +69,10 @@ export async function reconcileStuckRuns(
   const queuedCutoff = new Date(Date.now() - queuedOlderThanMs);
   const planTransitionCutoff = new Date(Date.now() - planTransitionOlderThanMs);
 
-  const stuck = await db
-    .select({ id: runs.id, status: runs.status })
+  const maxRunMs = opts.maxRunMs ?? DEFAULT_MAX_RUN_MS;
+
+  const candidates = await db
+    .select({ id: runs.id, status: runs.status, startedAt: runs.startedAt })
     .from(runs)
     .where(
       and(
@@ -69,6 +85,18 @@ export async function reconcileStuckRuns(
         ),
       ),
     );
+
+  const stuck: typeof candidates = [];
+  for (const row of candidates) {
+    if (opts.workflowLiveness) {
+      const liveness = await opts.workflowLiveness(row.id).catch((): WorkflowLiveness => "unknown");
+      const ageMs = Date.now() - new Date(row.startedAt).getTime();
+      if (liveness === "running" && ageMs < maxRunMs) continue;
+      // Temporal unreachable: don't apply the fast heuristics to a run that may be healthy.
+      if (liveness === "unknown" && ageMs < olderThanMs) continue;
+    }
+    stuck.push(row);
+  }
 
   const results: ReconcileStuckRunResult[] = [];
 
@@ -172,7 +200,7 @@ export async function reconcileStuckRuns(
   }
 
   return {
-    examined: stuck.length,
+    examined: candidates.length,
     reconciled: opts.dryRun ? 0 : results.length,
     results,
   };

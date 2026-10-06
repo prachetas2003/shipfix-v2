@@ -24,7 +24,8 @@
     "db:push": "pnpm --filter @shipfix/db db:push",
     "smoke": "node scripts/smoke-analyze.mjs",
     "smoke:alpha": "tsx scripts/smoke-alpha.ts",
-    "reconcile-stuck-runs": "tsx scripts/reconcile-stuck-runs.ts"
+    "reconcile-stuck-runs": "tsx scripts/reconcile-stuck-runs.ts",
+    "eval": "tsx scripts/eval.ts"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

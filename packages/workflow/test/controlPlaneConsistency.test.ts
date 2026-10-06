@@ -12,7 +12,7 @@ interface FakeRow {
 }
 
 const h = vi.hoisted(() => {
-  const rows: Record<string, FakeRow[]> = { runs: [] };
+  const rows: Record<string, FakeRow[]> = { runs: [], deployed_resources: [] };
   const events: Array<{ level: string; message: string; data: Record<string, unknown> }> = [];
   return { rows, events };
 });
@@ -27,6 +27,7 @@ vi.mock("@shipfix/db", async (importOriginal) => {
     new Proxy({ __table: name }, { get: (t, prop) => (prop === "__table" ? name : { table: name, column: prop }) });
 
   const runs = table("runs");
+  const deployedResources = table("deployed_resources");
   const rowsFor = (t: { __table?: string }): FakeRow[] => h.rows[(t as { __table: string }).__table];
 
   type Cond = { eq?: [{ column: string }, unknown] } | undefined;
@@ -67,7 +68,7 @@ vi.mock("@shipfix/db", async (importOriginal) => {
     }),
   };
 
-  return { ...actual, runs, createDb: () => db };
+  return { ...actual, runs, deployedResources, createDb: () => db };
 });
 
 vi.mock("@shipfix/observability", () => {
@@ -105,6 +106,7 @@ describe("control plane consistency helpers", () => {
 describe("workflow activities — control plane consistency", () => {
   beforeEach(() => {
     h.rows.runs = [];
+    h.rows.deployed_resources = [];
     h.events.length = 0;
     process.env.DATABASE_URL = "postgres://localhost:5432/shipfix";
   });
@@ -125,6 +127,18 @@ describe("workflow activities — control plane consistency", () => {
     expect(h.rows.runs[0]?.status).toBe("failed");
     expect(h.rows.runs[0]?.finishedAt).toBeTruthy();
     expect(h.events.some((e) => e.data.event === CONTROL_PLANE_CONSISTENCY_EVENT)).toBe(true);
+  });
+
+  it("failRun marks a run diagnosed when resources are already live", async () => {
+    const { failRun } = await import("../src/activities");
+    const runId = "66666666-6666-4666-8666-666666666666";
+    h.rows.runs.push({ id: runId, status: "provisioning" });
+    h.rows.deployed_resources.push({ runId, status: "live" });
+
+    await failRun(runId, "Database migrations failed for db. Deploy was not started.");
+
+    expect(h.rows.runs[0]?.status).toBe("diagnosed");
+    expect(h.events.some((e) => e.data.stage === "diagnosed")).toBe(true);
   });
 
   it("failRun logs worker-side mismatch when the run row is absent in worker DB", async () => {

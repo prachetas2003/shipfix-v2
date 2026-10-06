@@ -40,15 +40,23 @@ const META: Record<string, { title: string; action: string }> = {
   },
   backend_start_missing: {
     title: "Backend start script missing",
-    action: "Add a start script for the Node API before using ShipFix auto-deploy.",
+    action: "Add a start script (Node) or a Procfile with a web process (Python) before using ShipFix auto-deploy.",
+  },
+  python_start_ungrounded: {
+    title: "Python start command not confirmed",
+    action: "Add a Procfile (\"web: <start command>\") so ShipFix runs the command your app actually uses.",
+  },
+  docker_file_missing: {
+    title: "Dockerfile missing",
+    action: "Add a Dockerfile to the service directory, or deploy it as a Node/Python service instead.",
   },
   repo_python_unsupported: {
-    title: "Python apps are not auto-deployable yet",
-    action: "Deploy this app manually for now. ShipFix alpha supports Vite/static frontends, Node APIs, and Neon Postgres.",
+    title: "ShipFix can't tell how to start this Python app",
+    action: "Add a Procfile (\"web: <start command>\") or a Dockerfile with an EXPOSE line, then re-analyze.",
   },
   repo_docker_unsupported: {
-    title: "Docker apps are not auto-deployable yet",
-    action: "Deploy this Docker app manually for now. ShipFix will not create provider resources for it.",
+    title: "Docker setup ShipFix can't deploy",
+    action: "ShipFix deploys a single Dockerfile that declares its port (EXPOSE). docker-compose stacks need to be split into separate services.",
   },
   repo_ssr_unsupported: {
     title: "SSR apps are not auto-deployable yet",
@@ -98,6 +106,28 @@ const META: Record<string, { title: string; action: string }> = {
     title: "Literal env var looks like a secret",
     action: "A literal env value looks like a credential. Secrets must be supplied as user_secret, never embedded in the plan.",
   },
+  env_generated_secret_public: {
+    title: "Generated secret would be exposed to browsers",
+    action:
+      "Env vars with a browser prefix (VITE_, NEXT_PUBLIC_, ...) are compiled into the public bundle. Generated secrets are only allowed on server-side names.",
+  },
+  env_integration_secret_public: {
+    title: "Secret key would be exposed to browsers",
+    action: "Only server-side env vars may receive a service-role or secret key. Use the anon/publishable key in browser code.",
+  },
+  env_managed_secret_public: {
+    title: "Database credential would be exposed to browsers",
+    action: "Only server-side env vars may receive a database or Redis connection. Move this access into server code.",
+  },
+  integration_not_connected: {
+    title: "Connect your Supabase account",
+    action:
+      "Connect Supabase so ShipFix can read your project's URL and keys at deploy time, or set those env vars on the app yourself.",
+  },
+  integration_project_unknown: {
+    title: "Which Supabase project?",
+    action: "Answer the setup question with your Supabase project ref (the part before .supabase.co).",
+  },
   managed_provider_missing: {
     title: "Managed service has no provider",
     action: "A managed service set to 'provision' must name a provider.",
@@ -115,7 +145,7 @@ const META: Record<string, { title: string; action: string }> = {
     action: "Connect this provider's account/key in the Connect step, then deploy.",
   },
   managed_not_connected: {
-    title: "Database provider not connected yet",
+    title: "Database or Redis provider not connected yet",
     action: "Connect this managed provider's account/key, then deploy.",
   },
   service_unsupported_mvp: {
@@ -124,7 +154,7 @@ const META: Record<string, { title: string; action: string }> = {
   },
   managed_unsupported_mvp: {
     title: "Database type not auto-provisionable yet",
-    action: "ShipFix currently provisions Postgres on Neon. Provision other stores manually for now.",
+    action: "ShipFix currently provisions Postgres on Neon and Redis on Upstash. Provision other stores manually for now.",
   },
   env_ref_uncovered: {
     title: "Required env var not provided by the plan",
@@ -145,7 +175,7 @@ const META: Record<string, { title: string; action: string }> = {
   migration_required: {
     title: "Database migrations required",
     action:
-      "ShipFix runs Prisma migrations automatically. For other migration tools, run them manually after the DB is live, then rerun deploy.",
+      "ShipFix runs Prisma and Drizzle migrations automatically. For other migration tools, run them manually after the DB is live, then rerun deploy.",
   },
   backend_health_ungrounded: {
     title: "Backend has no grounded health check",

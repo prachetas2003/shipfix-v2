@@ -5,7 +5,7 @@
  * gets its own isolated provider resources.
  */
 
-export type ProviderId = "neon" | "render" | "vercel";
+export type ProviderId = "neon" | "upstash" | "render" | "vercel" | "supabase";
 
 export interface ProviderExtraStep {
   title: string;
@@ -19,9 +19,10 @@ export interface ProviderGuide {
   name: string;
   /** One-line role in a deployment. */
   blurb: string;
-  credentialField: "apiKey" | "apiToken";
+  credentialField: "apiKey" | "apiToken" | "accessToken";
   credentialLabel: string;
-  optionalFields?: Array<{ field: string; label: string; placeholder: string }>;
+  /** Extra credential inputs; `required` ones must be filled before connecting. */
+  optionalFields?: Array<{ field: string; label: string; placeholder: string; required?: boolean }>;
   /** What ShipFix does with the key. */
   whatFor: string;
   /** Direct link to create the credential. */
@@ -55,6 +56,24 @@ export const PROVIDER_GUIDES: Record<ProviderId, ProviderGuide> = {
     scope: "Use a personal or account API key that can create projects and databases.",
     lifecycle:
       "For local alpha testing, the ShipFix API/worker also needs NEON_ORG_ID in backend env. Free Neon databases may sleep when idle and wake on first query.",
+  },
+  upstash: {
+    id: "upstash",
+    name: "Upstash",
+    blurb: "Redis",
+    credentialField: "apiKey",
+    credentialLabel: "Management API key",
+    optionalFields: [
+      { field: "email", label: "Account email", placeholder: "Upstash account email", required: true },
+      { field: "region", label: "Region", placeholder: "Optional: AWS region, default us-east-1" },
+    ],
+    whatFor:
+      "ShipFix uses Upstash to create a Redis database for your app and injects the sealed REDIS_URL (or the Upstash REST URL and token) into the server before deploy.",
+    tokenUrl: "https://console.upstash.com/account/api",
+    tokenUrlLabel: "Upstash Management API",
+    scope: "Use a Management API key from the Upstash account that should own the database, together with that account's email.",
+    lifecycle:
+      "Each app gets its own Upstash database, kept across redeploys. The free plan limits how many databases you can have.",
   },
   render: {
     id: "render",
@@ -104,10 +123,24 @@ export const PROVIDER_GUIDES: Record<ProviderId, ProviderGuide> = {
       },
     ],
   },
+  supabase: {
+    id: "supabase",
+    name: "Supabase",
+    blurb: "Your existing Supabase project",
+    credentialField: "accessToken",
+    credentialLabel: "Personal access token",
+    whatFor:
+      "Your app already uses a Supabase project. At deploy time ShipFix reads that project's URL, anon key, and service-role key and sets them as env vars, so you don't have to copy them by hand. ShipFix never changes your Supabase project.",
+    tokenUrl: "https://supabase.com/dashboard/account/tokens",
+    tokenUrlLabel: "Supabase access tokens",
+    scope: "Use a personal access token from the Supabase account that owns the app's project.",
+    lifecycle:
+      "The service-role key only goes to server-side env vars, never into browser code. You can still override any value by setting it on the app yourself.",
+  },
 };
 
 export function providerGuide(id: string): ProviderGuide | null {
   return (PROVIDER_GUIDES as Record<string, ProviderGuide>)[id] ?? null;
 }
 
-export const ALL_PROVIDER_IDS: ProviderId[] = ["neon", "render", "vercel"];
+export const ALL_PROVIDER_IDS: ProviderId[] = ["neon", "upstash", "render", "vercel", "supabase"];

@@ -3,6 +3,7 @@ import type {
   DeploymentPlan,
   EnvVar,
   ManagedService,
+  PlanIntegration,
   PlanQuestion,
   PlanService,
   RepoContext,
@@ -10,13 +11,15 @@ import type {
   VerificationCheck,
   WiringEdge,
 } from "@shipfix/contracts";
+import { isVercelSsrFramework } from "@shipfix/contracts";
 import { normalizeRoutePath, topHealthCandidate } from "@shipfix/validator";
+import { SUPABASE_INTEGRATION_ID, supabaseFieldFor, supabaseProjectQuestion } from "./supabaseEnv";
 
 /**
  * Deterministic plan synthesis for the supported slice.
  *
  * When the analyzer's evidence fully describes a repo ShipFix can actually
- * deploy (Vite/CRA or Next.js on Vercel, Node API on Render, optional Neon
+ * deploy (Vite/CRA or a server-rendered app such as Next.js on Vercel, Node API on Render, optional Neon
  * Postgres — including Next App Router + separate API monorepos), the plan is
  * BUILT IN CODE from that evidence — commands from the scripts map, health
  * path from grounded route candidates, env wiring from detected refs. No model
@@ -30,9 +33,63 @@ import { normalizeRoutePath, topHealthCandidate } from "@shipfix/validator";
 const FRONTEND_OUTPUT_DIR: Record<string, string> = {
   vite: "dist",
   cra: "build",
+  "sveltekit-static": "build",
 };
 
-const BACKEND_FRAMEWORKS = new Set(["express", "fastify", "koa", "hapi"]);
+const SSR_LABEL: Record<string, string> = {
+  next: "Next.js",
+  nuxt: "Nuxt",
+  remix: "Remix",
+  "react-router": "React Router",
+  sveltekit: "SvelteKit",
+  "tanstack-start": "TanStack Start",
+};
+
+const BACKEND_FRAMEWORKS = new Set(["express", "fastify", "koa", "hapi", "hono", "h3", "restify", "polka", "node-http"]);
+
+/**
+ * Build-time values a static frontend's bundler config demands but that have
+ * one correct answer on a static host (Replit's Vite template throws without
+ * PORT and BASE_PATH). Non-secret by construction.
+ */
+const STATIC_BUILD_DEFAULTS: Record<string, string> = {
+  PORT: "3000",
+  BASE_PATH: "/",
+};
+
+const CLIENT_PREFIX_RE = /^(VITE_|NEXT_PUBLIC_|REACT_APP_|PUBLIC_|EXPO_PUBLIC_|NUXT_PUBLIC_|GATSBY_)/;
+
+/**
+ * Server env names that may be satisfied by a differently named public key.
+ * Server-side SUPABASE_KEY is deliberately absent: it is often the service-role key.
+ */
+const PUBLIC_ALIASES: Record<string, string[]> = {
+  SUPABASE_ANON_KEY: ["SUPABASE_PUBLISHABLE_KEY", "SUPABASE_KEY"],
+  SUPABASE_PUBLISHABLE_KEY: ["SUPABASE_ANON_KEY", "SUPABASE_KEY"],
+};
+
+/**
+ * App-owned signing secrets whose only requirement is "long and random".
+ * ShipFix generates them once per project and keeps them sealed. Never
+ * provider-issued keys (STRIPE_WEBHOOK_SECRET, CLERK_SECRET_KEY...) — those
+ * must come from the provider.
+ */
+const GENERATED_SECRET_NAMES = new Set([
+  "CRON_SECRET",
+  "AUTH_SECRET",
+  "NEXTAUTH_SECRET",
+  "BETTER_AUTH_SECRET",
+  "JWT_SECRET",
+  "JWT_ACCESS_SECRET",
+  "JWT_REFRESH_SECRET",
+  "ACCESS_TOKEN_SECRET",
+  "REFRESH_TOKEN_SECRET",
+  "TOKEN_SECRET",
+  "SESSION_SECRET",
+  "COOKIE_SECRET",
+  "APP_SECRET",
+  "SECRET_KEY_BASE",
+]);
 
 const DB_URL_RE = /^(DATABASE_URL|POSTGRES(QL)?_URL|PG_?(CONNECTION_)?(STRING|URL)|DB_URL)$/i;
 const HEALTH_PATH_RE = /health|healthz|ready|readyz|status|live|ping/i;
@@ -47,13 +104,49 @@ function pmCommand(signal: ServiceSignal, kind: "install" | "build" | "start"): 
   return `${pm} run ${kind}`;
 }
 
+/**
+ * How a backend signal gets built on Render: from its scripts (Node), from the
+ * analyzer's inferred run command (Python), or from its own Dockerfile. Python
+ * without a run command and Docker without a declared port stay out of slice.
+ */
+function backendRuntime(s: ServiceSignal): "node_api" | "python_api" | "docker_service" | null {
+  if (s.language === "node") return "node_api";
+  if (s.language === "python" && s.role === "backend") {
+    if (s.inferredRun) return "python_api";
+    return s.hasDockerfile ? "docker_service" : null;
+  }
+  if (s.language === "docker" && s.framework === "docker" && s.role === "backend") return "docker_service";
+  return null;
+}
+
+const RUNTIME_LABEL: Record<string, string> = {
+  streamlit: "Streamlit app",
+  gradio: "Gradio app",
+  chainlit: "Chainlit app",
+  docker: "Docker service",
+};
+
 interface SliceShape {
   frontend: ServiceSignal | null;
   backend: ServiceSignal | null;
-  /** A standalone Next.js app (deployed to Vercel as frontend_ssr). */
+  /** A server-rendered app — Next.js, TanStack Start, Nuxt, ... (Vercel frontend_ssr). */
   next: ServiceSignal | null;
   wantsPostgres: boolean;
+  wantsRedis: boolean;
   migrationTool: ManagedService["migration"];
+}
+
+const REDIS_REST_URL_RE = /^(UPSTASH_REDIS_REST_URL|KV_REST_API_URL)$/;
+const REDIS_REST_TOKEN_RE = /^(UPSTASH_REDIS_REST_TOKEN|KV_REST_API_TOKEN)$/;
+const REDIS_URL_RE = /^(\w+_)?(REDIS_(URL|URI|TLS_URL|CONNECTION_STRING)|KV_URL)$/;
+
+/** Which field of a provisioned Upstash database a server env name wants, if any. */
+function redisFieldFor(name: string): "connectionUrl" | "restUrl" | "restToken" | null {
+  if (CLIENT_PREFIX_RE.test(name)) return null;
+  if (REDIS_REST_URL_RE.test(name)) return "restUrl";
+  if (REDIS_REST_TOKEN_RE.test(name)) return "restToken";
+  if (REDIS_URL_RE.test(name)) return "connectionUrl";
+  return null;
 }
 
 /**
@@ -71,14 +164,17 @@ function matchSupportedSlice(ctx: RepoContext): SliceShape | null {
     if (s.language === "node" && s.role === "frontend" && s.framework in FRONTEND_OUTPUT_DIR) {
       if (frontend) return null; // multiple frontends — ambiguous, LLM decides
       frontend = s;
-    } else if (s.language === "node" && s.role === "backend" && BACKEND_FRAMEWORKS.has(s.framework)) {
+    } else if (
+      (s.language === "node" && s.role === "backend" && BACKEND_FRAMEWORKS.has(s.framework)) ||
+      (s.language !== "node" && backendRuntime(s) !== null)
+    ) {
       if (backend) return null;
       backend = s;
-    } else if (s.language === "node" && s.role === "fullstack" && s.framework === "next") {
+    } else if (s.language === "node" && s.role === "fullstack" && isVercelSsrFramework(s.framework)) {
       if (next) return null;
       next = s;
     } else {
-      return null; // python/docker/non-Next SSR/unknown — out of slice
+      return null; // python/docker/unsupported SSR/unknown — out of slice
     }
   }
 
@@ -88,26 +184,38 @@ function matchSupportedSlice(ctx: RepoContext): SliceShape | null {
 
   // Commands must be grounded in declared scripts, or the plan can't be honest.
   if (frontend && !frontend.scripts.build) return null;
-  if (backend && !backend.scripts.start) return null;
+  if (backend && backendRuntime(backend) === "node_api" && !backend.scripts.start) return null;
   if (next && !next.scripts.build) return null;
 
   let wantsPostgres = false;
+  let wantsRedis = false;
   let migrationTool: ManagedService["migration"] = "none";
   for (const need of ctx.dataNeeds) {
-    if (need.kind !== "postgres") return null; // redis/mysql/etc — out of slice
+    if (need.hostedBy) continue; // already exists; the app reaches it through its own client
+    if (need.kind === "redis") {
+      wantsRedis = true;
+      continue;
+    }
+    if (need.kind !== "postgres") return null; // mysql/object storage/etc — out of slice
     wantsPostgres = true;
     if (need.migrationTool !== "none") migrationTool = need.migrationTool;
   }
-  if (wantsPostgres && !backend && !next) return null; // DB with no server — ambiguous
+  if ((wantsPostgres || wantsRedis) && !backend && !next) return null; // store with no server — ambiguous
+  if (wantsRedis) {
+    // A client with no env to point it elsewhere (e.g. `new Redis()`) dials localhost; a new database wouldn't help.
+    const servers = [backend?.rootDir, next?.rootDir];
+    const wired = ctx.envRefs.some((r) => servers.includes(r.service) && redisFieldFor(r.name));
+    if (!wired) return null;
+  }
 
-  return { frontend, backend, next, wantsPostgres, migrationTool };
+  return { frontend, backend, next, wantsPostgres, wantsRedis, migrationTool };
 }
 
 /** Build the DeploymentPlan for a slice-matching repo. Null = use the LLM. */
 export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | null {
   const shape = matchSupportedSlice(ctx);
   if (!shape) return null;
-  const { frontend, backend, next, wantsPostgres, migrationTool } = shape;
+  const { frontend, backend, next, wantsPostgres, wantsRedis, migrationTool } = shape;
 
   const services: PlanService[] = [];
   const managed: ManagedService[] = [];
@@ -116,10 +224,54 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
   const blockers: Blocker[] = [];
   const verification: VerificationCheck[] = [];
   const deployOrder: string[] = [];
+  const supabaseUsers = new Set<string>();
   let needsSetup = false;
 
+  // Every referenced name is a wiring candidate (a fallback like
+  // `VITE_API_URL || "http://localhost:3000"` still breaks in production), but
+  // only refs without a code default ever become a question for the user.
   const refsFor = (signal: ServiceSignal): string[] =>
-    ctx.envRefs.filter((r) => r.service === signal.rootDir && r.required).map((r) => r.name);
+    ctx.envRefs.filter((r) => r.service === signal.rootDir).map((r) => r.name);
+  const isRequired = (signal: ServiceSignal, name: string): boolean =>
+    ctx.envRefs.some((r) => r.service === signal.rootDir && r.name === name && r.required);
+
+  const publicEnv = ctx.publicEnv ?? [];
+  const publicValueFor = (signal: ServiceSignal, name: string): string | null => {
+    const exact =
+      publicEnv.find((v) => v.service === signal.rootDir && v.name === name) ??
+      publicEnv.find((v) => v.name === name);
+    if (exact) return exact.value;
+    if (CLIENT_PREFIX_RE.test(name)) return null;
+    // Server code reading SUPABASE_URL can use the committed VITE_SUPABASE_URL.
+    const aliases = [name, ...(PUBLIC_ALIASES[name] ?? [])];
+    const alias = publicEnv.find((v) => aliases.includes(v.name.replace(CLIENT_PREFIX_RE, "")));
+    return alias?.value ?? null;
+  };
+
+  /** Env the repo didn't wire: public value, generated secret, build default, or a question. */
+  const unwiredEnv = (
+    signal: ServiceSignal,
+    serviceId: string,
+    name: string,
+    prompt: string,
+    runsInBrowser: boolean,
+  ): EnvVar | null => {
+    const publicValue = publicValueFor(signal, name);
+    if (publicValue != null) return { name, source: "literal", value: publicValue };
+    if (!runsInBrowser && !CLIENT_PREFIX_RE.test(name) && GENERATED_SECRET_NAMES.has(name)) {
+      return { name, source: "generated_secret" };
+    }
+    if (!isRequired(signal, name)) return null;
+    const supabaseField = ctx.supabase ? supabaseFieldFor(name, runsInBrowser) : null;
+    if (supabaseField) {
+      supabaseUsers.add(serviceId);
+      return { name, source: "integration", ref: `${SUPABASE_INTEGRATION_ID}.${supabaseField}` };
+    }
+    if (signal === frontend && name in STATIC_BUILD_DEFAULTS) {
+      return { name, source: "literal", value: STATIC_BUILD_DEFAULTS[name] };
+    }
+    return askSecret(name, serviceId, prompt);
+  };
 
   const askSecret = (name: string, serviceId: string, prompt: string): EnvVar => {
     needsSetup = true;
@@ -154,8 +306,31 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
     }
   }
 
-  // ── Backend (Render node_api) ──────────────────────────────────────────────
+  // ── Managed Redis (Upstash) ────────────────────────────────────────────────
+  if (wantsRedis) {
+    const redisRefs = [backend, next].flatMap((s) => (s ? refsFor(s) : [])).filter((n) => redisFieldFor(n));
+    managed.push({
+      id: "cache",
+      kind: "redis",
+      mode: "provision",
+      provider: "upstash",
+      exposesEnv: redisRefs.find((n) => redisFieldFor(n) === "connectionUrl") ?? redisRefs[0] ?? "REDIS_URL",
+      migration: "none",
+    });
+    deployOrder.push("cache");
+    verification.push({ serviceId: "cache", check: "db_connect" });
+  }
+  const wireRedis = (env: EnvVar[], serviceId: string, name: string): boolean => {
+    const field = wantsRedis ? redisFieldFor(name) : null;
+    if (!field) return false;
+    env.push({ name, source: "generated_from_managed", ref: `cache.${field}` });
+    wiring.push({ fromServiceId: "cache", fromField: field, toServiceId: serviceId, toEnvName: name });
+    return true;
+  };
+
+  // ── Backend (Render web service: Node, Python, or Dockerfile) ─────────────
   if (backend) {
+    const runtime = backendRuntime(backend) ?? "node_api";
     const env: EnvVar[] = [];
     for (const name of refsFor(backend)) {
       if (name === "PORT") {
@@ -163,6 +338,8 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
       } else if (wantsPostgres && DB_URL_RE.test(name)) {
         env.push({ name, source: "generated_from_managed", ref: "db.connectionUrl" });
         wiring.push({ fromServiceId: "db", fromField: "connectionUrl", toServiceId: "api", toEnvName: name });
+      } else if (wireRedis(env, "api", name)) {
+        // wired to the Upstash database
       } else if (FRONTEND_ORIGIN_RE.test(name) && (frontend || next)) {
         // Deferred wiring: backend deploys before the frontend URL exists.
         // A3 resolves web.origin after the frontend is live (Render setEnv).
@@ -174,13 +351,14 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
           toEnvName: name,
         });
       } else {
-        env.push(
-          askSecret(
-            name,
-            "api",
-            `The backend requires the environment variable "${name}". ShipFix cannot derive its value from the repo; provide it before deploying.`,
-          ),
+        const v = unwiredEnv(
+          backend,
+          "api",
+          name,
+          `The backend requires the environment variable "${name}". ShipFix cannot derive its value from the repo; provide it before deploying.`,
+          false,
         );
+        if (v) env.push(v);
       }
     }
 
@@ -190,16 +368,37 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
       .filter((c) => c.method === "GET" || c.method === "HEAD" || c.method === "ALL")
       .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
       .map((c) => normalizeRoutePath(c.path));
-    if (!healthCheckPath) needsSetup = true; // validator: backend_health_ungrounded
+    if (!healthCheckPath && runtime !== "docker_service") needsSetup = true; // validator: backend_health_ungrounded
+    if (runtime === "docker_service" && !healthCheckPath) {
+      blockers.push({
+        severity: "warning",
+        title: "Container health is not verifiable",
+        explanation:
+          "ShipFix builds this service from its Dockerfile and can confirm the container starts and listens, but found no HTTP route to check that the app itself answers.",
+        action: "Add a health route (e.g. /health returning 2xx) so ShipFix can verify the service after deploying.",
+        autoFixable: false,
+        evidence: backend.evidence,
+      });
+    }
+
+    const commands =
+      runtime === "node_api"
+        ? {
+            install: pmCommand(backend, "install"),
+            build: backend.scripts.build ? pmCommand(backend, "build") : null,
+            start: pmCommand(backend, "start"),
+          }
+        : runtime === "python_api" && backend.inferredRun
+          ? { install: backend.inferredRun.install, build: null, start: backend.inferredRun.start }
+          : { install: null, build: null, start: null };
 
     services.push({
       id: "api",
-      type: "node_api",
+      type: runtime,
       provider: "render",
       rootDir: backend.rootDir,
-      install: pmCommand(backend, "install"),
-      build: backend.scripts.build ? pmCommand(backend, "build") : null,
-      start: pmCommand(backend, "start"),
+      ...(runtime === "node_api" ? {} : { framework: backend.framework }),
+      ...commands,
       outputDir: null,
       healthCheckPath,
       healthCandidates: [...new Set(healthCandidates)],
@@ -212,7 +411,7 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
     }
   }
 
-  // ── Next.js app (Vercel frontend_ssr) — standalone or + separate Node API ─
+  // ── Server-rendered app (Vercel frontend_ssr) — standalone or + separate Node API ─
   if (next) {
     const env: EnvVar[] = [];
     for (const name of refsFor(next)) {
@@ -222,17 +421,20 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
         // Prefer DB on the API when both exist; still wire Next if it refs DB.
         env.push({ name, source: "generated_from_managed", ref: "db.connectionUrl" });
         wiring.push({ fromServiceId: "db", fromField: "connectionUrl", toServiceId: "web", toEnvName: name });
+      } else if (wireRedis(env, "web", name)) {
+        // wired to the Upstash database
       } else if (API_URL_RE.test(name) && backend) {
         env.push({ name, source: "generated_from_service", ref: "api.publicUrl" });
         wiring.push({ fromServiceId: "api", fromField: "publicUrl", toServiceId: "web", toEnvName: name });
       } else {
-        env.push(
-          askSecret(
-            name,
-            "web",
-            `The app requires the environment variable "${name}". ShipFix cannot derive its value from the repo; provide it before deploying.`,
-          ),
+        const v = unwiredEnv(
+          next,
+          "web",
+          name,
+          `The app requires the environment variable "${name}". ShipFix cannot derive its value from the repo; provide it before deploying.`,
+          false,
         );
+        if (v) env.push(v);
       }
     }
 
@@ -253,6 +455,7 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
       type: "frontend_ssr",
       provider: "vercel",
       rootDir: next.rootDir,
+      framework: next.framework,
       install: pmCommand(next, "install"),
       build: pmCommand(next, "build"),
       start: null,
@@ -303,13 +506,14 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
         env.push({ name, source: "generated_from_service", ref: "api.publicUrl" });
         wiring.push({ fromServiceId: "api", fromField: "publicUrl", toServiceId: "web", toEnvName: name });
       } else {
-        env.push(
-          askSecret(
-            name,
-            "web",
-            `The frontend build requires the environment variable "${name}". Provide its value before deploying.`,
-          ),
+        const v = unwiredEnv(
+          frontend,
+          "web",
+          name,
+          `The frontend build requires the environment variable "${name}". Provide its value before deploying.`,
+          true,
         );
+        if (v) env.push(v);
       }
     }
 
@@ -355,17 +559,29 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
   }
 
   const parts = [
-    next ? "Next.js app on Vercel" : null,
+    next ? `${SSR_LABEL[next.framework] ?? next.framework} app on Vercel` : null,
     frontend ? `${frontend.framework} frontend on Vercel` : null,
-    backend ? `${backend.framework} API on Render` : null,
+    backend ? `${RUNTIME_LABEL[backend.framework] ?? `${backend.framework} API`} on Render` : null,
     wantsPostgres ? "Neon Postgres" : null,
+    wantsRedis ? "Upstash Redis" : null,
+    supabaseUsers.size ? "your existing Supabase project" : null,
   ].filter(Boolean);
+
+  const integrations: PlanIntegration[] = [];
+  if (supabaseUsers.size && ctx.supabase) {
+    integrations.push({ id: SUPABASE_INTEGRATION_ID, provider: "supabase", projectRef: ctx.supabase.projectRef });
+    if (!ctx.supabase.projectRef) {
+      needsSetup = true;
+      questions.push(supabaseProjectQuestion([...supabaseUsers]));
+    }
+  }
 
   return {
     goal: `Deploy ${ctx.repoFullName}: ${parts.join(" + ")}.`,
     classification: needsSetup ? "needs_setup" : "deployable",
     services,
     managed,
+    integrations,
     wiring,
     deployOrder,
     questions,

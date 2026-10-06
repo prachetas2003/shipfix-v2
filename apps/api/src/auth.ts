@@ -26,11 +26,6 @@ export function bearerToken(request: FastifyRequest): string | null {
   return match?.[1]?.trim() || null;
 }
 
-function queryToken(request: FastifyRequest): string | null {
-  const query = request.query as { token?: string } | undefined;
-  return query?.token?.trim() || null;
-}
-
 function constantTimeEquals(a: string, b: string): boolean {
   const left = Buffer.from(a);
   const right = Buffer.from(b);
@@ -105,7 +100,7 @@ export async function requireUser(
     return null;
   }
 
-  const token = bearerToken(request) || queryToken(request);
+  const token = bearerToken(request);
   if (!token) {
     await reply.status(401).send({
       error: "auth_required",
@@ -134,6 +129,28 @@ export async function requireUser(
     });
     return null;
   }
+}
+
+/**
+ * Auth for EventSource streams: a run-scoped ticket from `?ticket=` (see
+ * streamTicket.ts). Dev auth mode keeps using the dev user.
+ */
+export async function requireStreamUser(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  db: Database,
+  env: Pick<Env, "AUTH_MODE">,
+  verify: (ticket: string) => string | null,
+): Promise<{ id: string } | null> {
+  assertDevAuthAllowed(env);
+  if (authMode(env) === "dev") return requireDevUser(request, db);
+  const ticket = (request.query as { ticket?: string } | undefined)?.ticket?.trim();
+  const userId = ticket ? verify(ticket) : null;
+  if (!userId) {
+    await reply.status(401).send({ error: "invalid_stream_ticket", message: "Live updates need a fresh session. Reload the page." });
+    return null;
+  }
+  return { id: userId };
 }
 
 export function requireAdmin(request: FastifyRequest, reply: FastifyReply, env: Pick<Env, "SHIPFIX_ADMIN_TOKEN">): boolean {

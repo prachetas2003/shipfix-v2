@@ -335,7 +335,7 @@ export async function verifyFromPlan(
             url: `db://${check.serviceId}`,
             check: "db_connect",
             // Host-only detail — never include the connection string.
-            detail: verdict.ok ? "Connected and ran SELECT 1." : verdict.detail.slice(0, 300),
+            detail: verdict.ok ? verdict.detail || "Connected." : verdict.detail.slice(0, 300),
           },
         ],
       });

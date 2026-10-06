@@ -21,6 +21,7 @@ export interface PlanLite {
   services?: PlanServiceLite[];
   managed?: PlanManagedLite[];
   managedServices?: PlanManagedLite[];
+  integrations?: Array<{ provider: string }>;
 }
 
 export interface ProviderRequirement {
@@ -35,7 +36,12 @@ export function deriveRequiredProviders(plan: PlanLite | null): ProviderRequirem
 
   const managed = plan.managed ?? plan.managedServices ?? [];
   for (const m of managed) {
-    if (m.provider === "neon" || m.kind === "postgres" || m.exposesEnv === "DATABASE_URL") {
+    if (m.provider === "upstash" || m.kind === "redis") {
+      reqs.set(
+        "upstash",
+        `Upstash is needed because the app uses Redis${m.exposesEnv ? ` (${m.exposesEnv})` : ""}.`,
+      );
+    } else if (m.provider === "neon" || m.kind === "postgres" || m.exposesEnv === "DATABASE_URL") {
       reqs.set(
         "neon",
         `Neon is needed because a Postgres database${
@@ -54,7 +60,14 @@ export function deriveRequiredProviders(plan: PlanLite | null): ProviderRequirem
     }
   }
 
-  const order: ProviderId[] = ["neon", "render", "vercel"];
+  if ((plan.integrations ?? []).some((i) => i.provider === "supabase")) {
+    reqs.set(
+      "supabase",
+      "Supabase is needed so ShipFix can read your existing project's URL and keys instead of asking you to paste them.",
+    );
+  }
+
+  const order: ProviderId[] = ["neon", "upstash", "render", "vercel", "supabase"];
   return order.filter((p) => reqs.has(p)).map((p) => ({ provider: p, reason: reqs.get(p)! }));
 }
 

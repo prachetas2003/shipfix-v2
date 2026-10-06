@@ -11,6 +11,8 @@ const h = vi.hoisted(() => {
     dataNeeds: [],
     envRefs: [],
     hardcodedUrls: [],
+    publicEnv: [],
+  companions: [],
     monorepoTool: "none",
   };
   const plan: DeploymentPlan = {
