@@ -1,9 +1,13 @@
-import type {
-  DeployFailureKind,
-  DeployInput,
-  DeployResult,
-  ProviderAdapter,
-  ProviderCredentials,
+import {
+  diagnoseLogs,
+  scrubLogText,
+  tailLines,
+  type DeployFailureKind,
+  type DeployInput,
+  type DeployResult,
+  type LogDiagnosis,
+  type ProviderAdapter,
+  type ProviderCredentials,
 } from "@shipfix/adapter-core";
 import { resolveGitRepoId } from "./resolveGitRepoId.js";
 import { failVercelBody, parseVercelJson, VercelApiError } from "./vercelHttp.js";
@@ -380,6 +384,57 @@ async function waitForDeployment(
   };
 }
 
+interface VercelEvent {
+  type?: string;
+  created?: number;
+  text?: string;
+  payload?: { text?: string; date?: number };
+}
+
+/** Build output lines for a deployment (oldest first). */
+async function fetchVercelBuildLogs(
+  fetchImpl: typeof fetch,
+  base: string,
+  token: string,
+  teamId: string | undefined,
+  httpTimeoutMs: number,
+  deploymentId: string,
+  limit: number,
+): Promise<string[]> {
+  const qs = new URLSearchParams({ builds: "1", direction: "backward", limit: String(limit) });
+  const res = await vercelApiFetch(
+    fetchImpl,
+    base,
+    `/v3/deployments/${encodeURIComponent(deploymentId)}/events?${qs}`,
+    token,
+    teamId,
+    httpTimeoutMs,
+  );
+  if (!res.ok) await failBody(res);
+  const events = await parseVercelJson<VercelEvent[]>(res, "deployment events");
+  return (Array.isArray(events) ? events : [])
+    .filter((e) => e.type === "stdout" || e.type === "stderr" || e.type === "command" || e.type === "fatal")
+    .sort((a, b) => (a.created ?? a.payload?.date ?? 0) - (b.created ?? b.payload?.date ?? 0))
+    .map((e) => (e.payload?.text ?? e.text ?? "").trimEnd())
+    .filter(Boolean);
+}
+
+async function latestDeploymentId(
+  fetchImpl: typeof fetch,
+  base: string,
+  token: string,
+  teamId: string | undefined,
+  httpTimeoutMs: number,
+  projectId: string,
+): Promise<string | null> {
+  const qs = new URLSearchParams({ projectId, limit: "1" });
+  const res = await vercelApiFetch(fetchImpl, base, `/v7/deployments?${qs}`, token, teamId, httpTimeoutMs);
+  if (!res.ok) await failBody(res);
+  const json = await parseVercelJson<{ deployments?: Array<{ uid?: string; id?: string }> }>(res, "list deployments");
+  const d = json.deployments?.[0];
+  return d?.uid ?? d?.id ?? null;
+}
+
 function deploymentPublicUrl(d: VercelDeployment): string | null {
   return toHttps(d.alias?.[0]) ?? toHttps(d.url);
 }
@@ -567,14 +622,37 @@ export function createVercelAdapter(options: VercelOptions = {}): ProviderAdapte
             ? "build_failed"
             : "deploy_failed";
 
+      let fetched: { text: string; diagnosis: LogDiagnosis } | null = null;
+      if (!ok && !waited.timedOut) {
+        try {
+          const lines = await fetchVercelBuildLogs(fetchImpl, base, token, teamId, httpTimeoutMs, deployId, 200);
+          if (lines.length) {
+            const text = scrubLogText(`--- Vercel build log ---\n${tailLines(lines)}`, Object.values(input.env));
+            fetched = { text, diagnosis: diagnoseLogs(text) };
+            input.onLog?.(`Vercel: read the build log (${fetched.diagnosis.title}).`);
+          }
+        } catch {
+          /* logs are best-effort */
+        }
+      }
+
       return {
         ok,
         externalId: projectId,
         publicUrl,
         status,
-        logs: waited.logs,
+        logs: fetched ? `${waited.logs}\n${fetched.text}` : waited.logs,
         ...(failureKind ? { failureKind } : {}),
+        ...(fetched ? { diagnosis: fetched.diagnosis } : {}),
       };
+    },
+
+    async fetchLogs(externalId, query, credentials) {
+      const { token, teamId } = creds(credentials);
+      if (query.kind !== "build") return [];
+      const deploymentId = query.deploymentId ?? (await latestDeploymentId(fetchImpl, base, token, teamId, httpTimeoutMs, externalId));
+      if (!deploymentId) return [];
+      return fetchVercelBuildLogs(fetchImpl, base, token, teamId, httpTimeoutMs, deploymentId, query.limit ?? 200);
     },
 
     async waitForReady(externalId, credentials) {

@@ -45,7 +45,7 @@ const SSR_LABEL: Record<string, string> = {
   "tanstack-start": "TanStack Start",
 };
 
-const BACKEND_FRAMEWORKS = new Set(["express", "fastify", "koa", "hapi", "hono", "h3", "restify", "polka", "node-http"]);
+const BACKEND_FRAMEWORKS = new Set(["express", "fastify", "koa", "hapi", "hono", "h3", "restify", "polka", "node-http", "nest"]);
 
 /**
  * Build-time values a static frontend's bundler config demands but that have
@@ -118,6 +118,11 @@ function backendRuntime(s: ServiceSignal): "node_api" | "python_api" | "docker_s
   }
   if (s.language === "docker" && s.framework === "docker" && s.role === "backend") return "docker_service";
   return null;
+}
+
+/** Render's free plan has no pre-deploy hook, so migrations run as part of every start. */
+export function pythonStart(run: NonNullable<ServiceSignal["inferredRun"]>): string {
+  return run.release ? `${run.release} && ${run.start}` : run.start;
 }
 
 const RUNTIME_LABEL: Record<string, string> = {
@@ -315,8 +320,14 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
     });
     deployOrder.push("db");
     verification.push({ serviceId: "db", check: "db_connect" });
-    // Prisma and Drizzle migrations are executed by ShipFix. Other tools still need setup.
-    if (migrationTool !== "none" && migrationTool !== "prisma" && migrationTool !== "drizzle") {
+    // ShipFix runs Prisma and Drizzle itself; Django and Alembic run as the
+    // Python service's release step. Anything else still needs setup.
+    const runsAtStart =
+      (migrationTool === "django" || migrationTool === "alembic") &&
+      (backend && backendRuntime(backend) === "docker_service"
+        ? backend.imageMigrates === migrationTool
+        : !!backend?.inferredRun?.release);
+    if (migrationTool !== "none" && migrationTool !== "prisma" && migrationTool !== "drizzle" && !runsAtStart) {
       needsSetup = true;
     }
   }
@@ -401,10 +412,12 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
         ? {
             install: pmCommand(backend, "install"),
             build: backend.scripts.build ? pmCommand(backend, "build") : null,
-            start: pmCommand(backend, "start"),
+            start: backend.scripts["start:prod"]
+              ? `${pmCommand(backend, "install").split(" ")[0]} run start:prod`
+              : pmCommand(backend, "start"),
           }
         : runtime === "python_api" && backend.inferredRun
-          ? { install: backend.inferredRun.install, build: null, start: backend.inferredRun.start }
+          ? { install: backend.inferredRun.install, build: null, start: pythonStart(backend.inferredRun) }
           : { install: null, build: null, start: null };
 
     services.push({
@@ -643,6 +656,18 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
     usesObjectStorage ? "your S3-compatible bucket" : null,
     supabaseUsers.size ? "your existing Supabase project" : null,
   ].filter(Boolean);
+
+  const release = backend && backendRuntime(backend) === "python_api" ? backend.inferredRun?.release : undefined;
+  if (release) {
+    blockers.push({
+      severity: "warning",
+      title: "Runs your database migrations on every start",
+      explanation: `Render's free plan has no pre-deploy step, so the Python service runs "${release}" before it starts serving. Migrations that are already applied are skipped. If a migration fails, the service won't start and the deploy fails with the migration error.`,
+      action: "Nothing to do. Keep migrations safe to run against a live database.",
+      autoFixable: false,
+      evidence: backend?.inferredRun?.evidence.filter((e) => /migrat|alembic|release/i.test(e)).slice(0, 2) ?? [],
+    });
+  }
 
   const integrations: PlanIntegration[] = [];
   if (supabaseUsers.size && ctx.supabase) {

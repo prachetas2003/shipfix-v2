@@ -1,4 +1,7 @@
 import type { PlanProvider, PlanService, ServiceType } from "@shipfix/contracts";
+import type { LogDiagnosis } from "./logDiagnosis";
+
+export * from "./logDiagnosis";
 
 /**
  * @shipfix/adapter-core — the uniform contract over every deploy target.
@@ -63,6 +66,18 @@ export interface DeployResult {
   logs: string;
   /** When ok is false, distinguishes account setup from hard deploy failure. */
   failureKind?: DeployFailureKind;
+  /** Named cause read from the provider's build/runtime logs, when they were fetched. */
+  diagnosis?: LogDiagnosis;
+}
+
+export type LogKind = "build" | "runtime";
+
+export interface LogQuery {
+  kind: LogKind;
+  /** Provider deployment id; defaults to the latest deployment. */
+  deploymentId?: string;
+  /** Maximum lines to return (newest last). */
+  limit?: number;
 }
 
 export interface ProviderAdapter {
@@ -89,6 +104,9 @@ export interface ProviderAdapter {
   ): Promise<void>;
 
   teardown(externalId: string, credentials: ProviderCredentials): Promise<void>;
+
+  /** Raw log lines for a provider resource, oldest first. Callers must scrub secrets. */
+  fetchLogs?(externalId: string, query: LogQuery, credentials: ProviderCredentials): Promise<string[]>;
 }
 
 /** Simple registry so the executor can resolve an adapter by provider id. */

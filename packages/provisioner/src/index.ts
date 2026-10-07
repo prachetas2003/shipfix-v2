@@ -34,6 +34,12 @@ export {
   type SupabaseProjectValues,
 } from "./supabase";
 export {
+  NEON_SNAPSHOT_PREFIX,
+  snapshotNeonDatabase,
+  type NeonSnapshotOptions,
+  type NeonSnapshotResult,
+} from "./neonSnapshot";
+export {
   applySupabaseMigration,
   countPublicTables,
   createSupabaseRestorePoint,

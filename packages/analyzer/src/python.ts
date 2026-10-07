@@ -111,6 +111,104 @@ function defaultRoute(path: string, evidence: string): RouteCandidate {
   return { method: "GET", path, kind: "inferred", evidence: [evidence], score: scoreRoutePath(path, "GET") };
 }
 
+type Read = (file: string) => Promise<string>;
+
+export interface DjangoProject {
+  /** Folder holding manage.py, relative to the service root ("" when it is the root). */
+  appDir: string;
+  /** Dotted WSGI module, e.g. "mysite.wsgi". */
+  wsgiModule: string;
+  settingsFiles: string[];
+  /** ALLOWED_HOSTS accepts a host set at deploy time (env, "*", or *.onrender.com). */
+  hostsConfigurable: boolean;
+  usesPostgres: boolean;
+  routes: RouteCandidate[];
+}
+
+const ALLOWED_HOSTS_RE = /ALLOWED_HOSTS\s*(?:\+?=\s*(\[[^\]]*\]|[^\n]+)|\.(?:append|extend)\(([^\n]+))/g;
+const HOSTS_FROM_DEPLOY_RE = /\*|environ|getenv|config\(|\benv(\.\w+)?\(|onrender\.com|RENDER_EXTERNAL_HOSTNAME/;
+const DJANGO_POSTGRES_RE = /postgresql|postgis|dj_database_url|\benv\.db(_url)?\(|DATABASE_URL/;
+
+/** A Django project laid out by `startproject`: manage.py naming <pkg>.settings, and <pkg>/wsgi.py. */
+export async function detectDjangoProject(files: ReadonlySet<string>, serviceRoot: string, read: Read): Promise<DjangoProject | null> {
+  let manage = joinRoot(serviceRoot, "manage.py");
+  if (!files.has(manage)) {
+    // Replit-style layouts keep the dependency manifest at the root and the
+    // Django project in a subfolder (artifacts/<app>/manage.py).
+    const nested = [...files].filter((f) => {
+      if (!isUnder(f, serviceRoot)) return false;
+      const parts = relToRoot(f, serviceRoot).split("/");
+      return parts.at(-1) === "manage.py" && parts.length <= 3 && !parts.some((p) => /^(\.?venv|tests?|node_modules)$/.test(p));
+    });
+    if (nested.length !== 1) return null;
+    manage = nested[0]!;
+  }
+  const rootDir = manage.includes("/") ? manage.slice(0, manage.lastIndexOf("/")) : "";
+  const appDir = rootDir === serviceRoot ? "" : relToRoot(rootDir, serviceRoot);
+  const settingsModule = /DJANGO_SETTINGS_MODULE['"]\s*,\s*['"]([\w.]+)['"]/.exec(await read(manage))?.[1];
+  const pkg = settingsModule?.split(".")[0];
+  if (!pkg || !files.has(joinRoot(rootDir, `${pkg}/wsgi.py`))) return null;
+
+  const settingsRe = new RegExp(`^${pkg}/settings(\\.py|/[\\w/]+\\.py)$`);
+  const settingsFiles = [...files].filter((f) => isUnder(f, rootDir) && settingsRe.test(relToRoot(f, rootDir)));
+  const settings = (await Promise.all(settingsFiles.map(read))).join("\n");
+  const hostsConfigurable = [...settings.matchAll(ALLOWED_HOSTS_RE)].some((m) => HOSTS_FROM_DEPLOY_RE.test(m[1] ?? m[2] ?? ""));
+
+  const urlconf = /ROOT_URLCONF\s*=\s*['"]([\w.]+)['"]/.exec(settings)?.[1] ?? `${pkg}.urls`;
+  const urlsFile = joinRoot(rootDir, `${urlconf.replace(/\./g, "/")}.py`);
+  const routes: RouteCandidate[] = [];
+  if (files.has(urlsFile)) {
+    const urls = await read(urlsFile);
+    for (const m of urls.matchAll(/\bpath\(\s*['"]([^'"]*)['"]\s*,\s*([^\n]*)/g)) {
+      const [, prefix, target] = m;
+      if (prefix.includes("<")) continue;
+      const evidence = `${urlsFile}:${lineOf(urls, m.index ?? 0)}`;
+      if (/admin\.site\.urls/.test(target)) routes.push(defaultRoute(`/${prefix}login/`, `${evidence}: Django admin login page`));
+      else if (!/^include\(/.test(target.trim())) {
+        const path = `/${prefix}`;
+        routes.push({ method: "GET", path, kind: "explicit", evidence: [evidence], score: scoreRoutePath(path, "GET") });
+      }
+    }
+  }
+  return {
+    appDir,
+    wsgiModule: `${pkg}.wsgi`,
+    settingsFiles,
+    hostsConfigurable,
+    usesPostgres: DJANGO_POSTGRES_RE.test(settings),
+    routes,
+  };
+}
+
+/**
+ * The migration to run before each start: a Procfile `release:` line, Django's
+ * migrate when it talks to Postgres, or Alembic when its env.py takes the
+ * database URL from the environment (a hardcoded alembic.ini URL would point
+ * at the developer's machine).
+ */
+async function releaseCommand(
+  files: ReadonlySet<string>,
+  rootDir: string,
+  read: Read,
+  requirements: string,
+  procfile: string,
+  django: DjangoProject | null,
+): Promise<{ command: string; evidence: string } | null> {
+  const release = /^release:\s*(.+)$/m.exec(procfile)?.[1]?.trim();
+  if (release) return { command: release, evidence: `${joinRoot(rootDir, "Procfile")}: release process` };
+  if (django?.usesPostgres) {
+    const manage = joinRoot(django.appDir, "manage.py");
+    return { command: `python ${manage} migrate --noinput`, evidence: `${joinRoot(rootDir, manage)}: Django migrations` };
+  }
+  const ini = joinRoot(rootDir, "alembic.ini");
+  if (!files.has(ini) || !hasRequirement(requirements, "alembic")) return null;
+  const location = /^\s*script_location\s*=\s*(?:%\(here\)s\/)?([\w./-]+)/m.exec(await read(ini))?.[1] ?? "alembic";
+  const envPy = joinRoot(rootDir, `${location.replace(/\/$/, "")}/env.py`);
+  if (!files.has(envPy)) return null;
+  if (!/os\.environ|getenv|settings\.|get_settings|config\(|DATABASE_URL/.test(await read(envPy))) return null;
+  return { command: "alembic upgrade head", evidence: `${envPy}: Alembic reads the database URL from the environment` };
+}
+
 /**
  * Derive how a Python web service is installed and started from code evidence,
  * plus the routes it serves. Never guesses: no requirements.txt or no
@@ -132,8 +230,9 @@ export async function inferPythonRun(
   const routeCandidates: RouteCandidate[] = [];
 
   const procfilePath = joinRoot(rootDir, "Procfile");
-  if (files.has(procfilePath)) {
-    const web = /^web:\s*(.+)$/m.exec(await read(procfilePath))?.[1]?.trim();
+  const procfile = files.has(procfilePath) ? await read(procfilePath) : "";
+  if (procfile) {
+    const web = /^web:\s*(.+)$/m.exec(procfile)?.[1]?.trim();
     if (web) {
       start = web;
       evidence.push(`${procfilePath}: web process`);
@@ -145,7 +244,19 @@ export async function inferPythonRun(
     if (!hasRequirement(requirements, pkg)) extraPackages.push(pkg);
   };
 
-  if (framework === "fastapi" || framework === "flask") {
+  const django = framework === "django" ? await detectDjangoProject(files, rootDir, read) : null;
+  if (framework === "django") {
+    // Django rejects every request whose Host isn't in ALLOWED_HOSTS; a list
+    // fixed to localhost can't serve a Render URL, so don't claim it can.
+    if (!django?.hostsConfigurable) return { routeCandidates };
+    routeCandidates.push(...django.routes);
+    if (!start) {
+      const chdir = django.appDir ? ` --chdir ${django.appDir}` : "";
+      start = `gunicorn${chdir} ${django.wsgiModule}:application --bind 0.0.0.0:$PORT`;
+      evidence.push(`${joinRoot(rootDir, joinRoot(django.appDir, "manage.py"))}: Django project ${django.wsgiModule}`);
+      needServer("gunicorn");
+    }
+  } else if (framework === "fastapi" || framework === "flask") {
     for (const file of pyFiles) {
       const content = await read(file);
       const mod = moduleOf(file, rootDir);
@@ -208,7 +319,31 @@ export async function inferPythonRun(
 
   if (!start || !hasRequirements) return { routeCandidates };
   const install = ["pip install -r requirements.txt", ...extraPackages].join(" ");
-  return { inferredRun: { install, start, evidence }, routeCandidates };
+  const release = await releaseCommand(files, rootDir, read, requirements, procfile, django);
+  if (release) evidence.push(release.evidence);
+  return { inferredRun: { install, start, ...(release ? { release: release.command } : {}), evidence }, routeCandidates };
+}
+
+/**
+ * The migration tool a container runs at start: in the Dockerfile itself or in
+ * a shell script it references (docker-entrypoint.sh and the like).
+ */
+export async function dockerfileMigrates(
+  source: RepoSource,
+  files: ReadonlySet<string>,
+  dockerfile: string,
+): Promise<"django" | "alembic" | null> {
+  const content = (await source.readFile(dockerfile)) ?? "";
+  const scripts = [...content.matchAll(/([\w./-]+\.sh)\b/g)].map((m) => baseOf(m[1]!));
+  const dir = dockerfile.includes("/") ? dockerfile.slice(0, dockerfile.lastIndexOf("/")) : "";
+  const texts = [content];
+  for (const f of files) {
+    if (isUnder(f, dir) && scripts.includes(baseOf(f))) texts.push((await source.readFile(f)) ?? "");
+  }
+  const run = texts.join("\n");
+  if (/manage\.py["']?\s+migrate\b/.test(run)) return "django";
+  if (/\balembic\b[^\n]*\bupgrade\b/.test(run)) return "alembic";
+  return null;
 }
 
 /** True when a Dockerfile declares the port its container listens on. */

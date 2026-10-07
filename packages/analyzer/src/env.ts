@@ -63,6 +63,44 @@ const PY_ENV_GET_RE = /(?:os\.environ\.get|os\.getenv)\(\s*['"]([A-Z][A-Z0-9_]*)
 const PY_OR_FALLBACK_RE = /^\s*\)\s*or\b/;
 const NON_RUNTIME_PY_RE = /(^|\/)(test_[^/]*|[^/]*_test|conftest|setup)\.py$/;
 
+/** Arguments of a call starting right after its opening parenthesis, up to the matching close. */
+function callArgs(text: string, from: number): string {
+  let depth = 1;
+  for (let i = from; i < text.length && i < from + 400; i++) {
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")" && --depth === 0) return text.slice(from, i);
+  }
+  return text.slice(from, from + 400);
+}
+
+/**
+ * Env reads through Django settings helpers: dj-database-url and
+ * django-environ's `env.db()` read DATABASE_URL implicitly; python-decouple's
+ * `config("X")` and django-environ's `env("X")` name it. A `default=` makes it optional.
+ */
+function pythonHelperEnv(text: string): Array<[string, boolean]> {
+  const out: Array<[string, boolean]> = [];
+  for (const m of text.matchAll(/\bdj_database_url\.config\(/g)) {
+    const args = callArgs(text, m.index! + m[0].length);
+    if (!/\benv\s*=/.test(args)) out.push(["DATABASE_URL", !/\bdefault\s*=/.test(args)]);
+  }
+  if (/^\s*from\s+decouple\s+import\b[^\n]*\bconfig\b/m.test(text)) {
+    for (const m of text.matchAll(/\bconfig\(\s*['"]([A-Z][A-Z0-9_]*)['"]/g)) {
+      out.push([m[1], !/\bdefault\s*=/.test(callArgs(text, m.index! + "config(".length))]);
+    }
+  }
+  const envVar = /^(\w+)\s*=\s*environ\.Env\(/m.exec(text)?.[1];
+  if (envVar) {
+    const re = new RegExp(`\\b${envVar}(?:\\.(?:str|bool|int|float|list|json|url))?\\(\\s*['"]([A-Z][A-Z0-9_]*)['"]`, "g");
+    for (const m of text.matchAll(re)) {
+      const open = m.index! + m[0].indexOf("(") + 1;
+      out.push([m[1], !/\bdefault\s*=/.test(callArgs(text, open))]);
+    }
+    if (new RegExp(`\\b${envVar}\\.db(?:_url)?\\(\\s*\\)`).test(text)) out.push(["DATABASE_URL", true]);
+  }
+  return out;
+}
+
 /** Client constructors that read fixed env names without naming them in code. */
 const IMPLICIT_ENV: ReadonlyArray<[RegExp, readonly string[]]> = [
   [/\bRedis\.fromEnv\s*\(/, ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"]],
@@ -135,6 +173,7 @@ export async function detectEnvAndUrls(
         const after = slice.slice(m.index! + m[0].length, m.index! + m[0].length + 12);
         add(m[1], !m[2] && !PY_OR_FALLBACK_RE.test(after));
       }
+      for (const [name, required] of pythonHelperEnv(slice)) add(name, required);
       continue;
     }
     if (!isCodeFile(file) || isNonRuntimeFile(file)) continue;

@@ -2,7 +2,7 @@ import type { RepoSource } from "./source";
 import type { Companion, CompanionKind, ServiceSignal, ServiceRole } from "@shipfix/contracts";
 import { detectPackageManager } from "./packageManager";
 import { detectNextApiRoutes, detectRouteCandidates } from "./routes";
-import { dockerfileExposes, inferPythonRun } from "./python";
+import { dockerfileExposes, dockerfileMigrates, inferPythonRun } from "./python";
 import { procfileWorkers, scriptWorkers } from "./workers";
 import {
   allDeps,
@@ -410,9 +410,12 @@ export async function detectServices(
       framework === "python"
         ? { inferredRun: undefined, routeCandidates: [] }
         : await inferPythonRun(source, files, rootDir, framework, depsText);
+    let imageMigrates: "django" | "alembic" | null = null;
     if (hasDockerfile) {
       const port = dockerfileExposes((await source.readFile(dockerfile)) ?? "");
       if (port) evidence.push(`${dockerfile}: EXPOSE ${port}`);
+      imageMigrates = await dockerfileMigrates(source, files, dockerfile);
+      if (imageMigrates) evidence.push(`${dockerfile}: runs ${imageMigrates} migrations at start`);
     }
     if (inferredRun) evidence.push(...inferredRun.evidence);
     services.push({
@@ -424,6 +427,7 @@ export async function detectServices(
       scripts: {},
       entrypoints,
       hasDockerfile,
+      ...(imageMigrates ? { imageMigrates } : {}),
       routeCandidates: routeCandidates.sort((a, b) => (b.score ?? 0) - (a.score ?? 0)),
       ...(inferredRun ? { inferredRun } : {}),
       workers: framework === "python" ? [] : await procfileWorkers(source, files, rootDir),
@@ -442,7 +446,9 @@ export async function detectServices(
     }
     const isDockerfile = baseOf(file) === "Dockerfile";
     const port = isDockerfile ? dockerfileExposes((await source.readFile(file)) ?? "") : null;
+    const imageMigrates = isDockerfile ? await dockerfileMigrates(source, files, file) : null;
     services.push({
+      ...(imageMigrates ? { imageMigrates } : {}),
       rootDir,
       language: "docker",
       framework: isDockerfile ? "docker" : "docker-compose",

@@ -127,6 +127,54 @@ describe("createRenderAdapter", () => {
     expect(result.logs).not.toContain("Unexpected end of JSON input");
   });
 
+  it("reads Render's build and app logs on failure, scrubs secrets and names the cause", async () => {
+    const logCalls: string[] = [];
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      if (u.includes("/owners")) return jsonResponse([{ owner: { id: "own_1" } }]);
+      if (u.includes("/logs?")) {
+        logCalls.push(u);
+        const type = new URL(u).searchParams.get("type");
+        return jsonResponse({
+          logs:
+            type === "build"
+              ? [
+                  { message: "==> Build successful", timestamp: "2026-10-07T00:00:02Z" },
+                  { message: "==> Running 'npm run start'", timestamp: "2026-10-07T00:00:01Z" },
+                ]
+              : [
+                  { message: "connecting to postgres://u:pw-very-secret@db/x", timestamp: "2026-10-07T00:00:03Z" },
+                  { message: "==> Port scan timeout reached, no open ports detected.", timestamp: "2026-10-07T00:00:04Z" },
+                ],
+        });
+      }
+      if (u.includes("/deploys") && method === "POST") return jsonResponse({ deploy: { id: "dpl_x" } });
+      if (u.includes("/deploys/dpl_x")) return jsonResponse({ deploy: { id: "dpl_x", status: "update_failed" } });
+      if (u.includes("/services/srv_1") && method === "GET") return jsonResponse({ service: { id: "srv_1" } });
+      if (u.includes("/services") && method === "GET") return jsonResponse([]);
+      if (u.endsWith("/services") && method === "POST") return jsonResponse({ service: { id: "srv_1" } });
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const render = createRenderAdapter({ fetchImpl: fakeFetch, apiBase: "https://render.test/v1", pollIntervalMs: 1 });
+    const result = await render.deploy({
+      service,
+      repo: { fullName: "acme/app", branch: "main" },
+      rootDir: "apps/api",
+      env: { DATABASE_URL: "postgres://u:pw-very-secret@db/x" },
+      credentials: { provider: "render", values: { apiKey: "k", ownerId: "own_1" } },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(logCalls).toHaveLength(2);
+    expect(new URL(logCalls[0]!).searchParams.get("resource")).toBe("srv_1");
+    expect(result.diagnosis?.kind).toBe("no_open_port");
+    expect(result.logs).toContain("--- Render build log ---\n==> Running 'npm run start'\n==> Build successful");
+    expect(result.logs).not.toContain("pw-very-secret");
+    expect(result.logs).toContain("[redacted]");
+  });
+
   it("propagates a timeout failureKind when the deploy never reaches terminal", async () => {
     const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);

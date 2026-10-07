@@ -19,6 +19,14 @@ import {
   routeCandidatesForService,
 } from "./verificationGrounding";
 
+type InferredRun = RepoContext["services"][number]["inferredRun"];
+
+/** Start commands grounded in the repo: the inferred start, optionally preceded by its release step. */
+function groundedPythonStarts(run: InferredRun): string[] {
+  if (!run) return [];
+  return run.release ? [run.start, `${run.release} && ${run.start}`] : [run.start];
+}
+
 export interface ValidationResult {
   /** The plan with classification downgraded + validation blockers appended. */
   plan: DeploymentPlan;
@@ -302,7 +310,7 @@ export function validatePlan(
           message: `Python service "${svc.id}" needs install and start commands before ShipFix can deploy it to Render.`,
           path: `services.${svc.id}.start`,
         });
-      } else if (svc.start !== signal?.inferredRun?.start) {
+      } else if (!groundedPythonStarts(signal?.inferredRun).includes(svc.start)) {
         add({
           code: "python_start_ungrounded",
           severity: "needs_input",
@@ -483,7 +491,17 @@ export function validatePlan(
     });
   }
 
-  // ── Migrations: Prisma/Drizzle are executed by ShipFix; other tools still need setup ─
+  // ── Migrations: Prisma/Drizzle are executed by ShipFix; Django/Alembic run
+  // as a Python service's grounded release step; other tools still need setup ─
+  const releaseRuns = plan.services.flatMap((svc) => {
+    const signal = ctx.services.find((s) => s.rootDir === svc.rootDir);
+    if (svc.type === "docker_service" && signal?.imageMigrates) {
+      return [signal.imageMigrates === "django" ? "manage.py migrate" : "alembic upgrade"];
+    }
+    if (svc.type !== "python_api" || !svc.start) return [];
+    const release = signal?.inferredRun?.release;
+    return release && svc.start.startsWith(`${release} && `) ? [release] : [];
+  });
   for (const m of plan.managed) {
     if (
       !m.migration ||
@@ -493,10 +511,12 @@ export function validatePlan(
     ) {
       continue;
     }
+    const tool = m.migration === "django" ? /manage\.py migrate/ : /alembic upgrade/;
+    if ((m.migration === "django" || m.migration === "alembic") && releaseRuns.some((r) => tool.test(r))) continue;
     add({
       code: "migration_required",
       severity: "needs_input",
-      message: `"${m.id}" uses ${m.migration} migrations. ShipFix provisions the database but does not run ${m.migration} migrations in this release — run them manually after the database is live, then rerun deploy.`,
+      message: `"${m.id}" uses ${m.migration} migrations, and no service runs them before starting. ShipFix provisions the database but cannot apply these migrations — run them manually after the database is live, then rerun deploy.`,
       path: `managed.${m.id}`,
     });
   }

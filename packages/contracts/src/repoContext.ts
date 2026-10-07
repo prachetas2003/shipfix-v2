@@ -66,6 +66,8 @@ export const ServiceSignal = z.object({
   scripts: z.record(z.string()).default({}),
   entrypoints: z.array(z.string()).default([]),
   hasDockerfile: z.boolean().default(false),
+  /** Migration tool the Dockerfile (or the entrypoint script it copies) runs before the server starts. */
+  imageMigrates: z.enum(["django", "alembic"]).optional(),
   /** GET/POST routes found in entrypoints and nearby route files. */
   routeCandidates: z.array(RouteCandidate).default([]),
   /**
@@ -76,6 +78,11 @@ export const ServiceSignal = z.object({
     .object({
       install: z.string(),
       start: z.string(),
+      /**
+       * Schema migration to run before each start (Procfile `release:`,
+       * `python manage.py migrate`, `alembic upgrade head`).
+       */
+      release: z.string().optional(),
       evidence: z.array(z.string()).default([]),
     })
     .optional(),
@@ -101,7 +108,7 @@ export type ServiceSignal = z.infer<typeof ServiceSignal>;
 
 export const DataNeed = z.object({
   kind: z.enum(["postgres", "mysql", "redis", "object_storage", "sqlite_local"]),
-  detectedFrom: z.enum(["prisma", "drizzle", "sequelize", "env_ref", "dep", "code"]),
+  detectedFrom: z.enum(["prisma", "drizzle", "sequelize", "django", "alembic", "env_ref", "dep", "code"]),
   migrationTool: z
     .enum(["prisma", "drizzle", "django", "alembic", "none"])
     .default("none"),

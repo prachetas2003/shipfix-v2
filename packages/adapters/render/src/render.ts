@@ -1,9 +1,13 @@
-import type {
-  DeployFailureKind,
-  DeployInput,
-  DeployResult,
-  ProviderAdapter,
-  ProviderCredentials,
+import {
+  diagnoseLogs,
+  scrubLogText,
+  tailLines,
+  type DeployFailureKind,
+  type DeployInput,
+  type DeployResult,
+  type LogDiagnosis,
+  type ProviderAdapter,
+  type ProviderCredentials,
 } from "@shipfix/adapter-core";
 import type { PlanService } from "@shipfix/contracts";
 import {
@@ -389,6 +393,66 @@ async function waitForDeploy(
   };
 }
 
+interface RenderLogRow {
+  message?: string;
+  timestamp?: string;
+}
+
+/** Most recent log lines for a service (oldest first). Render caps a page at 100 rows. */
+async function fetchRenderLogs(
+  fetchImpl: typeof fetch,
+  base: string,
+  apiKey: string,
+  ownerId: string,
+  serviceId: string,
+  type: "build" | "app",
+  limit: number,
+  httpTimeoutMs: number,
+): Promise<string[]> {
+  const qs = new URLSearchParams({
+    ownerId,
+    resource: serviceId,
+    type,
+    direction: "backward",
+    limit: String(Math.min(Math.max(limit, 1), 100)),
+  });
+  const res = await apiFetch(fetchImpl, base, `/logs?${qs}`, apiKey, httpTimeoutMs);
+  if (!res.ok) await failBody(res, `list ${type} logs`);
+  const json = (await parseRenderResponse(res, `list ${type} logs`)) as { logs?: RenderLogRow[] } | RenderLogRow[];
+  const rows = Array.isArray(json) ? json : (json.logs ?? []);
+  return rows
+    .filter((r) => typeof r.message === "string")
+    .sort((a, b) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""))
+    .map((r) => r.message!.trimEnd());
+}
+
+/**
+ * Build log, plus the app log when the build passed but the service never
+ * came up. Failures to read logs never mask the deploy failure itself.
+ */
+async function failureLogs(
+  fetchImpl: typeof fetch,
+  base: string,
+  apiKey: string,
+  ownerId: string,
+  serviceId: string,
+  httpTimeoutMs: number,
+  secretValues: string[],
+): Promise<{ text: string; diagnosis: LogDiagnosis } | null> {
+  const sections: string[] = [];
+  for (const type of ["build", "app"] as const) {
+    try {
+      const lines = await fetchRenderLogs(fetchImpl, base, apiKey, ownerId, serviceId, type, 100, httpTimeoutMs);
+      if (lines.length) sections.push(`--- Render ${type} log ---\n${tailLines(lines)}`);
+    } catch {
+      /* logs are best-effort */
+    }
+  }
+  if (!sections.length) return null;
+  const text = scrubLogText(sections.join("\n"), secretValues);
+  return { text, diagnosis: diagnoseLogs(text) };
+}
+
 function servicePublicUrl(svc: RenderService): string | null {
   const url = svc.serviceDetails?.url;
   if (url && url.startsWith("http")) return url;
@@ -619,14 +683,27 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
             ? "build_failed"
             : "deploy_failed";
 
+      const fetched = ok
+        ? null
+        : await failureLogs(fetchImpl, base, apiKey, ownerId, serviceId, httpTimeoutMs, Object.values(input.env));
+      if (fetched) input.onLog?.(`Render: read the failure logs (${fetched.diagnosis.title}).`);
+
       return {
         ok,
         externalId: serviceId,
         publicUrl,
         status,
-        logs: waited.logs,
+        logs: fetched ? `${waited.logs}\n${fetched.text}` : waited.logs,
         ...(failureKind ? { failureKind } : {}),
+        ...(fetched ? { diagnosis: fetched.diagnosis } : {}),
       };
+    },
+
+    async fetchLogs(externalId, query, credentials) {
+      const apiKey = credentials.values.apiKey;
+      const ownerId = await resolveOwnerId(fetchImpl, base, credentials, httpTimeoutMs);
+      const type = query.kind === "build" ? "build" : "app";
+      return fetchRenderLogs(fetchImpl, base, apiKey, ownerId, externalId, type, query.limit ?? 100, httpTimeoutMs);
     },
 
     async waitForReady(externalId, credentials) {

@@ -179,7 +179,7 @@ const META: Record<string, { title: string; action: string }> = {
   migration_required: {
     title: "Database migrations required",
     action:
-      "ShipFix runs Prisma and Drizzle migrations automatically. For other migration tools, run them manually after the DB is live, then rerun deploy.",
+      "ShipFix runs Prisma and Drizzle migrations itself, and Django or Alembic migrations when the Python service runs them before starting. For other tools, run them manually after the DB is live, then rerun deploy.",
   },
   backend_health_ungrounded: {
     title: "Backend has no grounded health check",

@@ -23,7 +23,12 @@ import {
   type Capabilities,
   type ManagedProvider,
 } from "@shipfix/validator";
-import { AdapterRegistry, preflightProviderCredentials, type DeployFailureKind } from "@shipfix/adapter-core";
+import {
+  AdapterRegistry,
+  preflightProviderCredentials,
+  type DeployFailureKind,
+  type LogDiagnosis,
+} from "@shipfix/adapter-core";
 import { createRenderAdapter } from "@shipfix/adapter-render";
 import { createVercelAdapter } from "@shipfix/adapter-vercel";
 import {
@@ -32,6 +37,7 @@ import {
   createUpstashProvisioner,
   fetchSupabaseProjectValues,
   isRedisSecret,
+  snapshotNeonDatabase,
   type ManagedProviderId,
 } from "@shipfix/provisioner";
 import { migrateSupabaseProject, type SupabaseMigrationOutcome } from "./supabaseMigrations";
@@ -409,6 +415,8 @@ async function loadDeployedRows(db: Database, runId: string): Promise<DeployedRe
     encIv: r.encIv,
     encDek: r.encDek,
     reused: Boolean((r.meta as { reusedFromRunId?: unknown } | null)?.reusedFromRunId),
+    provider: r.provider,
+    externalId: r.externalId,
   }));
 }
 
@@ -506,6 +514,7 @@ async function emitDeployFailureGuidance(
     provider: string;
     failureKind: DeployFailureKind;
     errorSummary: string;
+    diagnosis?: LogDiagnosis;
   },
 ): Promise<void> {
   const guidance = buildDeployFailureGuidance({
@@ -514,6 +523,7 @@ async function emitDeployFailureGuidance(
     provider: args.provider,
     failureKind: args.failureKind,
     errorSummary: args.errorSummary,
+    ...(args.diagnosis ? { diagnosis: args.diagnosis } : {}),
   });
   await logger.warn(guidance.whatHappened, {
     event: "deploy_failure_guidance",
@@ -527,6 +537,17 @@ async function emitDeployFailureGuidance(
     whatYouShouldDo: guidance.whatYouShouldDo,
     showCursorPrompt: guidance.showCursorPrompt,
     ...(guidance.fixPrompt ? { fixPrompt: guidance.fixPrompt } : {}),
+    ...(args.diagnosis
+      ? {
+          diagnosis: {
+            kind: args.diagnosis.kind,
+            phase: args.diagnosis.phase,
+            subject: args.diagnosis.subject,
+            fixOwner: args.diagnosis.fixOwner,
+            evidence: args.diagnosis.evidence,
+          },
+        }
+      : {}),
   });
 }
 
@@ -1257,6 +1278,46 @@ export interface MigrationSummary {
 }
 
 /**
+ * Branch a reused Neon database before migrating it, so the user can roll
+ * back. Freshly created databases are empty and are not snapshotted. A failed
+ * snapshot is reported but does not block the migration.
+ */
+async function snapshotBeforeMigrate(
+  db: Database,
+  userId: string,
+  row: DeployedResourceRow,
+  managedId: string,
+  logger: RunLogger,
+  vault: SecretVault,
+): Promise<void> {
+  if (row.provider !== "neon" || !row.externalId) return;
+  const [account] = await db
+    .select()
+    .from(providerAccounts)
+    .where(and(eq(providerAccounts.userId, userId), eq(providerAccounts.provider, "neon")))
+    .limit(1);
+  const apiKey = account ? (await decryptProviderCredentials(vault, account)).apiKey : undefined;
+  const result = apiKey
+    ? await snapshotNeonDatabase(apiKey, row.externalId)
+    : { ok: false as const, message: "Neon is not connected." };
+  if (result.ok) {
+    await logger.log(`Snapshot branch "${result.branchName}" created before migrating "${managedId}".`, {
+      event: "db_snapshot_created",
+      managedId,
+      provider: "neon",
+      branch: result.branchName,
+      prunedSnapshots: result.pruned,
+    });
+  } else {
+    await logger.warn(`Could not snapshot "${managedId}" before migrating: ${result.message}`, {
+      event: "db_snapshot_failed",
+      managedId,
+      provider: "neon",
+    });
+  }
+}
+
+/**
  * Run managed DB migrations after provision and before service deploy.
  * Prisma and Drizzle: use Neon **direct** URL inside the sandbox.
  * Runtime services still receive the **pooled** URL via resolveEnv.
@@ -1268,6 +1329,20 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
   const plan = await loadPlan(db, runId);
   const vault = getVault();
   const summary: MigrationSummary = { applied: [], skipped: [], failed: [] };
+
+  const atStart = plan.managed.filter((m) => m.migration === "django" || m.migration === "alembic");
+  if (atStart.length > 0) {
+    const rows = await loadDeployedRows(db, runId);
+    for (const m of atStart) {
+      const row = rows.find((r) => r.serviceId === m.id && r.status === "live");
+      if (row?.reused) await snapshotBeforeMigrate(db, run.userId, row, m.id, logger, vault);
+      await logger.log(`"${m.id}" ${m.migration} migrations run when the backend service starts.`, {
+        event: "migration_at_start",
+        managedId: m.id,
+        tool: m.migration,
+      });
+    }
+  }
 
   const targets = plan.managed.filter((m) => m.migration === "prisma" || m.migration === "drizzle");
   if (targets.length === 0) {
@@ -1340,6 +1415,7 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
       }
 
       const tool = m.migration === "drizzle" ? "drizzle" : "prisma";
+      if (row.reused) await snapshotBeforeMigrate(db, run.userId, row, m.id, logger, vault);
       let result: { ok: boolean; skipped: boolean; skipReason?: string; detail: string };
 
       if (tool === "drizzle") {
@@ -1712,6 +1788,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
         provider: "render",
         failureKind: kind,
         errorSummary: result.logs,
+        ...(result.diagnosis ? { diagnosis: result.diagnosis } : {}),
       });
       continue;
     }
@@ -1909,6 +1986,7 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
         provider: "vercel",
         failureKind: kind,
         errorSummary: result.logs,
+        ...(result.diagnosis ? { diagnosis: result.diagnosis } : {}),
       });
       continue;
     }

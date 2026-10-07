@@ -81,9 +81,11 @@ describe them for DIAGNOSIS — listing one does NOT mean ShipFix can deploy it.
 
 Database schema: ShipFix runs Prisma and Drizzle migrations itself (set the
 managed service's "migration" to "prisma" or "drizzle"); for repos without
-migration files it pushes the schema into a freshly provisioned database. Any
-other migration tool is out of scope: note it as a blocker and prefer
-"needs_setup".
+migration files it pushes the schema into a freshly provisioned database.
+Django and Alembic migrations are supported only when the Python service's
+inferredRun has a "release" command: set "migration" to "django" or "alembic"
+and the start to "<release> && <start>" verbatim. Any other migration tool is
+out of scope: note it as a blocker and prefer "needs_setup".
 
 ENV WIRING:
 - "generated_from_service": ref "serviceId.publicUrl" or "serviceId.origin".

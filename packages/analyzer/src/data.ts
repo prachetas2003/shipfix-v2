@@ -1,5 +1,6 @@
 import type { RepoSource } from "./source";
 import type { DataNeed, EnvRef } from "@shipfix/contracts";
+import { detectDjangoProject } from "./python";
 import { allDeps, baseOf, safeParseJson, type PackageJson } from "./util";
 
 type Kind = DataNeed["kind"];
@@ -17,6 +18,8 @@ const SOURCE_RANK: Record<Source, number> = {
   prisma: 3,
   drizzle: 3,
   sequelize: 3,
+  django: 3,
+  alembic: 3,
   dep: 2,
   env_ref: 1,
   code: 0,
@@ -39,6 +42,18 @@ const DEP_TO_KIND: ReadonlyArray<[dep: string, kind: Kind]> = [
   ["@aws-sdk/client-s3", "object_storage"],
   ["aws-sdk", "object_storage"],
   ["minio", "object_storage"],
+];
+
+/** Python requirement -> data need. */
+const PY_DEP_TO_KIND: ReadonlyArray<[dep: string, kind: Kind]> = [
+  ["psycopg2-binary", "postgres"],
+  ["psycopg2", "postgres"],
+  ["psycopg", "postgres"],
+  ["asyncpg", "postgres"],
+  ["pg8000", "postgres"],
+  ["pymysql", "mysql"],
+  ["mysqlclient", "mysql"],
+  ["aiomysql", "mysql"],
 ];
 
 /** Env var name (substring/exact) -> data need. */
@@ -134,6 +149,38 @@ export async function detectDataNeeds(
       migrationTool: "none",
       evidence: ['dependency "sequelize"'],
     });
+  }
+
+  // ── Python: drivers in requirements, Django settings, Alembic ─────────────
+  const reqFiles = fileList.filter(
+    (f) => /(^|\/)(requirements[\w.-]*\.txt|pyproject\.toml)$/.test(f) && !/(^|\/)\.?venv\//.test(f),
+  );
+  let pyReqs = "";
+  for (const f of reqFiles.slice(0, 10)) pyReqs += `${(await source.readFile(f)) ?? ""}\n`;
+  const pyHas = (name: string): boolean => new RegExp(`^\\s*["']?${name}(?![\\w-])`, "im").test(pyReqs);
+  for (const [dep, kind] of PY_DEP_TO_KIND) {
+    if (pyHas(dep)) detections.push({ kind, detectedFrom: "dep", migrationTool: "none", evidence: [`requirement "${dep}"`] });
+  }
+  if (pyHas("django")) {
+    for (const manage of fileList.filter((f) => baseOf(f) === "manage.py")) {
+      const root = manage.includes("/") ? manage.slice(0, manage.lastIndexOf("/")) : "";
+      const read = async (f: string): Promise<string> => (await source.readFile(f)) ?? "";
+      const project = await detectDjangoProject(files, root, read);
+      if (!project) continue;
+      if (project.usesPostgres) {
+        detections.push({ kind: "postgres", detectedFrom: "django", migrationTool: "django", evidence: project.settingsFiles.slice(0, 2) });
+      } else {
+        const settings = (await Promise.all(project.settingsFiles.map(read))).join("\n");
+        if (/django\.db\.backends\.sqlite3/.test(settings)) {
+          detections.push({ kind: "sqlite_local", detectedFrom: "django", migrationTool: "django", evidence: project.settingsFiles.slice(0, 2) });
+        }
+      }
+    }
+  }
+  const alembicIni = fileList.find((f) => baseOf(f) === "alembic.ini");
+  const pyPostgres = PY_DEP_TO_KIND.some(([dep, kind]) => kind === "postgres" && pyHas(dep));
+  if (alembicIni && pyHas("alembic") && pyPostgres) {
+    detections.push({ kind: "postgres", detectedFrom: "alembic", migrationTool: "alembic", evidence: [alembicIni] });
   }
 
   // ── Direct dependencies ──────────────────────────────────────────────────

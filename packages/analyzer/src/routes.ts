@@ -73,6 +73,41 @@ export function extractRoutesFromSource(content: string, filePath: string): Rout
   return found;
 }
 
+const NEST_DECORATOR_RE = /@(Controller|Get|Head|All)\(\s*(?:(['"`])([^'"`]*)\2|\{[^}]*?path\s*:\s*(['"`])([^'"`]*)\4[^}]*\})?\s*\)/g;
+
+/**
+ * NestJS routes: `@Controller('users')` + `@Get('me')` → GET /users/me, under
+ * the app's global prefix. Parameterised paths can't be probed and are skipped.
+ */
+export function extractNestRoutes(content: string, filePath: string, globalPrefix = ""): RouteCandidate[] {
+  const found: RouteCandidate[] = [];
+  let controller: string | null = null;
+  for (const m of content.matchAll(NEST_DECORATOR_RE)) {
+    const arg = m[3] ?? m[5] ?? "";
+    if (m[1] === "Controller") {
+      controller = arg;
+      continue;
+    }
+    if (controller === null) continue;
+    const segments = [globalPrefix, controller, arg].flatMap((s) => s.split("/")).filter(Boolean);
+    if (segments.some((s) => s.startsWith(":") || s.includes("*"))) continue;
+    const path = `/${segments.join("/")}`;
+    const method = m[1] === "Head" ? "HEAD" : "GET";
+    found.push({
+      method,
+      path,
+      kind: "explicit",
+      evidence: [`${filePath}:${lineOf(content, m.index ?? 0)}`],
+      score: scoreRoutePath(path, method),
+    });
+  }
+  return found;
+}
+
+function nestGlobalPrefix(text: string): string {
+  return /\.setGlobalPrefix\(\s*['"`]([^'"`]*)['"`]/.exec(text)?.[1] ?? "";
+}
+
 function dedupeRoutes(routes: RouteCandidate[]): RouteCandidate[] {
   const byKey = new Map<string, RouteCandidate>();
   for (const r of routes) {
@@ -175,11 +210,30 @@ export async function detectRouteCandidates(
   for (const f of routeFilesUnderRoot(rootDir, files)) toScan.add(f);
 
   const routes: RouteCandidate[] = [];
+  let globalPrefix = "";
   for (const filePath of toScan) {
     const text = await source.readFile(filePath);
     if (!text) continue;
+    globalPrefix ||= nestGlobalPrefix(text);
     routes.push(...extractRoutesFromSource(text.slice(0, MAX_SCAN_BYTES), filePath));
   }
 
+  const controllers = nestControllerFiles(rootDir, files);
+  if (controllers.length && !globalPrefix) {
+    const main = [...files].find((f) => f === joinRoot(rootDir, "src/main.ts"));
+    if (main) globalPrefix = nestGlobalPrefix((await source.readFile(main)) ?? "");
+  }
+  for (const filePath of controllers) {
+    const text = await source.readFile(filePath);
+    if (text) routes.push(...extractNestRoutes(text.slice(0, MAX_SCAN_BYTES), filePath, globalPrefix));
+  }
+
   return dedupeRoutes(routes);
+}
+
+function nestControllerFiles(rootDir: string, files: ReadonlySet<string>): string[] {
+  const prefix = rootDir === "" ? "" : `${rootDir}/`;
+  return [...files]
+    .filter((f) => f.startsWith(prefix) && /\.controller\.[cm]?[jt]s$/.test(f) && !/(^|\/)(test|__tests__)\//.test(f))
+    .slice(0, 40);
 }

@@ -1,4 +1,4 @@
-import type { DeployFailureKind } from "@shipfix/adapter-core";
+import type { DeployFailureKind, LogDiagnosis } from "@shipfix/adapter-core";
 import type { PlanService } from "@shipfix/contracts";
 
 /**
@@ -53,6 +53,8 @@ export interface DeployFailureGuidanceInput {
   failureKind: DeployFailureKind;
   /** Redacted provider/build error tail. */
   errorSummary: string;
+  /** Named cause from the provider's logs, when the adapter fetched them. */
+  diagnosis?: LogDiagnosis;
 }
 
 interface ErrorSignals {
@@ -180,6 +182,10 @@ function buildCursorPrompt(input: DeployFailureGuidanceInput, stage: FailingStag
  * Always returns guidance — never silently assumes "fix the repo."
  */
 export function buildDeployFailureGuidance(input: DeployFailureGuidanceInput): DeployFailureGuidance {
+  const d = input.diagnosis;
+  if (d && d.kind !== "unknown" && (input.failureKind === "build_failed" || input.failureKind === "deploy_failed")) {
+    return diagnosedGuidance(input, d);
+  }
   const signals = detectErrorSignals(input.errorSummary);
   const action = resolveAction(input.failureKind, signals);
   const stage = stageForAction(action, input.failureKind);
@@ -316,6 +322,38 @@ export function buildDeployFailureGuidance(input: DeployFailureGuidanceInput): D
         serviceId,
       };
   }
+}
+
+/** Guidance for a failure the log classifier named. Real log lines replace the generic summary. */
+function diagnosedGuidance(input: DeployFailureGuidanceInput, d: LogDiagnosis): DeployFailureGuidance {
+  const provider = providerLabel(input.provider);
+  const stage: FailingStage = d.phase ?? (input.failureKind === "build_failed" ? "build" : "start");
+  const evidence = d.evidence.map((l) => (l.length > 200 ? `${l.slice(0, 197)}…` : l));
+  const userFix = d.fixOwner === "user";
+  const action: DeployUserAction = userFix ? "inspect_error" : "fix_repo_code";
+  const steps = userFix
+    ? [
+        d.kind === "missing_env" && d.subject
+          ? `Add \`${d.subject}\` to "${input.service.id}"'s settings in ShipFix, then retry deploy.`
+          : `Add the missing setting for "${input.service.id}" in ShipFix, then retry deploy.`,
+      ]
+    : [
+        `This is a problem in the repository, not in your ${provider} account.`,
+        `Fix it in the repo, push, and retry deploy. The prompt below gives your AI assistant the exact error.`,
+      ];
+  const errorSummary = [`${d.title}: ${d.explanation}`, ...evidence].join("\n");
+  return {
+    action,
+    failureKind: input.failureKind,
+    stage,
+    title: `${d.title} ("${input.service.id}" on ${provider})`,
+    whatHappened: `${d.explanation}${evidence.length ? ` Log: ${evidence[0]}` : ""}`,
+    whatYouShouldDo: steps,
+    showCursorPrompt: !userFix,
+    ...(userFix ? {} : { fixPrompt: buildCursorPrompt({ ...input, errorSummary }, stage) }),
+    provider: input.provider,
+    serviceId: input.service.id,
+  };
 }
 
 /** @deprecated Use buildDeployFailureGuidance. Kept for older imports/tests. */

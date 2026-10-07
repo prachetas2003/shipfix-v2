@@ -20,6 +20,8 @@ export interface DeployedResourceRow {
   encDek: Buffer | null;
   /** Managed resource carried over from an earlier run (may hold user data). */
   reused?: boolean;
+  provider?: string;
+  externalId?: string | null;
 }
 
 export type ResolveEnvIssue =

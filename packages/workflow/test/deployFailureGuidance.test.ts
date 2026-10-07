@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { diagnoseLogs } from "@shipfix/adapter-core";
 import { buildDeployFailureGuidance, buildRepoFixGuidance } from "../src/deployFailureGuidance";
 
 const service = {
@@ -22,6 +23,36 @@ const web = {
 };
 
 describe("buildDeployFailureGuidance", () => {
+  it("uses the log diagnosis for a named build failure", () => {
+    const log = 'Running "npm run build"\n[vite]: Rollup failed to resolve import "framer-motion" from "src/App.tsx".';
+    const g = buildDeployFailureGuidance({
+      repoFullName: "acme/app",
+      service: web,
+      provider: "vercel",
+      failureKind: "build_failed",
+      errorSummary: log,
+      diagnosis: diagnoseLogs(log),
+    });
+    expect(g.action).toBe("fix_repo_code");
+    expect(g.title).toBe('A package is missing ("web" on Vercel)');
+    expect(g.whatHappened).toContain("`framer-motion`");
+    expect(g.fixPrompt).toContain("Rollup failed to resolve import");
+  });
+
+  it("asks for the setting instead of a code fix when an env var is missing", () => {
+    const log = "KeyError: 'STRIPE_SECRET_KEY'";
+    const g = buildDeployFailureGuidance({
+      repoFullName: "acme/app",
+      service,
+      provider: "render",
+      failureKind: "deploy_failed",
+      errorSummary: log,
+      diagnosis: diagnoseLogs(log),
+    });
+    expect(g.showCursorPrompt).toBe(false);
+    expect(g.whatYouShouldDo[0]).toContain("`STRIPE_SECRET_KEY`");
+  });
+
   it("routes permission 403 to update_credentials — no Cursor prompt", () => {
     const g = buildDeployFailureGuidance({
       repoFullName: "acme/app",

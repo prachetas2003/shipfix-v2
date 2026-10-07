@@ -146,6 +146,47 @@ describe("createVercelAdapter", () => {
     expect(gitSource).not.toHaveProperty("repo");
   });
 
+  it("reads the build log when a deployment ends in ERROR and names the cause", async () => {
+    let eventsUrl = "";
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      if (u.includes("/v9/projects?") && method === "GET") return jsonResponse({ projects: [] });
+      if (u.endsWith("/v11/projects") && method === "POST") return jsonResponse({ id: "prj_1" });
+      const envRes = handleEnvUpsert(u, method, init, "prj_1", { envs: [] });
+      if (envRes) return envRes;
+      if (u.includes("/v9/projects/prj_1") && method === "GET") return linkedProject("prj_1");
+      if (u.endsWith("/v13/deployments") && method === "POST") return jsonResponse({ id: "dpl_1" });
+      if (u.includes("/v3/deployments/dpl_1/events")) {
+        eventsUrl = u;
+        return jsonResponse([
+          { type: "stderr", created: 3, payload: { text: "Error: Command \"npm run build\" exited with 1" } },
+          { type: "command", created: 1, payload: { text: "Running \"npm run build\"" } },
+          { type: "stderr", created: 2, payload: { text: '[vite]: Rollup failed to resolve import "framer-motion" from "src/App.tsx".' } },
+          { type: "delimiter", created: 4, payload: { text: "ignored" } },
+        ]);
+      }
+      if (u.includes("/v13/deployments/dpl_1") && method === "GET") return jsonResponse({ id: "dpl_1", readyState: "ERROR" });
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const vercel = createVercelAdapter({ fetchImpl: fakeFetch, apiBase: "https://vercel.test", pollIntervalMs: 1 });
+    const result = await vercel.deploy({
+      service,
+      repo: { fullName: REPO_SLUG, branch: "main" },
+      rootDir: "apps/web",
+      env: {},
+      credentials: { provider: "vercel", values: { apiToken: "vercel_test" } },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failureKind).toBe("build_failed");
+    expect(new URL(eventsUrl).searchParams.get("builds")).toBe("1");
+    expect(result.diagnosis).toMatchObject({ kind: "missing_module", subject: "framer-motion" });
+    expect(result.logs).toContain('Running "npm run build"\n[vite]: Rollup failed');
+    expect(result.logs).not.toContain("ignored");
+  });
+
   it("updates an existing project by name and deploys with repoId from project link", async () => {
     let deploymentBody: Record<string, unknown> | null = null;
 
