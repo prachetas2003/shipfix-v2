@@ -79,6 +79,21 @@ export const ServiceSignal = z.object({
       evidence: z.array(z.string()).default([]),
     })
     .optional(),
+  /**
+   * Background processes that run beside the web process from the same code:
+   * a package.json `worker` script (run via the package manager) or a
+   * Procfile `worker:` line (run verbatim).
+   */
+  workers: z
+    .array(
+      z.object({
+        name: z.string(),
+        script: z.string().optional(),
+        command: z.string().optional(),
+        evidence: z.array(z.string()).default([]),
+      }),
+    )
+    .optional(),
   /** File paths (and optionally :line) that justify the above classification. */
   evidence: z.array(z.string()).default([]),
 });
@@ -156,10 +171,21 @@ export const Companion = z.object({
 });
 export type Companion = z.infer<typeof Companion>;
 
+export const SupabaseMigration = z.object({
+  version: z.string(),
+  name: z.string(),
+  file: z.string(),
+});
+export type SupabaseMigration = z.infer<typeof SupabaseMigration>;
+
 /** The app talks to an existing Supabase project. */
 export const SupabaseUsage = z.object({
   /** 20-char project ref (the `<ref>.supabase.co` subdomain), when the repo names it. */
   projectRef: z.string().nullable(),
+  /** `supabase/migrations/<version>_<name>.sql`, oldest first. */
+  migrations: z.array(SupabaseMigration).optional(),
+  /** Public tables the migrations create without enabling row-level security. */
+  tablesWithoutRls: z.array(z.string()).optional(),
   evidence: z.array(z.string()).default([]),
 });
 export type SupabaseUsage = z.infer<typeof SupabaseUsage>;

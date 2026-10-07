@@ -19,6 +19,7 @@ import { generatePlan as runPlanner } from "@shipfix/planner";
 import {
   validatePlan as runValidator,
   capabilities as buildCapabilities,
+  integrationProjectQuestionId,
   type Capabilities,
   type ManagedProvider,
 } from "@shipfix/validator";
@@ -29,9 +30,11 @@ import {
   ProvisionerRegistry,
   createNeonProvisioner,
   createUpstashProvisioner,
+  fetchSupabaseProjectValues,
   isRedisSecret,
   type ManagedProviderId,
 } from "@shipfix/provisioner";
+import { migrateSupabaseProject, type SupabaseMigrationOutcome } from "./supabaseMigrations";
 import { verifyFromPlan, diagnosisFromVerifyOutcome, diagnosisForMigrationFailure, diagnosisForEnvUnresolved } from "@shipfix/verifier";
 import { resolveServiceEnv, openManagedConnectionUrls, type DeployedResourceRow } from "./resolveEnv";
 import {
@@ -1455,6 +1458,120 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
 }
 
 /**
+ * Bring the app's existing Supabase project up to date with the repo's
+ * supabase/migrations (pending tail only, restore point first), then check
+ * which public tables still have row-level security off. A failed migration
+ * stops the deploy; migrations ShipFix judged unsafe are reported and skipped.
+ */
+export async function applySupabaseMigrations(runId: string): Promise<SupabaseMigrationOutcome | null> {
+  const db = getDb();
+  const logger = createRunLogger(runId, createSafePostgresSink(db));
+  const { run, repoFullName, githubInstallationId } = await loadRun(db, runId);
+  const plan = await loadPlan(db, runId);
+  const integration = (plan.integrations ?? []).find((i) => i.provider === "supabase");
+  if (!integration) return null;
+
+  const vault = getVault();
+  const [account] = await db
+    .select()
+    .from(providerAccounts)
+    .where(and(eq(providerAccounts.userId, run.userId), eq(providerAccounts.provider, "supabase")))
+    .limit(1);
+  const token = account ? (await decryptProviderCredentials(vault, account)).accessToken?.trim() : undefined;
+  if (!token) {
+    if (integration.migrations?.length) {
+      await logger.warn("Connect Supabase so ShipFix can apply your pending migrations.", {
+        event: "supabase_migrations_skipped",
+        reason: "not_connected",
+      });
+    }
+    return null;
+  }
+  const runInputValues = await loadRunInputValues(db, runId, vault);
+  const lookup = await fetchSupabaseProjectValues(
+    token,
+    integration.projectRef ?? runInputValues.get(integrationProjectQuestionId(integration.id))?.trim() ?? null,
+  );
+  if (!lookup.ok) {
+    await logger.warn(`Supabase migrations not checked: ${lookup.message}`, {
+      event: "supabase_migrations_skipped",
+      reason: lookup.code,
+    });
+    return null;
+  }
+  const ref = lookup.values.projectRef;
+  const migrations = integration.migrations ?? [];
+  if (migrations.length) {
+    await logger.stage("provisioning", `Checking ${migrations.length} Supabase migration(s) against project ${ref}`);
+  }
+
+  let sandbox: Awaited<ReturnType<ReturnType<typeof createRunSandboxProvider>["create"]>> | null = null;
+  const readFile = async (path: string): Promise<string | null> => {
+    if (!sandbox) {
+      sandbox = await createRunSandboxProvider().create({ runId: `${runId}-supabase`, egressAllow: [] });
+      const cloneToken = await resolveCloneToken({
+        repoFullName,
+        installationId: githubInstallationId,
+        allowedInstallationIds: await ownedGithubInstallationIds(db, run.userId),
+      });
+      await sandbox.clone({ repoFullName, sha: run.commitSha, token: cloneToken });
+    }
+    return sandbox.readFile(path).catch(() => null);
+  };
+
+  let outcome: SupabaseMigrationOutcome;
+  try {
+    outcome = await migrateSupabaseProject(migrations, {
+      token,
+      ref,
+      readFile,
+      restorePointName: `shipfix-${Date.now().toString(36)}`,
+    });
+  } finally {
+    if (sandbox) await (sandbox as { dispose: () => Promise<void> }).dispose();
+  }
+
+  if (outcome.restorePoint) {
+    await logger.log(`Created Supabase restore point "${outcome.restorePoint}" before migrating.`, {
+      event: "supabase_restore_point",
+      restorePoint: outcome.restorePoint,
+    });
+  }
+  if (outcome.applied.length) {
+    await logger.log(`Applied ${outcome.applied.length} Supabase migration(s): ${outcome.applied.join(", ")}`, {
+      event: "migration_completed",
+      tool: "supabase",
+      versions: outcome.applied,
+    });
+  } else if (migrations.length && !outcome.skipped && !outcome.failed) {
+    await logger.log("Supabase migrations are up to date.", { event: "migration_skipped", tool: "supabase" });
+  }
+  if (outcome.skipped) {
+    await logger.warn(`Supabase migrations not applied: ${outcome.skipped.reason}`, {
+      event: "supabase_migrations_skipped",
+      versions: outcome.skipped.versions,
+      reason: "unsafe",
+    });
+  }
+  if (outcome.tablesWithoutRls?.length) {
+    await logger.warn(
+      `Row-level security is off for public table(s) ${outcome.tablesWithoutRls.slice(0, 10).join(", ")}. Anyone with your app's anon key can read and change them.`,
+      { event: "supabase_rls_disabled", tables: outcome.tablesWithoutRls.slice(0, 50) },
+    );
+  }
+  if (outcome.failed) {
+    await logger.error(`Supabase migration ${outcome.failed.version} failed and was rolled back.`, {
+      event: "migration_failed",
+      tool: "supabase",
+      version: outcome.failed.version,
+      detail: outcome.failed.message,
+    });
+    throw new Error(`Supabase migration ${outcome.failed.version} failed. Deploy was not started.`);
+  }
+  return outcome;
+}
+
+/**
  * Deploy backend services from the validated plan (Render web services: Node, Python, Dockerfile).
  * Resolves env (including sealed DATABASE_URL) in trusted worker code, then
  * calls the real adapter. Never logs secret env values.
@@ -1469,7 +1586,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
 
   const summary: DeploySummary = { deployed: [], failed: [], skipped: [] };
   const backendTargets = plan.services.filter(
-    (s) => isWebBackendType(s.type) && s.provider === "render",
+    (s) => (isWebBackendType(s.type) || s.type === "worker") && s.provider === "render",
   );
   if (backendTargets.length === 0) {
     await logger.log("No Render backend services in plan.", { event: "deploy_skipped" });
@@ -1513,7 +1630,8 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
       .from(deployedResources)
       .where(and(eq(deployedResources.runId, runId), eq(deployedResources.serviceId, svc.id)))
       .limit(1);
-    if (existing?.status === "live" && existing.url) {
+    const isWorker = svc.type === "worker";
+    if (existing?.status === "live" && (existing.url || isWorker)) {
       summary.skipped.push({ id: svc.id, reason: "already_deployed" });
       continue;
     }
@@ -1565,7 +1683,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
     });
     await deployLogs.flush();
 
-    if (!result.ok || !result.publicUrl) {
+    if (!result.ok || (!result.publicUrl && !isWorker)) {
       const kind = result.failureKind ?? "deploy_failed";
       summary.failed.push({ id: svc.id, kind });
       await db.insert(deployedResources).values({
@@ -1610,16 +1728,21 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
         provider: "render",
         externalId: result.externalId,
         resourceName: deployTarget.resourceName,
-        extra: deferred.length > 0 ? { deferredEnv: deferred } : undefined,
+        extra: {
+          ...(deferred.length > 0 ? { deferredEnv: deferred } : {}),
+          ...(isWorker && result.externalId
+            ? { consoleUrl: `https://dashboard.render.com/worker/${encodeURIComponent(result.externalId)}` }
+            : {}),
+        },
       }),
     });
 
     summary.deployed.push(svc.id);
-    await logger.log(`Backend "${svc.id}" deployed`, {
+    await logger.log(`${isWorker ? "Worker" : "Backend"} "${svc.id}" deployed`, {
       event: "service_deployed",
       serviceId: svc.id,
       provider: "render",
-      serviceRole: "backend",
+      serviceRole: isWorker ? "worker" : "backend",
       externalId: result.externalId,
       publicUrl: result.publicUrl,
     });

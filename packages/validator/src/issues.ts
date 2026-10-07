@@ -46,6 +46,10 @@ const META: Record<string, { title: string; action: string }> = {
     title: "Python start command not confirmed",
     action: "Add a Procfile (\"web: <start command>\") so ShipFix runs the command your app actually uses.",
   },
+  worker_start_ungrounded: {
+    title: "Worker start command not confirmed",
+    action: "Add a \"worker\" script to package.json or a \"worker: <command>\" line to the Procfile so ShipFix runs the process your app actually uses.",
+  },
   docker_file_missing: {
     title: "Dockerfile missing",
     action: "Add a Dockerfile to the service directory, or deploy it as a Node/Python service instead.",

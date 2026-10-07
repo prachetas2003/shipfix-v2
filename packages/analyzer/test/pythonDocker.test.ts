@@ -19,7 +19,7 @@ async function analyze(files: Record<string, string | object>) {
 }
 
 const caps = capabilities(
-  { vercel: ["frontend_static", "frontend_ssr"], render: ["node_api", "python_api", "docker_service"] },
+  { vercel: ["frontend_static", "frontend_ssr"], render: ["node_api", "python_api", "docker_service", "worker"] },
   ["neon", "upstash"],
 );
 
@@ -173,6 +173,25 @@ describe("Python web services", () => {
       "tools/seed.py": "import os\nos.environ['ADMIN_TOKEN']\n",
     });
     expect(ctx.envRefs.map((r) => r.name)).not.toContain("ADMIN_TOKEN");
+  });
+});
+
+describe("S3-compatible storage the user brings", () => {
+  it("plans the app and asks for the bucket credentials the SDK reads", async () => {
+    const ctx = await analyze({
+      "package.json": { name: "app", scripts: { build: "next build" }, dependencies: { next: "15", react: "19", "react-dom": "19", "@aws-sdk/client-s3": "3" } },
+      "package-lock.json": "{}",
+      "lib/s3.ts": "import { S3Client } from '@aws-sdk/client-s3';\nexport const s3 = new S3Client({});\nexport const bucket = process.env.S3_BUCKET_NAME;",
+    });
+    expect(ctx.dataNeeds.map((d) => d.kind)).toContain("object_storage");
+    const plan = synthesizeDeterministicPlan(ctx);
+    expect(plan?.managed).toEqual([]);
+    const env = plan?.services[0].env ?? [];
+    expect(env.map((e) => e.name).sort()).toEqual(["AWS_ACCESS_KEY_ID", "AWS_REGION", "AWS_SECRET_ACCESS_KEY", "S3_BUCKET_NAME"]);
+    expect(env.every((e) => e.source === "user_secret")).toBe(true);
+    expect(plan?.questions[0]?.prompt).toContain("S3-compatible bucket");
+    expect(plan?.blockers.map((b) => b.title)).toContain("Uses your own file storage bucket");
+    expect(validatePlan(plan!, ctx, caps).plan.classification).toBe("needs_setup");
   });
 });
 

@@ -3,6 +3,7 @@ import type { Companion, CompanionKind, ServiceSignal, ServiceRole } from "@ship
 import { detectPackageManager } from "./packageManager";
 import { detectNextApiRoutes, detectRouteCandidates } from "./routes";
 import { dockerfileExposes, inferPythonRun } from "./python";
+import { procfileWorkers, scriptWorkers } from "./workers";
 import {
   allDeps,
   baseOf,
@@ -132,7 +133,17 @@ function isWorkspaceManager(
 ): boolean {
   if (pkg.workspaces) return true;
   if (files.has(joinRoot(rootDir, "pnpm-workspace.yaml"))) return true;
-  return false;
+  return delegatesToSubpackages(pkg.scripts ?? {});
+}
+
+/** `npm --prefix web run dev`, `cd api && npm start`, `concurrently "…" "…"`, `turbo run dev`... */
+const DELEGATING_SCRIPT_RE =
+  /(--prefix[\s=]\S+|\bcd\s+[\w./-]+\s*&&|\s-C\s+\S+|--filter[\s=]|--workspace[\s=]|\bconcurrently\b|\bnpm-run-all\b|\brun-[ps]\b|\bturbo\b|\blerna\b|\bnx\s)/;
+
+/** A root whose run scripts only hand off to packages in subfolders — an orchestrator, not an app. */
+function delegatesToSubpackages(scripts: Record<string, string>): boolean {
+  const run = (["start", "dev", "serve", "build"] as const).map((k) => scripts[k]).filter(Boolean);
+  return run.length > 0 && run.every((cmd) => DELEGATING_SCRIPT_RE.test(cmd));
 }
 
 const RUNNABLE_SCRIPTS = ["start", "dev", "serve"] as const;
@@ -146,11 +157,11 @@ function isBuilderTooling(pkg: PackageJson, rootDir: string): boolean {
 }
 
 /**
- * An internal workspace package (shared schema, API client, db module,
- * scripts): nested, no recognizable framework, and nothing to run.
+ * An internal package (shared schema, API client, db module, or a stray root
+ * package.json beside the real app): no recognizable framework, nothing to run.
  */
-function isInternalLibrary(pkg: PackageJson, rootDir: string, role: ServiceRole): boolean {
-  if (rootDir === "" || role !== "unknown") return false;
+function isInternalLibrary(pkg: PackageJson, role: ServiceRole): boolean {
+  if (role !== "unknown") return false;
   const scripts = pkg.scripts ?? {};
   return !RUNNABLE_SCRIPTS.some((key) => Boolean(scripts[key]));
 }
@@ -181,6 +192,9 @@ const EXAMPLE_SEGMENTS = new Set([
   "e2e",
   "e2e-tests",
   "benchmarks",
+  "design",
+  "mockups",
+  "prototypes",
 ]);
 const DOCS_SEGMENTS = new Set(["docs", "doc", "documentation", "docs-site"]);
 
@@ -212,6 +226,14 @@ function companionKindByPackage(
   if (has("react-native") || has("expo")) return { kind: "mobile", evidence: "react-native/expo dependency" };
   if (has("wxt") || has("plasmo") || has("@crxjs/vite-plugin") || has("webextension-polyfill")) {
     return { kind: "browser_extension", evidence: "browser extension tooling dependency" };
+  }
+  // Content tooling beside the app: video renders, CMS studios, email template previews.
+  if (rootDir !== "" && role !== "backend") {
+    if (has("@remotion/cli")) return { kind: "tooling", evidence: "@remotion/cli dependency" };
+    if (has("sanity") && ["ts", "js"].some((ext) => files.has(joinRoot(rootDir, `sanity.config.${ext}`)))) {
+      return { kind: "tooling", evidence: "Sanity Studio (sanity.config)" };
+    }
+    if (has("react-email")) return { kind: "tooling", evidence: "react-email preview CLI" };
   }
   if (role !== "unknown") return null;
   if (has("@modelcontextprotocol/sdk")) return { kind: "mcp_server", evidence: "@modelcontextprotocol/sdk dependency" };
@@ -291,7 +313,7 @@ export async function detectServices(
       companions.push({ rootDir, kind: pathKind, evidence: [pkgPath] });
       continue;
     }
-    if (isInternalLibrary(pkg, rootDir, verdict.role)) {
+    if (isInternalLibrary(pkg, verdict.role)) {
       libraries.push({ rootDir, name: typeof pkg.name === "string" ? pkg.name : null, dependents: [] });
       continue;
     }
@@ -339,6 +361,9 @@ export async function detectServices(
     if (verdict.framework === "next") {
       routeCandidates.push(...detectNextApiRoutes(rootDir, files));
     }
+    const isServer = verdict.role === "backend" || verdict.role === "fullstack";
+    const procWorkers = isServer ? await procfileWorkers(source, files, rootDir) : [];
+    const workers = procWorkers.length ? procWorkers : isServer ? scriptWorkers(scripts, pkgPath) : [];
 
     services.push({
       rootDir,
@@ -350,6 +375,7 @@ export async function detectServices(
       entrypoints: entrypointList,
       hasDockerfile,
       routeCandidates,
+      workers,
       evidence,
     });
   }
@@ -400,6 +426,7 @@ export async function detectServices(
       hasDockerfile,
       routeCandidates: routeCandidates.sort((a, b) => (b.score ?? 0) - (a.score ?? 0)),
       ...(inferredRun ? { inferredRun } : {}),
+      workers: framework === "python" ? [] : await procfileWorkers(source, files, rootDir),
       evidence,
     });
   }

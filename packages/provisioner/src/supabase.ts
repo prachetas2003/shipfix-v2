@@ -1,8 +1,9 @@
 /**
- * Read-only Supabase Management API client for apps that already use a
- * Supabase project. ShipFix never creates or changes the project; it reads the
- * URL and API keys at deploy time and injects them as env vars. Returned keys
- * are secrets: callers must not log or persist them.
+ * Supabase Management API client for apps that already use a Supabase
+ * project. ShipFix never creates the project; it reads the URL and API keys at
+ * deploy time and injects them as env vars, and only writes to the database
+ * to apply the repo's own pending migrations (see supabaseMigrate.ts).
+ * Returned keys are secrets: callers must not log or persist them.
  */
 
 export interface SupabaseProjectValues {
@@ -41,12 +42,27 @@ async function supabaseGet(
   accessToken: string,
   opts: SupabaseApiOptions,
 ): Promise<{ status: number; body: unknown }> {
+  return supabaseRequest("GET", path, accessToken, opts);
+}
+
+export async function supabaseRequest(
+  method: "GET" | "POST",
+  path: string,
+  accessToken: string,
+  opts: SupabaseApiOptions,
+  payload?: unknown,
+): Promise<{ status: number; body: unknown }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 15_000);
   try {
     const res = await (opts.fetchImpl ?? fetch)(`${opts.apiBase ?? DEFAULT_BASE}${path}`, {
-      method: "GET",
-      headers: { accept: "application/json", authorization: `Bearer ${accessToken}` },
+      method,
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${accessToken}`,
+        ...(payload === undefined ? {} : { "content-type": "application/json" }),
+      },
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
       signal: controller.signal,
     });
     const text = await res.text();

@@ -567,7 +567,7 @@ type RunMode = "analyze_only" | "plan" | "deploy";
 const PROVISIONABLE_PROVIDERS = ["neon", "upstash"] as const;
 const DEPLOYABLE_PROVIDERS = ["render", "vercel"] as const;
 const DEPLOYABLE_SERVICE_TYPES: Record<string, string[]> = {
-  render: ["node_api", "python_api", "docker_service"],
+  render: ["node_api", "python_api", "docker_service", "worker"],
   vercel: ["frontend_static", "frontend_ssr"],
 };
 

@@ -12,7 +12,7 @@ import { entryId, type CorpusEntry } from "./corpus";
  * product coverage, not a specific user's connected accounts.
  */
 export const FULL_CAPABILITIES: Capabilities = capabilities(
-  { vercel: ["frontend_static", "frontend_ssr"], render: ["node_api", "python_api", "docker_service"] },
+  { vercel: ["frontend_static", "frontend_ssr"], render: ["node_api", "python_api", "docker_service", "worker"] },
   ["neon", "upstash"],
   ["supabase"],
 );

@@ -94,3 +94,67 @@ describe("companions", () => {
     });
   });
 });
+
+describe("content tooling beside the app", () => {
+  it("leaves design mockups, Remotion, Sanity Studio and react-email previews out", async () => {
+    const ctx = await analyze({
+      "package.json": vitePkg,
+      "package-lock.json": "{}",
+      "design/app-screens/package.json": vitePkg,
+      "remotion/package.json": { name: "video", scripts: { dev: "remotion studio" }, dependencies: { react: "18", "react-dom": "18", remotion: "4", "@remotion/cli": "4" } },
+      "studio/package.json": { name: "studio", scripts: { dev: "sanity dev" }, dependencies: { react: "18", "react-dom": "18", sanity: "3" } },
+      "studio/sanity.config.ts": "export default {}",
+      "packages/emails/package.json": { name: "emails", scripts: { dev: "email dev" }, dependencies: { react: "18", "react-dom": "18", "react-email": "3" } },
+    });
+    expect(ctx.services.map((s) => s.rootDir)).toEqual([""]);
+    expect(ctx.companions.map((c) => c.rootDir).sort()).toEqual(["design/app-screens", "packages/emails", "remotion", "studio"]);
+  });
+
+  it("keeps an app that embeds the Remotion player", async () => {
+    const ctx = await analyze({
+      "web/package.json": { ...vitePkg, dependencies: { ...vitePkg.dependencies, remotion: "4", "@remotion/player": "4" } },
+    });
+    expect(ctx.services.map((s) => s.rootDir)).toEqual(["web"]);
+  });
+});
+
+describe("root packages that are not apps", () => {
+  const backendPkg = { name: "api", scripts: { start: "node index.js" }, dependencies: { express: "4" } };
+
+  it("treats a root that only hands scripts off to subfolders as an orchestrator", async () => {
+    const ctx = await analyze({
+      "package.json": {
+        scripts: {
+          dev: 'concurrently "npm --prefix backend start" "npm --prefix frontend run dev"',
+          start: 'concurrently "npm --prefix backend start" "npm --prefix frontend start"',
+        },
+        devDependencies: { concurrently: "8" },
+      },
+      "frontend/package.json": vitePkg,
+      "frontend/package-lock.json": "{}",
+      "backend/package.json": backendPkg,
+      "backend/package-lock.json": "{}",
+      "backend/index.js": "app.get('/health', h); app.listen(process.env.PORT)",
+    });
+    expect(ctx.services.map((s) => s.rootDir).sort()).toEqual(["backend", "frontend"]);
+    expect(synthesizeDeterministicPlan(ctx)?.services.map((s) => s.type).sort()).toEqual(["frontend_static", "node_api"]);
+  });
+
+  it("ignores a stray root package.json with nothing to run", async () => {
+    const ctx = await analyze({
+      "package.json": { dependencies: { "next-themes": "0.3" } },
+      "web/package.json": vitePkg,
+      "web/package-lock.json": "{}",
+    });
+    expect(ctx.services.map((s) => s.rootDir)).toEqual(["web"]);
+  });
+
+  it("still treats a root that runs its own code as a service", async () => {
+    const ctx = await analyze({
+      "package.json": { scripts: { start: "node bot.js", dev: "npm --prefix web run dev" } },
+      "bot.js": "console.log(1)",
+      "web/package.json": vitePkg,
+    });
+    expect(ctx.services.map((s) => s.rootDir)).toContain("");
+  });
+});

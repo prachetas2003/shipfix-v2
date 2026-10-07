@@ -28,6 +28,7 @@ export interface RenderOptions {
 interface RenderService {
   id?: string;
   name?: string;
+  type?: string;
   serviceDetails?: {
     url?: string;
     buildCommand?: string;
@@ -160,7 +161,7 @@ function envVarPayload(env: Record<string, string>): Array<{ key: string; value:
 }
 
 function renderEnv(input: DeployInput): Record<string, string> {
-  if (input.service.type !== "node_api" || !input.service.build) return input.env;
+  if (renderRuntime(input.service) !== "node" || !input.service.build) return input.env;
   return {
     ...input.env,
     NPM_CONFIG_PRODUCTION: "false",
@@ -174,7 +175,13 @@ const RUNTIME_BY_TYPE: Record<string, "node" | "python" | "docker"> = {
 };
 
 export function renderRuntime(service: PlanService): "node" | "python" | "docker" | null {
+  if (service.type === "worker") return service.runtime ?? "node";
   return RUNTIME_BY_TYPE[service.type] ?? null;
+}
+
+/** Background workers have no public URL and no free plan on Render. */
+function isWorker(service: PlanService): boolean {
+  return service.type === "worker";
 }
 
 /** Paths are relative to the service rootDir, which Render uses as the build root. */
@@ -197,7 +204,7 @@ export function envSpecificDetails(input: DeployInput): Record<string, string> {
 
 function buildCreateBody(input: DeployInput, ownerId: string, name: string): Record<string, unknown> {
   return {
-    type: "web_service",
+    type: isWorker(input.service) ? "background_worker" : "web_service",
     name,
     ownerId,
     repo: `https://github.com/${input.repo.fullName}`,
@@ -209,7 +216,7 @@ function buildCreateBody(input: DeployInput, ownerId: string, name: string): Rec
     envVars: envVarPayload(renderEnv(input)),
     serviceDetails: {
       runtime: renderRuntime(input.service) ?? "node",
-      plan: "free",
+      plan: isWorker(input.service) ? "starter" : "free",
       region: "oregon",
       envSpecificDetails: envSpecificDetails(input),
     },
@@ -416,7 +423,7 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
 
   return {
     id: "render",
-    supports: ["node_api", "python_api", "docker_service"],
+    supports: ["node_api", "python_api", "docker_service", "worker"],
 
     requiredCredentials() {
       return { provider: "render", required: ["apiKey"], optional: ["ownerId"] };
@@ -433,16 +440,16 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
           externalId: null,
           publicUrl: null,
           status: "deploy_failed",
-          logs: `Render adapter only supports node_api, python_api and docker_service, not "${input.service.type}".`,
+          logs: `Render adapter only supports node_api, python_api, docker_service and worker, not "${input.service.type}".`,
         };
       }
-      if (input.service.type === "python_api" && !input.service.start?.trim()) {
+      if ((input.service.type === "python_api" || isWorker(input.service)) && !input.service.start?.trim()) {
         return {
           ok: false,
           externalId: null,
           publicUrl: null,
           status: "deploy_failed",
-          logs: "Python service has no start command.",
+          logs: `${isWorker(input.service) ? "Worker" : "Python service"} has no start command.`,
           failureKind: "setup_blocker",
         };
       }
@@ -511,7 +518,7 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
             await replaceEnvVars(fetchImpl, base, apiKey, httpTimeoutMs, existing.id, renderEnv(input));
             serviceId = existing.id;
           } else {
-            input.onLog?.(`Render: creating web service "${stableName}"`);
+            input.onLog?.(`Render: creating ${isWorker(input.service) ? "background worker" : "web service"} "${stableName}"`);
             const res = await apiFetch(fetchImpl, base, "/services", apiKey, httpTimeoutMs, {
               method: "POST",
               body: JSON.stringify(buildCreateBody(input, ownerId, stableName)),
@@ -595,14 +602,15 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
         /* url may appear later; waitForDeploy outcome still matters */
       }
 
+      const reachable = !!publicUrl || isWorker(input.service);
       const status: DeployResult["status"] = waited.ok
-        ? publicUrl
+        ? reachable
           ? "live"
           : "deploy_failed"
         : waited.timedOut
           ? "timeout"
           : "build_failed";
-      const ok = waited.ok && !!publicUrl;
+      const ok = waited.ok && reachable;
       const failureKind: DeployFailureKind | undefined = ok
         ? undefined
         : status === "timeout"
@@ -626,11 +634,12 @@ export function createRenderAdapter(options: RenderOptions = {}): ProviderAdapte
       try {
         const svc = await getService(fetchImpl, base, apiKey, httpTimeoutMs, externalId);
         const publicUrl = servicePublicUrl(svc);
+        const ready = !!publicUrl || svc.type === "background_worker";
         return {
-          ok: !!publicUrl,
+          ok: ready,
           externalId,
           publicUrl,
-          status: publicUrl ? "live" : "deploy_failed",
+          status: ready ? "live" : "deploy_failed",
           logs: "",
         };
       } catch (e) {

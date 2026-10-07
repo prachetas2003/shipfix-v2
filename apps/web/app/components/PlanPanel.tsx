@@ -38,7 +38,7 @@ function serviceType(type: string): string {
   if (type === "node_api") return "Backend API";
   if (type === "python_api") return "Python service";
   if (type === "docker_service") return "Docker service";
-  if (type === "worker") return "Worker";
+  if (type === "worker") return "Background worker";
   return type.replace(/_/g, " ");
 }
 

@@ -163,6 +163,14 @@ export async function detectEnvAndUrls(
     for (const [pattern, names] of IMPLICIT_ENV) {
       if (pattern.test(slice)) for (const name of names) addRef(name, true);
     }
+    // The AWS SDK falls back to these env names when the client is built without them.
+    if (/new\s+S3Client\s*\(/.test(slice)) {
+      if (!/credentials\s*:/.test(slice)) {
+        addRef("AWS_ACCESS_KEY_ID", true);
+        addRef("AWS_SECRET_ACCESS_KEY", true);
+      }
+      if (!/region\s*:/.test(slice)) addRef("AWS_REGION", true);
+    }
 
     if (DEV_CONFIG_FILE_RE.test(file)) continue;
     LOCALHOST_RE.lastIndex = 0;

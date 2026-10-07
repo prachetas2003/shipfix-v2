@@ -404,5 +404,48 @@ describe("createRenderAdapter", () => {
       const result = await render.deploy(input({ ...service, type: "python_api", start: null }));
       expect(result).toMatchObject({ ok: false, failureKind: "setup_blocker" });
     });
+
+    it("creates a paid background worker that is live without a public URL", async () => {
+      let createBody: Record<string, unknown> | null = null;
+      const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = String(url);
+        const method = init?.method ?? "GET";
+        if (u.includes("/owners")) return jsonResponse([{ owner: { id: "own_1" } }]);
+        if (u.includes("/deploys") && method === "POST") return jsonResponse({ deploy: { id: "dpl_1" } });
+        if (u.includes("/deploys/dpl_1")) return jsonResponse({ deploy: { id: "dpl_1", status: "live" } });
+        if (u.includes("/services/srv_w") && method === "GET") {
+          return jsonResponse({ service: { id: "srv_w", type: "background_worker", serviceDetails: {} } });
+        }
+        if (u.includes("/services") && method === "GET") return jsonResponse([]);
+        if (u.endsWith("/services") && method === "POST") {
+          createBody = JSON.parse(String(init?.body));
+          return jsonResponse({ service: { id: "srv_w" } });
+        }
+        return new Response("not found", { status: 404 });
+      }) as unknown as typeof fetch;
+      const render = createRenderAdapter({ fetchImpl: fakeFetch, apiBase: "https://render.test/v1", pollIntervalMs: 1 });
+      const worker: PlanService = {
+        ...service,
+        id: "worker",
+        type: "worker",
+        runtime: "python",
+        install: "pip install -r requirements.txt",
+        build: null,
+        start: "celery -A tasks worker",
+        healthCheckPath: null,
+      };
+
+      const result = await render.deploy(input(worker));
+      expect(result).toMatchObject({ ok: true, status: "live", publicUrl: null, externalId: "srv_w" });
+      expect(createBody).toMatchObject({
+        type: "background_worker",
+        serviceDetails: {
+          runtime: "python",
+          plan: "starter",
+          envSpecificDetails: { buildCommand: "pip install -r requirements.txt", startCommand: "celery -A tasks worker" },
+        },
+      });
+      expect(await render.waitForReady!("srv_w", { provider: "render", values: { apiKey: "k" } })).toMatchObject({ ok: true });
+    });
   });
 });

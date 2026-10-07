@@ -89,6 +89,11 @@ export const PlanIntegration = z.object({
   provider: z.enum(["supabase"]),
   /** Null when the repo doesn't say which project; resolved at deploy time. */
   projectRef: z.string().nullable(),
+  /**
+   * The repo's `supabase/migrations` files, oldest first. ShipFix applies the
+   * ones the project's migration history doesn't have yet.
+   */
+  migrations: z.array(z.object({ version: z.string(), name: z.string(), file: z.string() })).optional(),
 });
 export type PlanIntegration = z.infer<typeof PlanIntegration>;
 
@@ -117,6 +122,8 @@ export const PlanService = z.object({
    * for frontend_ssr. Plans persisted before this field are Next.js.
    */
   framework: z.string().optional(),
+  /** Workers only: the runtime their code needs (web types imply it). */
+  runtime: z.enum(["node", "python"]).optional(),
   install: z.string().nullable(),
   build: z.string().nullable(),
   start: z.string().nullable(),

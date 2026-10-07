@@ -56,16 +56,21 @@ AUTO-DEPLOYABLE SLICE (what ShipFix can actually execute today):
   its install and start commands verbatim
 - "render" + "docker_service" (built from the service's own Dockerfile; set
   install/build/start to null) for a service with a Dockerfile that serves HTTP
+- "render" + "worker" ONLY for a process listed in a repo service's "workers":
+  same rootDir as that service, start "<pm> run <script>" or the Procfile
+  command verbatim, set "runtime" to the service language, healthCheckPath null
 - managed "neon" + "postgres"
 - managed "upstash" + "redis" (wire REDIS_URL-style names to "<id>.connectionUrl",
   UPSTASH_REDIS_REST_URL / KV_REST_API_URL to "<id>.restUrl", and
   UPSTASH_REDIS_REST_TOKEN / KV_REST_API_TOKEN to "<id>.restToken")
+- an app that USES an existing S3-compatible bucket (AWS S3, Cloudflare R2):
+  never add a managed service for it; its credentials are "user_secret" env
 ONLY these provider+type combinations may be classification "deployable".
 
 EVERYTHING ELSE IS DIAGNOSIS-ONLY. If the app needs anything outside the slice
-above — "worker", "railway", docker-compose apps, Python services with
-neither an inferredRun nor a Dockerfile, provisioning "supabase", object
-storage, other SSR frameworks — you MUST set classification "diagnose_only" and explain it
+above — workers not listed in "workers", "railway", docker-compose apps, Python services with
+neither an inferredRun nor a Dockerfile, provisioning "supabase",
+provisioning object storage, other SSR frameworks — you MUST set classification "diagnose_only" and explain it
 with blockers. Do NOT propose a "deployable" plan for unsupported stacks; the
 validator will force it to RED anyway, so be honest up front. You may still
 describe the unsupported service for diagnosis, but never imply ShipFix will

@@ -311,6 +311,19 @@ export function validatePlan(
         });
       }
     }
+    if (svc.type === "worker") {
+      const grounded = (signal?.workers ?? []).some(
+        (w) => (w.command && w.command === svc.start) || (w.script && svc.start?.endsWith(` run ${w.script}`)),
+      );
+      if (!grounded) {
+        add({
+          code: "worker_start_ungrounded",
+          severity: "needs_input",
+          message: `Worker "${svc.id}" start command "${svc.start ?? ""}" does not match a worker process in the repo (a Procfile worker line or a package.json worker script). Confirm how the worker starts before deploying.`,
+          path: `services.${svc.id}.start`,
+        });
+      }
+    }
     if (svc.type === "docker_service" && !signal?.hasDockerfile) {
       add({
         code: "docker_file_missing",

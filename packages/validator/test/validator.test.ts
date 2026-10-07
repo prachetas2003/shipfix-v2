@@ -242,7 +242,7 @@ describe("validatePlan â provider capabilities", () => {
 describe("validatePlan â MVP support boundary", () => {
   it("marks an unsupported service type RED (diagnose_only)", () => {
     const plan = makePlan();
-    plan.services[1].type = "worker"; // render workers are outside the MVP slice
+    plan.services[0].type = "worker"; // Vercel cannot run background workers
     const res = validatePlan(plan, makeCtx(), fullCaps);
     expect(codes(res)).toContain("service_unsupported_mvp");
     expect(res.plan.classification).toBe("diagnose_only");

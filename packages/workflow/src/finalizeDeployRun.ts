@@ -118,7 +118,10 @@ export function computeFinalizeDeployOutcome(
   const { provision, backendDeploy, frontendDeploy, verify } = outcome;
   const unsupported = planHasUnsupportedServices(plan, caps);
 
-  const backendIds = planServiceIds(plan, (s) => isWebBackendType(s.type) && s.provider === "render");
+  const backendIds = planServiceIds(
+    plan,
+    (s) => (isWebBackendType(s.type) || s.type === "worker") && s.provider === "render",
+  );
   const frontendIds = planServiceIds(
     plan,
     (s) => (s.type === "frontend_static" || s.type === "frontend_ssr") && s.provider === "vercel",

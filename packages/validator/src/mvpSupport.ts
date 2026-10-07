@@ -10,7 +10,7 @@ import type { ManagedProvider } from "./capabilities";
  * without a working adapter recreates the "support illusion" that sank v1.
  */
 export const MVP_SERVICE_SUPPORT: Readonly<Record<string, ReadonlyArray<ServiceType>>> = {
-  render: ["node_api", "python_api", "docker_service"],
+  render: ["node_api", "python_api", "docker_service", "worker"],
   vercel: ["frontend_static", "frontend_ssr"],
 };
 
@@ -31,4 +31,4 @@ export function isManagedSupported(provider: ManagedProvider, kind: ManagedKind)
 
 /** Short human-readable description of the MVP-supported slice (for UI/copy). */
 export const MVP_SUPPORT_SUMMARY =
-  "Server-rendered apps (Next.js, Nuxt, Remix, React Router, SvelteKit, TanStack Start) and Vite/static frontends on Vercel, Node and Python (FastAPI, Flask, Streamlit, Gradio, Chainlit) web services or Dockerfile services on Render, Postgres on Neon, and Redis on Upstash.";
+  "Server-rendered apps (Next.js, Nuxt, Remix, React Router, SvelteKit, TanStack Start) and Vite/static frontends on Vercel, Node and Python (FastAPI, Flask, Streamlit, Gradio, Chainlit) web services, background workers or Dockerfile services on Render, Postgres on Neon, and Redis on Upstash.";

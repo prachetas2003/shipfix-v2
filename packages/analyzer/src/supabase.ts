@@ -1,5 +1,6 @@
 import type { EnvRef, PublicEnvValue, SupabaseUsage } from "@shipfix/contracts";
 import type { RepoSource } from "./source";
+import { listSupabaseMigrations, tablesWithoutRls } from "./supabaseMigrations";
 import { allDeps, baseOf, joinRoot, safeParseJson, type PackageJson } from "./util";
 
 const PROJECT_REF_RE = /^[a-z]{20}$/;
@@ -64,5 +65,8 @@ export async function detectSupabase(
     }
   }
 
-  return { projectRef, evidence };
+  const migrations = listSupabaseMigrations(files);
+  if (!migrations.length) return { projectRef, evidence };
+  evidence.push(`supabase/migrations: ${migrations.length} migration${migrations.length === 1 ? "" : "s"}`);
+  return { projectRef, migrations, tablesWithoutRls: await tablesWithoutRls(source, migrations), evidence };
 }

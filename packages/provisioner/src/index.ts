@@ -34,6 +34,19 @@ export {
   type SupabaseProjectValues,
 } from "./supabase";
 export {
+  applySupabaseMigration,
+  countPublicTables,
+  createSupabaseRestorePoint,
+  decideSupabaseMigrations,
+  isDestructiveSql,
+  listAppliedSupabaseMigrations,
+  migrationQuery,
+  migrationSqlProblem,
+  publicTablesWithoutRls,
+  type MigrationDecision,
+  type RepoMigration,
+} from "./supabaseMigrate";
+export {
   isPoolerUri,
   migrateConnectionUrl,
   parseNeonConnectionSecret,

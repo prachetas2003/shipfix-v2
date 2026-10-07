@@ -94,6 +94,7 @@ const GENERATED_SECRET_NAMES = new Set([
 const DB_URL_RE = /^(DATABASE_URL|POSTGRES(QL)?_URL|PG_?(CONNECTION_)?(STRING|URL)|DB_URL)$/i;
 const HEALTH_PATH_RE = /health|healthz|ready|readyz|status|live|ping/i;
 const API_URL_RE = /^(VITE_|REACT_APP_|PUBLIC_)?\w*(API|BACKEND|SERVER)\w*_(URL|ORIGIN|BASE|BASE_URL|HOST|ENDPOINT)$/i;
+const STORAGE_ENV_RE = /^(AWS_|S3_|R2_|MINIO_)|_(S3|R2|BUCKET)(_|$)|BUCKET|STORAGE_(ENDPOINT|KEY|SECRET|REGION)/;
 const FRONTEND_ORIGIN_RE = /^\w*(CORS|FRONTEND|CLIENT|WEB|ALLOWED)\w*_(ORIGINS?|URLS?)$/i;
 
 function pmCommand(signal: ServiceSignal, kind: "install" | "build" | "start"): string {
@@ -133,6 +134,8 @@ interface SliceShape {
   next: ServiceSignal | null;
   wantsPostgres: boolean;
   wantsRedis: boolean;
+  /** S3-compatible storage the user brings (ShipFix does not create buckets). */
+  usesObjectStorage: boolean;
   migrationTool: ManagedService["migration"];
 }
 
@@ -189,6 +192,7 @@ function matchSupportedSlice(ctx: RepoContext): SliceShape | null {
 
   let wantsPostgres = false;
   let wantsRedis = false;
+  let usesObjectStorage = false;
   let migrationTool: ManagedService["migration"] = "none";
   for (const need of ctx.dataNeeds) {
     if (need.hostedBy) continue; // already exists; the app reaches it through its own client
@@ -196,11 +200,15 @@ function matchSupportedSlice(ctx: RepoContext): SliceShape | null {
       wantsRedis = true;
       continue;
     }
+    if (need.kind === "object_storage") {
+      usesObjectStorage = true;
+      continue;
+    }
     if (need.kind !== "postgres") return null; // mysql/object storage/etc — out of slice
     wantsPostgres = true;
     if (need.migrationTool !== "none") migrationTool = need.migrationTool;
   }
-  if ((wantsPostgres || wantsRedis) && !backend && !next) return null; // store with no server — ambiguous
+  if ((wantsPostgres || wantsRedis || usesObjectStorage) && !backend && !next) return null; // store with no server — ambiguous
   if (wantsRedis) {
     // A client with no env to point it elsewhere (e.g. `new Redis()`) dials localhost; a new database wouldn't help.
     const servers = [backend?.rootDir, next?.rootDir];
@@ -208,14 +216,14 @@ function matchSupportedSlice(ctx: RepoContext): SliceShape | null {
     if (!wired) return null;
   }
 
-  return { frontend, backend, next, wantsPostgres, wantsRedis, migrationTool };
+  return { frontend, backend, next, wantsPostgres, wantsRedis, usesObjectStorage, migrationTool };
 }
 
 /** Build the DeploymentPlan for a slice-matching repo. Null = use the LLM. */
 export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | null {
   const shape = matchSupportedSlice(ctx);
   if (!shape) return null;
-  const { frontend, backend, next, wantsPostgres, wantsRedis, migrationTool } = shape;
+  const { frontend, backend, next, wantsPostgres, wantsRedis, usesObjectStorage, migrationTool } = shape;
 
   const services: PlanService[] = [];
   const managed: ManagedService[] = [];
@@ -269,6 +277,13 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
     }
     if (signal === frontend && name in STATIC_BUILD_DEFAULTS) {
       return { name, source: "literal", value: STATIC_BUILD_DEFAULTS[name] };
+    }
+    if (usesObjectStorage && !runsInBrowser && STORAGE_ENV_RE.test(name)) {
+      return askSecret(
+        name,
+        serviceId,
+        `The app stores files in an S3-compatible bucket and reads "${name}". Paste the value from your AWS S3, Cloudflare R2 or other S3-compatible bucket.`,
+      );
     }
     return askSecret(name, serviceId, prompt);
   };
@@ -558,22 +573,112 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
     }
   }
 
+  // ── Background workers (Render) — same code and env as their server ───────
+  const workerServices: PlanService[] = [];
+  for (const [signal, serverId] of [[backend, "api"], [next, "web"]] as const) {
+    const procs = signal?.workers ?? [];
+    if (!signal || !procs.length) continue;
+    if (signal.language !== "node" && !(signal.language === "python" && signal.inferredRun)) continue;
+    const server = services.find((s) => s.id === serverId);
+    if (!server) continue;
+    for (const proc of procs) {
+      const start = proc.script ? `${pmCommand(signal, "install").split(" ")[0]} run ${proc.script}` : proc.command;
+      if (!start) continue;
+      const id = procs.length === 1 ? "worker" : `worker-${proc.name}`;
+      if (services.some((s) => s.id === id) || workerServices.some((s) => s.id === id)) continue;
+      // Origins of a not-yet-deployed frontend are wired to web services only.
+      const env = server.env.filter((e) => !(e.source === "generated_from_service" && e.ref?.startsWith("web.")));
+      for (const w of wiring.filter((w) => w.toServiceId === serverId && env.some((e) => e.name === w.toEnvName))) {
+        wiring.push({ ...w, toServiceId: id });
+      }
+      workerServices.push({
+        id,
+        type: "worker",
+        provider: "render",
+        rootDir: signal.rootDir,
+        runtime: signal.language === "python" ? "python" : "node",
+        install: signal.language === "python" ? (signal.inferredRun?.install ?? null) : pmCommand(signal, "install"),
+        build: signal.language === "node" && signal.scripts.build ? pmCommand(signal, "build") : null,
+        start,
+        outputDir: null,
+        healthCheckPath: null,
+        healthCandidates: [],
+        env,
+        evidence: proc.evidence,
+      });
+      deployOrder.push(id);
+    }
+  }
+  if (workerServices.length) {
+    services.push(...workerServices);
+    blockers.push({
+      severity: "warning",
+      title: "Background worker runs on a paid Render plan",
+      explanation: `The app runs ${workerServices.length === 1 ? "a background process" : `${workerServices.length} background processes`} beside its server (${workerServices.map((s) => s.start).join("; ")}). Render has no free plan for background workers, so ShipFix creates ${workerServices.length === 1 ? "it" : "them"} on the Starter plan, which Render bills to your account.`,
+      action: "Make sure your Render account has billing set up before deploying.",
+      autoFixable: false,
+      evidence: workerServices.flatMap((s) => s.evidence),
+    });
+  }
+
+  if (usesObjectStorage) {
+    blockers.push({
+      severity: "warning",
+      title: "Uses your own file storage bucket",
+      explanation:
+        "The app uploads or reads files through an S3-compatible client. ShipFix doesn't create storage buckets yet, so the deployed app uses the bucket whose credentials you provide.",
+      action: "Have an AWS S3, Cloudflare R2 or other S3-compatible bucket ready and paste its credentials when asked.",
+      autoFixable: false,
+      evidence: ctx.dataNeeds.filter((d) => d.kind === "object_storage").flatMap((d) => d.evidence),
+    });
+  }
+
   const parts = [
     next ? `${SSR_LABEL[next.framework] ?? next.framework} app on Vercel` : null,
     frontend ? `${frontend.framework} frontend on Vercel` : null,
     backend ? `${RUNTIME_LABEL[backend.framework] ?? `${backend.framework} API`} on Render` : null,
     wantsPostgres ? "Neon Postgres" : null,
     wantsRedis ? "Upstash Redis" : null,
+    workerServices.length ? `background worker${workerServices.length > 1 ? "s" : ""} on Render` : null,
+    usesObjectStorage ? "your S3-compatible bucket" : null,
     supabaseUsers.size ? "your existing Supabase project" : null,
   ].filter(Boolean);
 
   const integrations: PlanIntegration[] = [];
   if (supabaseUsers.size && ctx.supabase) {
-    integrations.push({ id: SUPABASE_INTEGRATION_ID, provider: "supabase", projectRef: ctx.supabase.projectRef });
+    const migrations = ctx.supabase.migrations ?? [];
+    integrations.push({
+      id: SUPABASE_INTEGRATION_ID,
+      provider: "supabase",
+      projectRef: ctx.supabase.projectRef,
+      ...(migrations.length ? { migrations } : {}),
+    });
     if (!ctx.supabase.projectRef) {
       needsSetup = true;
       questions.push(supabaseProjectQuestion([...supabaseUsers]));
     }
+    if (migrations.length) {
+      blockers.push({
+        severity: "warning",
+        title: "Applies your pending Supabase migrations",
+        explanation: `The repo has ${migrations.length} migration${migrations.length === 1 ? "" : "s"} in supabase/migrations. Before deploying, ShipFix compares them with your project's migration history and applies only the newer ones, each in its own transaction. It creates a restore point first; if your Supabase plan can't make one, it applies only migrations that don't drop or delete anything.`,
+        action: "Nothing to do if your project is up to date. Review new migrations before deploying if they change existing data.",
+        autoFixable: false,
+        evidence: [`supabase/migrations (${migrations.length} files)`],
+      });
+    }
+  }
+  const openTables = ctx.supabase?.tablesWithoutRls ?? [];
+  if (openTables.length) {
+    const shown = openTables.slice(0, 5).join(", ") + (openTables.length > 5 ? ` and ${openTables.length - 5} more` : "");
+    blockers.push({
+      severity: "warning",
+      title: "Database tables without row-level security",
+      explanation: `Your Supabase migrations create ${openTables.length === 1 ? "a public table" : `${openTables.length} public tables`} (${shown}) without enabling row-level security. Anyone with the app's public anon key, which ships in the browser, can read and change ${openTables.length === 1 ? "it" : "them"}.`,
+      action: `Add a migration with "alter table public.<table> enable row level security;" and policies for who may read and write each table.`,
+      autoFixable: false,
+      evidence: openTables.slice(0, 10).map((t) => `public.${t}`),
+    });
   }
 
   return {
