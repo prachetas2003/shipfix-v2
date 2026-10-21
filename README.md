@@ -1,4 +1,6 @@
 # ShipFix v2
+<img width="575" height="491" alt="image" src="https://github.com/user-attachments/assets/8bf3b74b-cf7c-4ddb-acf0-997736878152" />
+
 
 > ShipFix reliably deploys a defined class of full-stack apps — Next.js App
 > Router/SSR and Vite/static frontends on Vercel, Express/Fastify Node APIs on
