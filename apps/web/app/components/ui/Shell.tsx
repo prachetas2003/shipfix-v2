@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { BrandMark } from "../BrandMark";
+import { DEMO, DEMO_MESSAGE } from "../../lib/demo/publicDemo";
 import { colors } from "../../lib/theme";
 
 export function Shell({
@@ -14,6 +15,22 @@ export function Shell({
 }): React.ReactElement {
   return (
     <div className="sf-shell" style={wide ? { maxWidth: 1080 } : undefined}>
+      {DEMO && (
+        <p
+          style={{
+            margin: "0 0 1rem",
+            padding: "0.7rem 0.85rem",
+            border: `1px solid ${colors.border}`,
+            borderRadius: 8,
+            background: colors.panelSoft,
+            color: colors.muted,
+            fontSize: "0.86rem",
+            lineHeight: 1.5,
+          }}
+        >
+          {DEMO_MESSAGE}
+        </p>
+      )}
       {children}
     </div>
   );
@@ -33,13 +50,25 @@ export function AppNav({
         gap: 16,
         marginBottom: "2rem",
         paddingBottom: "1rem",
+        flexWrap: "wrap",
         borderBottom: `1px solid ${colors.border}`,
       }}
     >
       <Link href="/" style={{ textDecoration: "none", color: "inherit" }}>
         <BrandMark size={28} />
       </Link>
-      <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>{right}</div>
+      <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <Link href="/benchmark" style={{ textDecoration: "none", color: colors.dim, fontSize: "0.86rem" }}>
+          Benchmark
+        </Link>
+        <Link href="/errors" style={{ textDecoration: "none", color: colors.dim, fontSize: "0.86rem" }}>
+          Deploy errors
+        </Link>
+        <Link href="/providers" style={{ textDecoration: "none", color: colors.dim, fontSize: "0.86rem" }}>
+          Providers
+        </Link>
+        {right}
+      </div>
     </header>
   );
 }

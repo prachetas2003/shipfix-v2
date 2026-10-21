@@ -48,7 +48,7 @@ jobs:
           ARGS="--concurrency 8"
           if [ "${{ inputs.llm }}" = "true" ]; then MODE=llm; ARGS="$ARGS --llm"; fi
           if [ -f "eval/baseline/eval-$MODE-latest.json" ]; then
-            ARGS="$ARGS --baseline eval/baseline/eval-$MODE-latest.json"
+            ARGS="$ARGS --baseline eval/baseline/eval-$MODE-latest.json --fail-on-regression"
           fi
           pnpm eval run -- $ARGS
           cat "eval/reports/eval-$MODE-latest.md" >> "$GITHUB_STEP_SUMMARY"

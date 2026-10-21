@@ -12,13 +12,16 @@ interface FakeRow {
 }
 
 const h = vi.hoisted(() => {
-  const rows: Record<string, FakeRow[]> = { runs: [], deployed_resources: [] };
+  const rows: Record<string, FakeRow[]> = { runs: [], deployed_resources: [], llm_usage: [] };
   const events: Array<{ level: string; message: string; data: Record<string, unknown> }> = [];
   return { rows, events };
 });
 
 vi.mock("drizzle-orm", () => ({
   eq: (col: unknown, val: unknown) => ({ eq: [col, val] }),
+  sql: Object.assign((strings: TemplateStringsArray, ...vals: unknown[]) => ({ sql: strings, vals }), {
+    raw: (s: string) => ({ sql: s }),
+  }),
 }));
 
 vi.mock("@shipfix/db", async (importOriginal) => {
@@ -28,7 +31,7 @@ vi.mock("@shipfix/db", async (importOriginal) => {
 
   const runs = table("runs");
   const deployedResources = table("deployed_resources");
-  const rowsFor = (t: { __table?: string }): FakeRow[] => h.rows[(t as { __table: string }).__table];
+  const rowsFor = (t: { __table?: string }): FakeRow[] => h.rows[(t as { __table: string }).__table] ?? [];
 
   type Cond = { eq?: [{ column: string }, unknown] } | undefined;
   const matches = (row: FakeRow, cond: Cond): boolean => {
@@ -107,6 +110,7 @@ describe("workflow activities — control plane consistency", () => {
   beforeEach(() => {
     h.rows.runs = [];
     h.rows.deployed_resources = [];
+    h.rows.llm_usage = [];
     h.events.length = 0;
     process.env.DATABASE_URL = "postgres://localhost:5432/shipfix";
   });

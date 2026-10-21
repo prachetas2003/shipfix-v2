@@ -26,6 +26,8 @@ import {
 import {
   AdapterRegistry,
   preflightProviderCredentials,
+  refreshOAuthCredentials,
+  tailLines,
   type DeployFailureKind,
   type LogDiagnosis,
 } from "@shipfix/adapter-core";
@@ -67,8 +69,22 @@ import {
   type PlanVerifySummary,
   type ProvisionSummary,
 } from "./finalizeDeployRun";
-import { resolveCloneToken } from "@shipfix/github";
-import { createSecretVaultFromEnv, type SecretVault } from "@shipfix/secrets";
+import { openOrUpdatePullRequest, pushCommitToBranch, resolveCloneToken, resolveRepoWriteToken } from "@shipfix/github";
+import {
+  applyPlanEdits,
+  commitMessage,
+  pullRequestBody,
+  pullRequestTitle,
+  runRepairLoop,
+  unifiedDiffs,
+  withSecurityHeaders,
+  type FileEdit,
+  type PlanEdit,
+  type PullRequestFix,
+} from "@shipfix/autofix";
+import { sandboxRepairWorkspace } from "./repairWorkspace";
+import { isSettingName, questionSatisfied, shouldWaitForInput, withMissingSettings, type MissingSetting } from "./inputWait";
+import { createSecretVaultFromEnv, redact, type SecretVault } from "@shipfix/secrets";
 import {
   createDb,
   llmUsage,
@@ -127,6 +143,7 @@ interface RunRow {
   userId: string;
   commitSha: string;
   mode: string;
+  status: string;
 }
 
 async function loadRun(
@@ -137,6 +154,8 @@ async function loadRun(
   repoFullName: string;
   defaultBranch: string;
   githubInstallationId: string | null;
+  /** What providers build: the verified fix branch once ShipFix pushed one, else the default branch at the run's commit. */
+  deployRef: { branch: string; commitSha: string };
 }> {
   const [run] = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
   if (!run) {
@@ -149,10 +168,14 @@ async function loadRun(
     .limit(1);
   if (!project) throw new Error(`Project ${run.projectId} for run ${runId} not found.`);
   return {
-    run: { id: run.id, projectId: run.projectId, userId: project.userId, commitSha: run.commitSha, mode: run.mode },
+    run: { id: run.id, projectId: run.projectId, userId: project.userId, commitSha: run.commitSha, mode: run.mode, status: run.status },
     repoFullName: project.repoFullName,
     defaultBranch: project.defaultBranch,
     githubInstallationId: project.githubInstallationId ?? null,
+    deployRef:
+      run.deployBranch && run.deploySha
+        ? { branch: run.deployBranch, commitSha: run.deploySha }
+        : { branch: project.defaultBranch, commitSha: run.commitSha },
   };
 }
 
@@ -228,6 +251,8 @@ export function lazyGateway(make: () => LLMGateway): LLMGateway {
   };
 }
 
+const REPAIR_OPERATION = "repair";
+
 export function meteredGateway(
   inner: LLMGateway,
   db: Database,
@@ -237,9 +262,17 @@ export function meteredGateway(
   return {
     model: inner.model,
     async complete(req: LLMRequest): Promise<LLMResult> {
-      const maxPerRun = workflowAlphaLimit("ALPHA_MAX_LLM_CALLS_PER_RUN");
+      // Repair has its own per-run budget so planning can't starve it (and vice versa).
+      const isRepair = meta.operation === REPAIR_OPERATION;
+      const maxPerRun = workflowAlphaLimit(isRepair ? "ALPHA_MAX_REPAIR_LLM_CALLS_PER_RUN" : "ALPHA_MAX_LLM_CALLS_PER_RUN");
       const maxPerUserDay = workflowAlphaLimit("ALPHA_MAX_LLM_CALLS_PER_USER_PER_DAY");
-      const runCalls = await countLlmAttemptRows(db, and(eq(llmUsage.runId, meta.runId)));
+      const runCalls = await countLlmAttemptRows(
+        db,
+        and(
+          eq(llmUsage.runId, meta.runId),
+          isRepair ? eq(llmUsage.operation, REPAIR_OPERATION) : sql`${llmUsage.operation} <> ${REPAIR_OPERATION}`,
+        ),
+      );
       const userCallsToday = await countLlmAttemptRows(
         db,
         and(eq(llmUsage.userId, meta.userId), gte(llmUsage.createdAt, startOfUtcDay())),
@@ -344,6 +377,15 @@ function resourceMeta(args: {
     ...(args.resourceName ? { resourceName: args.resourceName } : {}),
     ...(consoleUrl ? { consoleUrl } : {}),
     ...(args.extra ?? {}),
+  };
+}
+
+/** What the repair loop needs from a failed deploy. Logs are already scrubbed of env values by the adapter. */
+function failureMeta(kind: DeployFailureKind, logs: string | undefined, diagnosis: LogDiagnosis | undefined): Record<string, unknown> {
+  return {
+    failureKind: kind,
+    ...(diagnosis ? { diagnosis } : {}),
+    ...(logs ? { failureLog: redact(tailLines(logs.split(/\r?\n/), 200, 16_000)) } : {}),
   };
 }
 
@@ -575,11 +617,24 @@ function planHasUnsupportedServices(plan: DeploymentPlan, caps: Capabilities): b
 
 async function decryptProviderCredentials(
   vault: SecretVault,
-  account: { encDek: Buffer; encBlob: Buffer; encIv: Buffer },
+  account: { id?: string; provider?: string; encDek: Buffer; encBlob: Buffer; encIv: Buffer },
 ): Promise<Record<string, string>> {
-  return JSON.parse(
+  const values = JSON.parse(
     await vault.open({ encDek: account.encDek, encBlob: account.encBlob, encIv: account.encIv }),
   ) as Record<string, string>;
+  if (!account.id || !account.provider || !values.refreshToken) return values;
+  const refreshed = await refreshOAuthCredentials(account.provider, values);
+  if (!refreshed.rotated) return values;
+  try {
+    const sealed = await vault.seal(JSON.stringify(refreshed.values));
+    await getDb()
+      .update(providerAccounts)
+      .set({ encDek: sealed.encDek, encBlob: sealed.encBlob, encIv: sealed.encIv })
+      .where(eq(providerAccounts.id, account.id));
+  } catch {
+    // Use the fresh token for this attempt even if the new ciphertext could not be saved.
+  }
+  return refreshed.values;
 }
 
 async function setStatus(
@@ -588,10 +643,111 @@ async function setStatus(
   status: string,
   finished = false,
 ): Promise<void> {
-  await db
-    .update(runs)
-    .set({ status, ...(finished ? { finishedAt: new Date() } : {}) })
-    .where(eq(runs.id, runId));
+  const patch: { status: string; finishedAt?: Date; costCents?: number } = { status };
+  if (finished) {
+    const rows = await db
+      .select({ total: sql<number>`coalesce(sum(${llmUsage.estimatedCostCents}), 0)` })
+      .from(llmUsage)
+      .where(eq(llmUsage.runId, runId));
+    const total = Number(rows[0] && "total" in rows[0] ? rows[0].total : 0);
+    patch.finishedAt = new Date();
+    patch.costCents = Number.isFinite(total) ? Math.max(0, Math.round(total)) : 0;
+  }
+  await db.update(runs).set(patch).where(eq(runs.id, runId));
+}
+
+/** One branch per run for the header pull request, separate from a deploy-fix branch. */
+export function securityBranchName(runId: string): string {
+  return `shipfix/security-${runId.slice(0, 8)}`;
+}
+
+/**
+ * When a deploy is missing basic response headers, push vercel.json on a
+ * ShipFix branch and open a pull request. The default branch is not changed.
+ * Without GitHub write access the finding stays on the report.
+ */
+async function offerSecurityHeaderPullRequest(
+  db: Database,
+  logger: RunLogger,
+  sandbox: { readFile(path: string): Promise<string> },
+  args: {
+    runId: string;
+    userId: string;
+    mode: string;
+    repoFullName: string;
+    baseBranch: string;
+    baseSha: string;
+    githubInstallationId: string | null;
+    security: RepoContext["security"];
+  },
+): Promise<void> {
+  const finding = args.security?.findings.find((f) => f.code === "missing_headers" && f.fixable);
+  if (!finding || args.mode !== "deploy") return;
+  let raw: string | null = null;
+  try {
+    raw = await sandbox.readFile("vercel.json");
+  } catch {
+    raw = null;
+  }
+  const next = withSecurityHeaders(raw);
+  if (!next?.changed) return;
+  const scope = {
+    repoFullName: args.repoFullName,
+    installationId: args.githubInstallationId,
+    allowedInstallationIds: await ownedGithubInstallationIds(db, args.userId),
+  };
+  const token =
+    (await resolveRepoWriteToken({ ...scope, permissions: { contents: "write", pull_requests: "write" } })) ??
+    (await resolveRepoWriteToken(scope));
+  if (!token) {
+    await logger.log(
+      "Security headers are missing. Connect GitHub with write access and ShipFix will open a pull request to add them.",
+      { event: "security_fix_unpushed" },
+    );
+    return;
+  }
+  const branch = securityBranchName(args.runId);
+  const pushed = await pushCommitToBranch({
+    token,
+    repoFullName: args.repoFullName,
+    baseSha: args.baseSha,
+    branch,
+    message: "Add security headers\n\nThe frontend responses were not setting basic browser protections.\n\nFixed by ShipFix",
+    changes: [{ path: "vercel.json", content: next.content }],
+  });
+  if (!pushed.ok) {
+    await logger.warn("ShipFix found missing security headers but could not push the fix.", {
+      event: "security_fix_unpushed",
+      error: pushed.error,
+    });
+    return;
+  }
+  const pr = await openOrUpdatePullRequest({
+    token,
+    repoFullName: args.repoFullName,
+    head: branch,
+    base: args.baseBranch,
+    title: "ShipFix: add security headers",
+    body: [
+      "ShipFix checked this repo and the frontend responses do not set basic security headers.",
+      "## What changed\n\n- `vercel.json` sends `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`, and `Strict-Transport-Security` on every path.",
+      "## Keeping or undoing it\n\n- **Merge** to keep the headers.\n- **Close** to leave responses as they are.",
+      "---\nFixed by ShipFix",
+    ].join("\n\n"),
+  });
+  if (!pr.ok) {
+    await logger.warn("ShipFix pushed the header fix but could not open the pull request.", {
+      event: "security_fix_unpushed",
+      branch,
+      error: pr.error,
+    });
+    return;
+  }
+  await logger.log(`Opened a pull request adding security headers: ${pr.url}`, {
+    event: "security_pr",
+    url: pr.url,
+    branch,
+  });
 }
 
 /**
@@ -602,7 +758,7 @@ async function setStatus(
 export async function analyzeRepo(runId: string): Promise<RepoContext> {
   const db = getDb();
   const logger: RunLogger = createRunLogger(runId, createSafePostgresSink(db));
-  const { run, repoFullName, githubInstallationId } = await loadRun(db, runId);
+  const { run, repoFullName, defaultBranch, githubInstallationId } = await loadRun(db, runId);
 
   await setStatus(db, runId, "analyzing");
   await logger.stage("analyzing", `Analyzing ${repoFullName}`);
@@ -648,6 +804,29 @@ export async function analyzeRepo(runId: string): Promise<RepoContext> {
     // Record the resolved commit on the run for traceability.
     if (commitSha && commitSha !== run.commitSha) {
       await db.update(runs).set({ commitSha }).where(eq(runs.id, runId));
+    }
+
+    await logger.log(`Launch readiness ${ctx.security?.score ?? 100}/100`, {
+      event: "security_scanned",
+      score: ctx.security?.score ?? 100,
+      findings: (ctx.security?.findings ?? []).map((f) => f.code),
+    });
+    try {
+      await offerSecurityHeaderPullRequest(db, logger, sandbox, {
+        runId,
+        userId: run.userId,
+        mode: run.mode,
+        repoFullName,
+        baseBranch: defaultBranch,
+        baseSha: commitSha,
+        githubInstallationId,
+        security: ctx.security,
+      });
+    } catch (err) {
+      await logger.warn("The security-header pull request could not be opened.", {
+        event: "security_fix_unpushed",
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     await logger.log("Analysis complete", {
@@ -1655,7 +1834,7 @@ export async function applySupabaseMigrations(runId: string): Promise<SupabaseMi
 export async function deployBackendServices(runId: string): Promise<DeploySummary> {
   const db = getDb();
   const logger = createRunLogger(runId, createSafePostgresSink(db));
-  const { run, repoFullName, defaultBranch } = await loadRun(db, runId);
+  const { run, repoFullName, deployRef } = await loadRun(db, runId);
   const plan = await loadPlan(db, runId);
   const caps = await loadCapabilities(db, run.userId);
   const vault = getVault();
@@ -1749,7 +1928,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
     const deployLogs = chainedDeployOnLog(logger, svc.id);
     const result = await adapter.deploy({
       service: svc,
-      repo: { fullName: repoFullName, branch: defaultBranch, commitSha: run.commitSha },
+      repo: { fullName: repoFullName, ...deployRef },
       rootDir: svc.rootDir,
       resourceName: deployTarget.resourceName,
       existingExternalId: deployTarget.existingExternalId,
@@ -1774,6 +1953,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
           provider: "render",
           externalId: result.externalId,
           resourceName: deployTarget.resourceName,
+          extra: failureMeta(kind, result.logs, result.diagnosis),
         }),
       });
       await logger.error(`Deploy failed for "${svc.id}".`, {
@@ -1836,7 +2016,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
 export async function deployFrontendServices(runId: string): Promise<DeploySummary> {
   const db = getDb();
   const logger = createRunLogger(runId, createSafePostgresSink(db));
-  const { run, repoFullName, defaultBranch } = await loadRun(db, runId);
+  const { run, repoFullName, deployRef } = await loadRun(db, runId);
   const plan = await loadPlan(db, runId);
   const caps = await loadCapabilities(db, run.userId);
   const vault = getVault();
@@ -1924,7 +2104,7 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
     const deployLogs = chainedDeployOnLog(logger, svc.id);
     const result = await adapter.deploy({
       service: svc,
-      repo: { fullName: repoFullName, branch: defaultBranch, commitSha: run.commitSha },
+      repo: { fullName: repoFullName, ...deployRef },
       rootDir: svc.rootDir,
       resourceName: deployTarget.resourceName,
       existingExternalId: deployTarget.existingExternalId,
@@ -1950,6 +2130,7 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
           externalId: result.externalId,
           resourceName: deployTarget.resourceName,
           teamId: credValues.teamId,
+          extra: failureMeta(kind, result.logs, result.diagnosis),
         }),
       });
       const setupMsg =
@@ -2021,6 +2202,377 @@ export async function deployFrontendServices(runId: string): Promise<DeploySumma
   return summary;
 }
 
+/**
+ * Revalidate, then pause the run when it still needs an answer. Saving an
+ * answer signals the workflow, which calls this again.
+ */
+export async function beginInputWait(runId: string): Promise<{ waiting: boolean }> {
+  const db = getDb();
+  const logger = createRunLogger(runId, createSafePostgresSink(db));
+  try {
+    const { revalidatePlanForRun } = await import("./revalidatePlan");
+    await revalidatePlanForRun(db, runId);
+  } catch {
+    /* the stored plan still decides */
+  }
+
+  const plan = await loadPlan(db, runId);
+  const { run } = await loadRun(db, runId);
+  const inputRows = await db
+    .select({ questionId: runInputs.questionId })
+    .from(runInputs)
+    .where(eq(runInputs.runId, runId));
+  const envRows = await db
+    .select({ name: projectEnvVars.name })
+    .from(projectEnvVars)
+    .where(eq(projectEnvVars.projectId, run.projectId));
+  const answered = new Set(inputRows.map((r) => r.questionId));
+  const envNames = new Set(envRows.map((r) => r.name));
+  const waiting = shouldWaitForInput(plan, answered, envNames);
+
+  if (!waiting) {
+    if (run.status === "awaiting_input") await setStatus(db, runId, "provisioning");
+    return { waiting: false };
+  }
+
+  if (run.status !== "awaiting_input") {
+    await setStatus(db, runId, "awaiting_input");
+    await logger.stage("awaiting_input", "Waiting for your answer. This deploy continues when you save it.");
+    for (const q of plan.questions) {
+      if (questionSatisfied(q.id, answered, envNames)) continue;
+      await logger.warn(q.prompt, {
+        event: "question",
+        questionId: q.id,
+        kind: q.kind,
+        ...(q.help ? { help: q.help } : {}),
+        ...(q.helpUrl ? { helpUrl: q.helpUrl } : {}),
+        ...(q.options ? { options: q.options } : {}),
+      });
+    }
+  }
+  return { waiting: true };
+}
+
+/** The deploy stayed paused until the wait expired. A new deploy can still use saved answers. */
+export async function noteInputWaitExpired(runId: string): Promise<void> {
+  const db = getDb();
+  const logger = createRunLogger(runId, createSafePostgresSink(db));
+  const message = "ShipFix waited 7 days for an answer, then stopped this deploy. Answer the questions and deploy again.";
+  await logger.warn(message, { event: "input_wait_expired" });
+  await setStatus(db, runId, "diagnosed", true);
+  await logger.stage("diagnosed", message);
+}
+
+export interface RepairSummary {
+  /** Services with a verified fix applied (new plan version or pushed branch): redeploy these. */
+  retry: string[];
+  fixed: string[];
+  needsUser: string[];
+  gaveUp: string[];
+  /** A verified code fix exists but ShipFix could not push it (no GitHub write access). */
+  unpushed: string[];
+  /** Services paused for a missing setting. The workflow asks, then redeploys. */
+  asked: string[];
+}
+
+interface FailedServiceMeta {
+  failureKind?: DeployFailureKind;
+  diagnosis?: LogDiagnosis;
+  failureLog?: string;
+  repairAttempted?: boolean;
+}
+
+const REPAIRABLE_FAILURES: ReadonlySet<string> = new Set(["build_failed", "deploy_failed"]);
+const REPAIR_DEADLINE_MS = 25 * 60_000;
+
+/** Every code fix recorded on this run so far (all repair rounds), oldest first. */
+async function runRepairFixes(db: Database, runId: string): Promise<PullRequestFix[]> {
+  const rows = await db
+    .select({ meta: deployedResources.meta })
+    .from(deployedResources)
+    .where(eq(deployedResources.runId, runId))
+    .orderBy(deployedResources.createdAt);
+  return rows.flatMap((r) => {
+    const fix = (r.meta as { repairFix?: PullRequestFix } | null)?.repairFix;
+    return fix ? [fix] : [];
+  });
+}
+
+async function openRepairPullRequest(
+  db: Database,
+  logger: RunLogger,
+  args: { runId: string; token: string | null; repoFullName: string; baseBranch: string; branch: string; branchUrl: string },
+): Promise<void> {
+  const compareUrl = `https://github.com/${args.repoFullName}/compare/${encodeURIComponent(args.baseBranch)}...${encodeURIComponent(args.branch)}?expand=1`;
+  const fixes = await runRepairFixes(db, args.runId);
+  const pr = args.token && fixes.length
+    ? await openOrUpdatePullRequest({
+        token: args.token,
+        repoFullName: args.repoFullName,
+        head: args.branch,
+        base: args.baseBranch,
+        title: pullRequestTitle(fixes),
+        body: pullRequestBody({ fixes, baseBranch: args.baseBranch, repairBranch: args.branch }),
+      })
+    : null;
+  if (pr?.ok) {
+    await logger.log(`${pr.created ? "Opened" : "Updated"} pull request #${pr.number} with the fix. Merge it to keep the fix.`, {
+      event: "repair_pr_opened",
+      number: pr.number,
+      url: pr.url,
+      created: pr.created,
+      branch: args.branch,
+      baseBranch: args.baseBranch,
+      title: pullRequestTitle(fixes),
+    });
+    return;
+  }
+  await logger.warn(
+    `The fix is on branch "${args.branch}", but ShipFix couldn't open the pull request${pr && !pr.ok ? ` (${pr.error})` : " (the GitHub App has no pull request access)"}. Open it yourself to keep the fix.`,
+    { event: "repair_pr_unavailable", branch: args.branch, branchUrl: args.branchUrl, url: compareUrl },
+  );
+}
+
+/** Branch ShipFix pushes verified fixes to; one per run so reruns don't collide. */
+export function repairBranchName(runId: string): string {
+  return `shipfix/fix-${runId.slice(0, 8)}`;
+}
+
+/**
+ * The autofix loop. For each service whose latest deploy failed with a
+ * diagnosed build/start error: try the rule-based fix, else the model, and
+ * rebuild every candidate in a fresh sandbox before accepting it. Verified
+ * command/env fixes become a new plan version; verified code fixes are pushed
+ * to a ShipFix branch that providers then deploy. Never touches the default branch.
+ */
+export async function repairFailedDeploys(runId: string): Promise<RepairSummary> {
+  const summary: RepairSummary = { retry: [], fixed: [], needsUser: [], gaveUp: [], unpushed: [], asked: [] };
+  if (process.env.SHIPFIX_AUTOFIX?.trim().toLowerCase() === "off") return summary;
+
+  const db = getDb();
+  const logger = createRunLogger(runId, createSafePostgresSink(db));
+  const { run, repoFullName, githubInstallationId, deployRef, defaultBranch } = await loadRun(db, runId);
+  const plan = await loadPlan(db, runId);
+
+  const rows = await db
+    .select()
+    .from(deployedResources)
+    .where(and(eq(deployedResources.runId, runId), eq(deployedResources.kind, "service")))
+    .orderBy(deployedResources.createdAt);
+  const latest = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) latest.set(r.serviceId, r);
+  const targets = [...latest.values()].flatMap((row) => {
+    const meta = (row.meta ?? {}) as FailedServiceMeta;
+    const svc = plan.services.find((s) => s.id === row.serviceId);
+    if (row.status !== "failed" || !svc || !meta.diagnosis || meta.repairAttempted) return [];
+    if (!meta.failureKind || !REPAIRABLE_FAILURES.has(meta.failureKind)) return [];
+    return [{ row, meta, svc, diagnosis: meta.diagnosis }];
+  });
+  if (targets.length === 0) return summary;
+
+  const sandbox = await createRunSandboxProvider().create({ runId });
+  const fileEdits = new Map<string, FileEdit>();
+  const planEdits: PlanEdit[] = [];
+  const codeFixed: string[] = [];
+  const planOnlyFixed: string[] = [];
+  const codeFixes: PullRequestFix[] = [];
+  const missingSettings: MissingSetting[] = [];
+  try {
+    const cloneToken = await resolveCloneToken({
+      repoFullName,
+      installationId: githubInstallationId,
+      allowedInstallationIds: await ownedGithubInstallationIds(db, run.userId),
+    });
+    await sandbox.clone({ repoFullName, sha: deployRef.commitSha, token: cloneToken });
+    const posix = (await sandbox.exec("uname", { timeoutMs: 15_000 }).catch(() => null))?.exitCode === 0;
+    const llm = lazyGateway(() =>
+      meteredGateway(createLLMGateway(), db, {
+        userId: run.userId,
+        projectId: run.projectId,
+        runId,
+        operation: REPAIR_OPERATION,
+      }),
+    );
+    const deadline = Date.now() + REPAIR_DEADLINE_MS;
+
+    for (const t of targets) {
+      await logger.log(`Trying to fix "${t.svc.id}": ${t.diagnosis.title}`, {
+        event: "repair_started",
+        serviceId: t.svc.id,
+        kind: t.diagnosis.kind,
+      });
+      const literalEnv = Object.fromEntries(
+        t.svc.env.flatMap((e) => (e.source === "literal" && e.value != null ? [[e.name, e.value] as const] : [])),
+      );
+      const outcome = await runRepairLoop({
+        workspace: sandboxRepairWorkspace(sandbox, { smokeStart: t.diagnosis.phase === "start", posix }),
+        service: t.svc,
+        diagnosis: t.diagnosis,
+        log: t.meta.failureLog ?? t.diagnosis.evidence.join("\n"),
+        env: literalEnv,
+        llm,
+        maxAttempts: 3,
+        deadline,
+        onAttempt: (a, i) =>
+          logger.log(`Fix attempt ${i + 1} for "${t.svc.id}": ${a.title} (${a.outcome})`, {
+            event: "repair_attempt",
+            serviceId: t.svc.id,
+            source: a.source,
+            outcome: a.outcome,
+            files: a.files,
+            detail: a.detail,
+          }),
+      });
+
+      const prFix: PullRequestFix | null =
+        outcome.status === "fixed" && outcome.files.length > 0
+          ? {
+              serviceId: t.svc.id,
+              title: outcome.title,
+              explanation: outcome.explanation,
+              fullyVerified: outcome.fullyVerified,
+              files: outcome.files.map((f) => ({ path: f.path, created: f.before === null })),
+            }
+          : null;
+      await db
+        .update(deployedResources)
+        .set({
+          meta: {
+            ...(t.row.meta as object),
+            repairAttempted: true,
+            repairStatus: outcome.status,
+            ...(prFix ? { repairFix: prFix } : {}),
+          },
+        })
+        .where(eq(deployedResources.id, t.row.id));
+
+      if (outcome.status === "fixed") {
+        summary.fixed.push(t.svc.id);
+        for (const f of outcome.files) {
+          const prev = fileEdits.get(f.path);
+          fileEdits.set(f.path, { path: f.path, before: prev ? prev.before : f.before, after: f.after });
+        }
+        planEdits.push(...outcome.plan);
+        (outcome.files.length ? codeFixed : planOnlyFixed).push(t.svc.id);
+        if (prFix) codeFixes.push(prFix);
+        await logger.log(`Found a fix for "${t.svc.id}" and it builds in the sandbox: ${outcome.title}`, {
+          event: "repair_verified",
+          serviceId: t.svc.id,
+          title: outcome.title,
+          explanation: outcome.explanation,
+          fullyVerified: outcome.fullyVerified,
+          files: outcome.files.map((f) => f.path),
+          planChanges: outcome.plan,
+          diff: unifiedDiffs(outcome.files),
+        });
+      } else if (outcome.status === "needs_user") {
+        summary.needsUser.push(t.svc.id);
+        if (t.diagnosis.kind === "missing_env" && isSettingName(t.diagnosis.subject)) {
+          missingSettings.push({ serviceId: t.svc.id, envName: t.diagnosis.subject });
+          summary.asked.push(t.svc.id);
+        }
+        await logger.warn(`"${t.svc.id}" needs something from you before it can deploy: ${outcome.message}`, {
+          event: "repair_needs_user",
+          serviceId: t.svc.id,
+          message: outcome.message,
+        });
+      } else {
+        summary.gaveUp.push(t.svc.id);
+        await logger.warn(outcome.reason, { event: "repair_gave_up", serviceId: t.svc.id, attempts: outcome.attempts.length });
+      }
+    }
+  } catch (err) {
+    await logger.warn("Automatic repair stopped early.", {
+      event: "repair_failed",
+      error: err instanceof Error ? err.message : String(err),
+    });
+  } finally {
+    await sandbox.dispose();
+  }
+
+  let nextPlan = missingSettings.length > 0 ? withMissingSettings(plan, missingSettings) : plan;
+  if (planEdits.length > 0) {
+    nextPlan = applyPlanEdits(nextPlan, planEdits);
+    summary.retry.push(...planOnlyFixed);
+  }
+  if (nextPlan !== plan) {
+    const [latestPlan] = await db
+      .select({ version: plans.version, planner: plans.planner })
+      .from(plans)
+      .where(eq(plans.runId, runId))
+      .orderBy(desc(plans.version))
+      .limit(1);
+    await db.insert(plans).values({
+      runId,
+      version: (latestPlan?.version ?? 1) + 1,
+      doc: nextPlan,
+      planner: latestPlan?.planner ?? "autofix",
+      confidence: nextPlan.confidence,
+    });
+  }
+
+  const files = [...fileEdits.values()].filter((f) => f.before !== f.after);
+  if (files.length > 0) {
+    const githubScope = {
+      repoFullName,
+      installationId: githubInstallationId,
+      allowedInstallationIds: await ownedGithubInstallationIds(db, run.userId),
+    };
+    // Pull-request access is optional: an App with only contents:write still gets the branch.
+    const prToken = await resolveRepoWriteToken({ ...githubScope, permissions: { contents: "write", pull_requests: "write" } });
+    const writeToken = prToken ?? (await resolveRepoWriteToken(githubScope));
+    const branch = repairBranchName(runId);
+    const pushed = writeToken
+      ? await pushCommitToBranch({
+          token: writeToken,
+          repoFullName,
+          baseSha: deployRef.commitSha,
+          branch,
+          message: commitMessage(codeFixes),
+          changes: files.map((f) => ({ path: f.path, content: f.after })),
+        })
+      : null;
+    if (pushed?.ok) {
+      await db.update(runs).set({ deployBranch: branch, deploySha: pushed.sha }).where(eq(runs.id, runId));
+      summary.retry.push(...codeFixed);
+      await logger.log(`Pushed the tested fix to branch "${branch}". Redeploying from it.`, {
+        event: "repair_pushed",
+        branch,
+        commitSha: pushed.sha,
+        url: pushed.url,
+        files: files.map((f) => f.path),
+      });
+      await openRepairPullRequest(db, logger, {
+        runId,
+        token: prToken,
+        repoFullName,
+        baseBranch: defaultBranch,
+        branch,
+        branchUrl: pushed.url,
+      });
+    } else {
+      summary.unpushed.push(...codeFixed);
+      const diff = unifiedDiffs(files);
+      await logger.warn(
+        writeToken
+          ? `ShipFix tested a fix but GitHub refused the push (${pushed && !pushed.ok ? pushed.error : "unknown error"}). Apply the change below yourself, then redeploy.`
+          : "ShipFix found and tested a fix, but it doesn't have permission to push to this repo. Apply the change below yourself (or give the ShipFix GitHub App write access), then redeploy.",
+        {
+          event: "repair_push_unavailable",
+          serviceIds: codeFixed,
+          files: files.map((f) => f.path),
+          diff,
+          fixPrompt: `Apply this tested fix to ${repoFullName}, then commit and push:\n\n${codeFixes
+            .map((f) => `${f.title} (${f.serviceId}): ${f.explanation}`)
+            .join("\n\n")}\n\n\`\`\`diff\n${diff}\`\`\``,
+        },
+      );
+    }
+  }
+
+  return summary;
+}
+
 export interface WireDeferredSummary {
   wired: string[];
   skipped: Array<{ id: string; reason: string }>;
@@ -2034,7 +2586,7 @@ export interface WireDeferredSummary {
 export async function wireDeferredBackendEnv(runId: string): Promise<WireDeferredSummary> {
   const db = getDb();
   const logger = createRunLogger(runId, createSafePostgresSink(db));
-  const { run, repoFullName, defaultBranch } = await loadRun(db, runId);
+  const { run, repoFullName, deployRef } = await loadRun(db, runId);
   const plan = await loadPlan(db, runId);
   const vault = getVault();
   const summary: WireDeferredSummary = { wired: [], skipped: [], failed: [] };
@@ -2139,7 +2691,7 @@ export async function wireDeferredBackendEnv(runId: string): Promise<WireDeferre
       const deployLogs = chainedDeployOnLog(logger, svc.id);
       const result = await adapter.deploy({
         service: svc,
-        repo: { fullName: repoFullName, branch: defaultBranch, commitSha: run.commitSha },
+        repo: { fullName: repoFullName, ...deployRef },
         rootDir: svc.rootDir,
         resourceName: deployTarget.resourceName,
         existingExternalId: row.externalId,

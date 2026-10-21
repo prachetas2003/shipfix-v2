@@ -64,7 +64,7 @@ export default function DashboardPage(): React.ReactElement {
           <Skeleton height={96} />
           <Skeleton height={96} />
         </div>
-      ) : apps.length === 0 ? (
+      ) : err ? null : apps.length === 0 ? (
         <EmptyState
           title="No apps yet"
           detail="Paste a GitHub repo to analyze and deploy. ShipFix only asks for the providers that plan needs."

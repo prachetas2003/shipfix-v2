@@ -16,7 +16,7 @@ const syne = Syne({
 
 export const metadata = {
   title: "ShipFix",
-  description: "AI-assisted deployment planning, provider setup, deployment, and live verification.",
+  description: "ShipFix deploys a full-stack app into your own Vercel, Render, Neon, and Supabase accounts, then checks that it came up.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

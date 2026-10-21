@@ -133,3 +133,21 @@ export class AdapterRegistry {
 // Concrete adapters: @shipfix/adapter-render (node_api), @shipfix/adapter-vercel (frontend_static).
 
 export { preflightProviderCredentials, type PreflightResult } from "./preflight";
+export {
+  OAUTH_PROVIDERS,
+  allowedOauthRedirect,
+  authorizeUrl,
+  createPkce,
+  credentialValues,
+  exchangeOauthCode,
+  isOauthProvider,
+  loadOauthApp,
+  loadOauthApps,
+  peekOauthProvider,
+  refreshOAuthCredentials,
+  signOauthState,
+  verifyOauthState,
+  type OauthApp,
+  type OauthProvider,
+  type OauthToken,
+} from "./providerOauth";

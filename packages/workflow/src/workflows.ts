@@ -1,6 +1,11 @@
-import { proxyActivities } from "@temporalio/workflow";
+import { condition, defineSignal, patched, proxyActivities, setHandler } from "@temporalio/workflow";
 import type * as activities from "./activities";
 import { unwrapFailureMessage } from "./errorMessages";
+import { mergeDeploySummary } from "./deploySummary";
+import { INPUT_WAIT_TIMEOUT, INPUTS_SUBMITTED_SIGNAL, MAX_INPUT_ROUNDS } from "./signals";
+
+/** Fired by the API after it saves answers for a run that is paused on a question. */
+export const inputsSubmitted = defineSignal(INPUTS_SUBMITTED_SIGNAL);
 
 /**
  * The deployment WORKFLOW — the deterministic state machine.
@@ -51,6 +56,44 @@ const deployActs = proxyActivities<typeof activities>({
   retry: { maximumAttempts: 1 },
 });
 
+/**
+ * Repair rebuilds candidate fixes in a sandbox (install + build per attempt),
+ * so it gets a long budget. Single attempt: it records what it tried, and a
+ * blind retry would repeat paid model calls.
+ */
+const repairActs = proxyActivities<typeof activities>({
+  startToCloseTimeout: "45 minutes",
+  retry: { maximumAttempts: 1 },
+});
+
+/** Repair → redeploy cycles per run. Each repair already makes several verified attempts. */
+const MAX_REPAIR_ROUNDS = 2;
+
+type InputWaitResult = "not_needed" | "answered" | "expired";
+
+/**
+ * Pause while the plan still needs an answer. Each saved answer signals the
+ * workflow; the next check revalidates and either continues or asks again.
+ */
+async function waitForAnswers(
+  runId: string,
+  signals: { n: number },
+): Promise<InputWaitResult> {
+  let answered = false;
+  for (let round = 0; round < MAX_INPUT_ROUNDS; round++) {
+    const seen = signals.n;
+    const wait = await deployActs.beginInputWait(runId);
+    if (!wait.waiting) return answered ? "answered" : "not_needed";
+    const got = await condition(() => signals.n > seen, INPUT_WAIT_TIMEOUT);
+    if (!got) {
+      await deployActs.noteInputWaitExpired(runId);
+      return "expired";
+    }
+    answered = true;
+  }
+  return "answered";
+}
+
 export interface DeploymentWorkflowInput {
   runId: string;
   mode: "analyze_only" | "plan" | "deploy";
@@ -81,7 +124,18 @@ export async function deploymentWorkflow(
       return;
     }
 
-    // ── deploy mode: gate → provision → backend → frontend → verify → terminal ─
+    // ── deploy mode: ask → gate → provision → backend → frontend → verify ─
+    // A plan that only needs a secret pauses here. The same run continues
+    // after the answer, instead of stopping and making the user start over.
+    const signals = { n: 0 };
+    if (patched("awaiting-input-v1")) {
+      setHandler(inputsSubmitted, () => {
+        signals.n += 1;
+      });
+      const waited = await waitForAnswers(input.runId, signals);
+      if (waited === "expired") return;
+    }
+
     // ShipFix only executes provider calls for GREEN (deployable) plans. YELLOW
     // /RED plans finalize as `diagnosed` here, before any provider is touched.
     const gate = await deployActs.gateDeploy(input.runId);
@@ -91,8 +145,26 @@ export async function deploymentWorkflow(
     // Prisma migrate (direct URL) before services get the pooled runtime URL.
     await deployActs.runManagedMigrations(input.runId);
     await deployActs.applySupabaseMigrations(input.runId);
-    const backendDeploy = await deployActs.deployBackendServices(input.runId);
-    const frontendDeploy = await deployActs.deployFrontendServices(input.runId);
+    let backendDeploy = await deployActs.deployBackendServices(input.runId);
+    let frontendDeploy = await deployActs.deployFrontendServices(input.runId);
+    if (patched("autofix-repair-v1")) {
+      for (
+        let round = 0;
+        round < MAX_REPAIR_ROUNDS && backendDeploy.failed.length + frontendDeploy.failed.length > 0;
+        round++
+      ) {
+        const repair = await repairActs.repairFailedDeploys(input.runId);
+        let answered = false;
+        if (patched("awaiting-input-v1") && (repair.asked?.length ?? 0) > 0) {
+          const waited = await waitForAnswers(input.runId, signals);
+          if (waited === "expired") break;
+          answered = waited === "answered";
+        }
+        if (repair.retry.length === 0 && !answered) break;
+        backendDeploy = mergeDeploySummary(backendDeploy, await deployActs.deployBackendServices(input.runId));
+        frontendDeploy = mergeDeploySummary(frontendDeploy, await deployActs.deployFrontendServices(input.runId));
+      }
+    }
     // Apply deferred CORS/origin env now that the frontend URL exists.
     await deployActs.wireDeferredBackendEnv(input.runId);
     let verify: Awaited<ReturnType<typeof deployActs.verifyDeployedPlan>> = {

@@ -54,8 +54,11 @@ AUTO-DEPLOYABLE SLICE (what ShipFix can actually execute today):
 - "render" + "node_api" (Node/Express-style APIs)
 - "render" + "python_api" ONLY when the repo service has an inferredRun — use
   its install and start commands verbatim
-- "render" + "docker_service" (built from the service's own Dockerfile; set
-  install/build/start to null) for a service with a Dockerfile that serves HTTP
+- "render" + "docker_service" (built from the service's Dockerfile; set
+  install/build/start to null) for a service with a Dockerfile that serves HTTP.
+  When the service has dockerfilePath (a Dockerfile outside rootDir), copy
+  dockerfilePath and dockerContext onto the plan service and keep rootDir as
+  the service folder where env and routes were detected
 - "render" + "worker" ONLY for a process listed in a repo service's "workers":
   same rootDir as that service, start "<pm> run <script>" or the Procfile
   command verbatim, set "runtime" to the service language, healthCheckPath null
@@ -129,6 +132,8 @@ matching this DeploymentPlan schema exactly:
     "type": "frontend_static"|"frontend_ssr"|"node_api"|"python_api"|"worker"|"docker_service",
     "provider": "vercel"|"render"|"railway",
     "rootDir": string,
+    "dockerfilePath"?: string,            // only when the Dockerfile is outside rootDir
+    "dockerContext"?: string,             // repo-relative; "" is the repo root
     "install": string|null,
     "build": string|null,
     "start": string|null,

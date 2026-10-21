@@ -55,7 +55,7 @@ export const PROVIDER_GUIDES: Record<ProviderId, ProviderGuide> = {
     tokenUrlLabel: "Neon API keys",
     scope: "Use a personal or account API key that can create projects and databases.",
     lifecycle:
-      "For local alpha testing, the ShipFix API/worker also needs NEON_ORG_ID in backend env. Free Neon databases may sleep when idle and wake on first query.",
+      "The API also needs NEON_ORG_ID in its environment. A free Neon database may sleep when idle and wake on the first query.",
   },
   upstash: {
     id: "upstash",

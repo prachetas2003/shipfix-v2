@@ -36,7 +36,10 @@ export type FixId =
   | "lockfile-install"
   | "legacy-peer-deps"
   | "build-memory"
-  | "missing-script";
+  | "missing-script"
+  | "localhost-api-url"
+  | "cors-origin"
+  | "spa-fallback";
 
 export type FixService = Pick<PlanService, "id" | "type" | "provider" | "rootDir" | "install" | "build" | "start">;
 

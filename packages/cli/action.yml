@@ -1,0 +1,38 @@
+name: Deploy with ShipFix
+description: Deploy a GitHub repository with ShipFix. Waits for the run unless wait is false.
+inputs:
+  token:
+    description: ShipFix API bearer token. Sent as SHIPFIX_TOKEN and never printed.
+    required: true
+  api-url:
+    description: ShipFix API origin. Defaults to http://localhost:4000.
+    required: false
+    default: http://localhost:4000
+  repo:
+    description: owner/name to deploy. Defaults to the GitHub repository running this workflow.
+    required: false
+    default: ""
+  branch:
+    description: Branch to deploy. Leave empty to use the repository default branch.
+    required: false
+    default: ""
+  wait:
+    description: When true, the job stays open until the deploy finishes.
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+    - name: Deploy
+      shell: bash
+      env:
+        SHIPFIX_TOKEN: ${{ inputs.token }}
+        SHIPFIX_API_URL: ${{ inputs.api-url }}
+        SHIPFIX_REPO: ${{ inputs.repo }}
+        SHIPFIX_BRANCH: ${{ inputs.branch }}
+        SHIPFIX_WAIT: ${{ inputs.wait }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: node --experimental-strip-types "${{ github.action_path }}/src/cli.ts" deploy

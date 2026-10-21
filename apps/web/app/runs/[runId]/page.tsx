@@ -12,6 +12,8 @@ import { ActivityStages } from "../../components/ActivityStages";
 import { FailureGuidance, extractFailureGuidance } from "../../components/FailureGuidance";
 import { LogDrawer } from "../../components/LogDrawer";
 import { OutcomeBanner } from "../../components/OutcomeBanner";
+import { EscapeHatch, escapeFrom } from "../../components/EscapeHatch";
+import { LaunchReadiness, readinessFrom } from "../../components/LaunchReadiness";
 import { companionsFrom, PlanPanel } from "../../components/PlanPanel";
 import { ProviderCredentialFix, providersNeedingCredentialFix } from "../../components/ProviderCredentialFix";
 import { ProviderRequirements } from "../../components/ProviderRequirements";
@@ -214,6 +216,18 @@ export default function RunPage({
           {showConnect && run.plan && !needsCredentialFix && (
             <ProviderRequirements plan={run.plan} connected={connected} onConnected={refreshProviders} allowUpdate />
           )}
+          {status === "awaiting_input" && run.plan && (
+            <PlanPanel
+              plan={run.plan}
+              runId={runId}
+              waiting
+              answeredQuestionIds={snap?.answeredQuestionIds ?? []}
+              onAnswersSaved={() => void run.refreshSnapshot()}
+              companions={companionsFrom(run.repoContext)}
+            />
+          )}
+          <EscapeHatch plan={escapeFrom(run.repoContext)} />
+          <LaunchReadiness report={readinessFrom(run.repoContext)} />
           <OutcomeBanner status={status} snapshot={snap} />
           <FailureGuidance
             events={run.events}
@@ -231,10 +245,13 @@ export default function RunPage({
 
       {tab === "plan" && (
         <div className="sf-fade-in">
+          <EscapeHatch plan={escapeFrom(run.repoContext)} />
+          <LaunchReadiness report={readinessFrom(run.repoContext)} />
           {run.plan ? (
             <PlanPanel
               plan={run.plan}
               runId={runId}
+              waiting={status === "awaiting_input"}
               answeredQuestionIds={snap?.answeredQuestionIds ?? []}
               onAnswersSaved={() => void run.refreshSnapshot()}
               companions={companionsFrom(run.repoContext)}
@@ -278,6 +295,7 @@ function runPageTitle(mode: string | undefined, status: string, fullStackLive: b
   if (mode === "plan" && status === "failed") return "Plan failed";
   if (mode === "deploy" && status === "failed") return "Deploy failed";
   if (mode === "deploy" && status === "diagnosed") return "Deploy needs attention";
+  if (status === "awaiting_input") return "Waiting for your answer";
   if (mode === "deploy" && status === "succeeded") return "Deploy succeeded";
   if (["queued", "cloning", "analyzing", "planning", "validating", "provisioning", "deploying", "verifying"].includes(status)) {
     return "Deployment in progress";

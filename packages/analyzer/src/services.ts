@@ -2,7 +2,7 @@ import type { RepoSource } from "./source";
 import type { Companion, CompanionKind, ServiceSignal, ServiceRole } from "@shipfix/contracts";
 import { detectPackageManager } from "./packageManager";
 import { detectNextApiRoutes, detectRouteCandidates } from "./routes";
-import { dockerfileExposes, dockerfileMigrates, inferPythonRun } from "./python";
+import { dockerfileExposes, dockerfileMigrates, dockerfileSubdirTarget, inferPythonRun } from "./python";
 import { procfileWorkers, scriptWorkers } from "./workers";
 import {
   allDeps,
@@ -98,6 +98,14 @@ const PYTHON_ENTRYPOINTS = [
 ];
 
 /** Ordered: a FastAPI app that also lists streamlit is still a FastAPI app. */
+/** uv when the install goes through uv export; poetry only for a poetry manifest we don't install yet. */
+function pythonPackageManager(files: ReadonlySet<string>, rootDir: string, pyproject: string): "uv" | "poetry" | "pip" {
+  if (files.has(joinRoot(rootDir, "uv.lock"))) return "uv";
+  if (files.has(joinRoot(rootDir, "requirements.txt"))) return "pip";
+  if (/^\[project\]/m.test(pyproject) && /^\s*dependencies\s*=/m.test(pyproject)) return "uv";
+  return files.has(joinRoot(rootDir, "pyproject.toml")) ? "poetry" : "pip";
+}
+
 const PYTHON_FRAMEWORKS: [string, RegExp][] = [
   ["fastapi", /(^|[\s"',[])fastapi\b/im],
   ["django", /(^|[\s"',[])django\b/im],
@@ -423,7 +431,7 @@ export async function detectServices(
       language: "python",
       framework,
       role: framework === "python" ? "unknown" : "backend",
-      packageManager: files.has(pyprojectPath) ? "poetry" : "pip",
+      packageManager: pythonPackageManager(files, rootDir, pyproject),
       scripts: {},
       entrypoints,
       hasDockerfile,
@@ -435,17 +443,42 @@ export async function detectServices(
     });
   }
 
-  for (const file of fileList) {
-    if (baseOf(file) !== "Dockerfile" && !/(^|\/)docker-compose\.ya?ml$/i.test(file)) continue;
-    const rootDir = baseOf(file) === "Dockerfile" ? dirOf(file) : "";
-    if (isClaimed(rootDir)) continue;
+  // Dockerfiles first, then compose. A Dockerfile attached to a subfolder still
+  // owns its directory, so a compose file next to it is the local stack.
+  const attachedDockerDirs = new Set<string>();
+  const containerFiles = [
+    ...fileList.filter((file) => baseOf(file) === "Dockerfile"),
+    ...fileList.filter((file) => /(^|\/)docker-compose\.ya?ml$/i.test(file)),
+  ];
+  for (const file of containerFiles) {
+    const isDockerfile = baseOf(file) === "Dockerfile";
+    const rootDir = isDockerfile ? dirOf(file) : "";
+    if (isClaimed(rootDir) || attachedDockerDirs.has(rootDir)) continue;
     const pathKind = companionKindByPath(rootDir);
     if (pathKind) {
       companions.push({ rootDir, kind: pathKind, evidence: [file] });
       continue;
     }
-    const isDockerfile = baseOf(file) === "Dockerfile";
-    const port = isDockerfile ? dockerfileExposes((await source.readFile(file)) ?? "") : null;
+    const content = isDockerfile ? ((await source.readFile(file)) ?? "") : "";
+    const port = isDockerfile ? dockerfileExposes(content) : null;
+    // A published port is what made this a second backend. Without one, leave
+    // the image as its own unknown service instead of taking over the app.
+    if (isDockerfile && port) {
+      const match = dockerfileSubdirTarget(file, content, services.map((s) => s.rootDir), files);
+      const target = services.find(
+        (s) => s.rootDir === match?.serviceRoot && s.role === "backend" && !s.hasDockerfile,
+      );
+      if (target && match) {
+        attachedDockerDirs.add(rootDir);
+        target.hasDockerfile = true;
+        target.dockerfilePath = file;
+        target.dockerContext = match.context;
+        const migrated = await dockerfileMigrates(source, files, file);
+        if (migrated) target.imageMigrates = migrated;
+        target.evidence.push(file, "built by a Dockerfile outside this folder");
+        continue;
+      }
+    }
     const imageMigrates = isDockerfile ? await dockerfileMigrates(source, files, file) : null;
     services.push({
       ...(imageMigrates ? { imageMigrates } : {}),

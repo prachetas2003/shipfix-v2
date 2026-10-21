@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="236" height="20" viewBox="0 0 236 20" role="img" aria-label="Deployed and checked by ShipFix">
+  <rect width="236" height="20" rx="4" fill="#12141a" stroke="#262a34"/>
+  <circle cx="12" cy="10" r="3.5" fill="#3ecf8e"/>
+  <text x="22" y="14" fill="#c0c6d2" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11">Deployed and checked by ShipFix</text>
+</svg>

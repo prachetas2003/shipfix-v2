@@ -50,6 +50,27 @@
       "when": 1783723000000,
       "tag": "0006_github_installations",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783724000000,
+      "tag": "0007_run_deploy_ref",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783725000000,
+      "tag": "0008_project_spend_cap",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783726000000,
+      "tag": "0009_project_plan",
+      "breakpoints": true
     }
   ]
 }

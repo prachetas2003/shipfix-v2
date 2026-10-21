@@ -5,6 +5,8 @@ import { detectMonorepoTool } from "./monorepo";
 import { detectEnvAndUrls } from "./env";
 import { detectDataNeeds } from "./data";
 import { detectPublicEnv } from "./publicEnv";
+import { scanSecurity } from "./security";
+import { detectEscape } from "./escape";
 import { detectSupabase } from "./supabase";
 import { nearestRoot } from "./util";
 
@@ -50,6 +52,8 @@ export async function analyzeRepo(
   const dataNeeds = await detectDataNeeds(source, appFiles, envRefs);
   const publicEnv = await detectPublicEnv(source, appFiles, serviceRoots);
   const supabase = await detectSupabase(source, appFiles, serviceRoots, envRefs, publicEnv);
+  const security = await scanSecurity(source, appFiles, services);
+  const escape = await detectEscape(source, appFiles, dataNeeds, envRefs, supabase);
 
   const fileTree = fileList.slice(0, MAX_FILE_TREE);
 
@@ -64,6 +68,8 @@ export async function analyzeRepo(
     publicEnv,
     companions,
     supabase,
+    security,
+    escape,
     monorepoTool,
   });
 }

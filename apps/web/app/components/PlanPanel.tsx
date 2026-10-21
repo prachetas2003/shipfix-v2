@@ -20,7 +20,7 @@ const CLASS_META: Record<PlanView["classification"], { label: string; color: str
     label: "Red - diagnosis only",
     color: colors.error,
     explanation:
-      "This repo is outside ShipFix alpha support. ShipFix will explain why instead of pretending it can deploy it.",
+      "This repo is outside what ShipFix can deploy. The plan explains why, and no provider is called.",
   },
 };
 
@@ -91,6 +91,12 @@ function CommandRow({ label, value }: { label: string; value: string | null }): 
   );
 }
 
+function choicesFor(q: PlanView["questions"][number]): string[] | null {
+  if (q.options && q.options.length > 0) return q.options;
+  if (q.kind === "confirm") return ["yes", "no"];
+  return null;
+}
+
 export function PlanPanel({
   plan,
   runId,
@@ -98,6 +104,7 @@ export function PlanPanel({
   onAnswersSaved,
   onPlanRevalidated,
   companions = [],
+  waiting = false,
 }: {
   plan: PlanView;
   companions?: CompanionView[];
@@ -105,6 +112,8 @@ export function PlanPanel({
   answeredQuestionIds?: string[];
   onAnswersSaved?: (answered: string[]) => void;
   onPlanRevalidated?: (plan: PlanView) => void;
+  /** The deploy is paused until these answers are saved. */
+  waiting?: boolean;
 }): React.ReactElement {
   const meta = CLASS_META[plan.classification];
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -191,21 +200,56 @@ export function PlanPanel({
       {plan.questions.length > 0 && (
         <div style={{ marginTop: "1rem" }}>
           <h3 style={{ ...h2, fontSize: "0.75rem" }}>Setup answers</h3>
+          {waiting && unanswered.length > 0 && (
+            <p style={{ margin: "0.35rem 0 0", fontSize: "0.88rem", color: colors.warnText, lineHeight: 1.5 }}>
+              This deploy is paused. Save the answers below and it continues on its own.
+            </p>
+          )}
           {plan.questions.map((q) => {
             const answered = savedIds.includes(q.id);
             const isSecret = q.kind === "secret";
+            const choices = choicesFor(q);
+            const fieldStyle = {
+              marginTop: 10,
+              width: "100%",
+              boxSizing: "border-box" as const,
+              background: colors.panelSoft,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 8,
+              color: colors.text,
+              padding: "0.55rem 0.7rem",
+              fontFamily: mono,
+            };
             return (
               <div key={q.id} style={{ ...card, marginTop: 8, fontSize: "0.86rem" }}>
                 <strong>{q.prompt}</strong>
-                {q.options && q.options.length > 0 && (
-                  <p style={{ margin: "0.35rem 0 0", color: colors.dim }}>
-                    Options: {q.options.join(", ")}
+                {q.help && (
+                  <p style={{ margin: "0.35rem 0 0", color: colors.dim, lineHeight: 1.5 }}>
+                    {q.help}{" "}
+                    {q.helpUrl && (
+                      <a href={q.helpUrl} target="_blank" rel="noreferrer" style={{ color: colors.accentText }}>
+                        Open the page
+                      </a>
+                    )}
                   </p>
                 )}
                 {answered ? (
                   <p style={{ margin: "0.55rem 0 0", color: colors.successText, fontWeight: 700 }}>
                     Saved{isSecret ? " (secret sealed)" : ""}
                   </p>
+                ) : runId && choices ? (
+                  <select
+                    value={drafts[q.id] ?? ""}
+                    onChange={(e) => setDrafts((d) => ({ ...d, [q.id]: e.target.value }))}
+                    style={fieldStyle}
+                  >
+                    <option value="">Choose…</option>
+                    {choices.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
                 ) : runId ? (
                   <input
                     type={isSecret ? "password" : "text"}
@@ -213,17 +257,7 @@ export function PlanPanel({
                     placeholder={isSecret ? "Enter secret value" : "Enter answer"}
                     value={drafts[q.id] ?? ""}
                     onChange={(e) => setDrafts((d) => ({ ...d, [q.id]: e.target.value }))}
-                    style={{
-                      marginTop: 10,
-                      width: "100%",
-                      boxSizing: "border-box",
-                      background: colors.panelSoft,
-                      border: `1px solid ${colors.border}`,
-                      borderRadius: 8,
-                      color: colors.text,
-                      padding: "0.55rem 0.7rem",
-                      fontFamily: mono,
-                    }}
+                    style={fieldStyle}
                   />
                 ) : (
                   <p style={{ margin: "0.55rem 0 0", color: colors.dim }}>
@@ -241,7 +275,7 @@ export function PlanPanel({
                 onClick={() => void submitAnswers()}
                 style={buttonStyle(canSubmit && !saving ? "primary" : "ghost")}
               >
-                {saving ? "Saving…" : "Save answers"}
+                {saving ? "Saving…" : waiting ? "Save and continue" : "Save answers"}
               </button>
               {saveError && <span style={{ color: colors.errorText, fontSize: "0.85rem" }}>{saveError}</span>}
             </div>

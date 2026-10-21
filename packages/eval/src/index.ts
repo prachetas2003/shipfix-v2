@@ -20,6 +20,7 @@ export {
   type RepoShape,
 } from "./evaluate";
 export {
+  FIRST_TRY_TARGET,
   findRegressions,
   renderMarkdown,
   shapeSignature,

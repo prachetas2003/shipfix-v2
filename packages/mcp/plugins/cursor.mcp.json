@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "shipfix": {
+      "command": "pnpm",
+      "args": ["--dir", "packages/mcp", "exec", "tsx", "src/server.ts"],
+      "env": {
+        "SHIPFIX_API_URL": "http://localhost:4000",
+        "SHIPFIX_TOKEN": "",
+        "SHIPFIX_DEV_USER": ""
+      }
+    }
+  }
+}

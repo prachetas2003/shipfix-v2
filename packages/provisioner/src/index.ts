@@ -34,7 +34,10 @@ export {
   type SupabaseProjectValues,
 } from "./supabase";
 export {
+  NEON_BACKUP_PREFIX,
   NEON_SNAPSHOT_PREFIX,
+  isShipfixBranchName,
+  restoreNeonBranch,
   snapshotNeonDatabase,
   type NeonSnapshotOptions,
   type NeonSnapshotResult,

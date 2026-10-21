@@ -10,7 +10,10 @@ import { WorkerStalledNotice } from "../components/WorkerStalledNotice";
 import { ControlPlaneConsistencyNotice } from "../components/ControlPlaneConsistencyNotice";
 import { FixGuidance } from "../components/FixGuidance";
 import { GithubConnect } from "../components/GithubConnect";
+import { RepoPicker } from "../components/RepoPicker";
 import { OutcomeBanner } from "../components/OutcomeBanner";
+import { EscapeHatch, escapeFrom } from "../components/EscapeHatch";
+import { LaunchReadiness, readinessFrom } from "../components/LaunchReadiness";
 import { companionsFrom, PlanPanel } from "../components/PlanPanel";
 import { ProviderRequirements } from "../components/ProviderRequirements";
 import { Stepper } from "../components/Stepper";
@@ -26,7 +29,7 @@ function planFailureMessage(events: RunEventRow[]): string {
   });
   const event = typeof lastFailure?.data?.event === "string" ? lastFailure.data.event : "";
   const message = typeof lastFailure?.data?.message === "string" ? lastFailure.data.message : "";
-  if (event === "usage_limit_reached") return message || "Usage limit reached. Try again later, or raise local alpha limits while testing.";
+  if (event === "usage_limit_reached") return message || "This account has reached its usage limit. Try again later.";
   if (event === "llm_unavailable") {
     return "The AI planner is temporarily unavailable (the model provider is overloaded or unreachable). This is not a usage limit — wait a minute and analyze again.";
   }
@@ -43,6 +46,7 @@ export default function NewDeploymentPage(): React.ReactElement {
   const [deployRunId, setDeployRunId] = useState<string | null>(null);
   const [capturedPlan, setCapturedPlan] = useState<PlanView | null>(null);
   const [connected, setConnected] = useState<string[]>([]);
+  const [oauthProviders, setOauthProviders] = useState<string[]>([]);
   const [starting, setStarting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -55,8 +59,12 @@ export default function NewDeploymentPage(): React.ReactElement {
 
   const refreshProviders = useCallback(async () => {
     try {
-      const p = await api.listProviders();
+      const [p, oauth] = await Promise.all([
+        api.listProviders(),
+        api.listOauthProviders().catch(() => ({ providers: [] as string[] })),
+      ]);
       setConnected(p.connected);
+      setOauthProviders(oauth.providers);
     } catch {
       /* non-fatal */
     }
@@ -75,13 +83,16 @@ export default function NewDeploymentPage(): React.ReactElement {
     }
   }, [step, deployRunId, run.status]);
 
-  const startPlan = async () => {
+  const startPlan = async (repoName = repo) => {
+    const target = repoName.trim();
+    if (!target) return;
+    setRepo(target);
     setStarting(true);
     setErr(null);
     setCapturedPlan(null);
     setDeployRunId(null);
     try {
-      const id = await api.startRun("plan", repo);
+      const id = await api.startRun("plan", target);
       setPlanRunId(id);
       setStep(1);
     } catch (e) {
@@ -131,7 +142,7 @@ export default function NewDeploymentPage(): React.ReactElement {
 
       <PageHeader
         title="New deployment"
-        subtitle="Paste a repo → analyze → connect only what’s missing → deploy and verify."
+        subtitle="Pick a repo or paste one, then connect only the hosts this app needs."
       />
 
       <Stepper steps={STEPS} current={step} />
@@ -163,6 +174,7 @@ export default function NewDeploymentPage(): React.ReactElement {
               {starting ? "Analyzing…" : "Analyze repo"}
             </Button>
           </div>
+          <RepoPicker disabled={starting} onPick={(fullName) => void startPlan(fullName)} />
           <GithubConnect />
         </Panel>
       )}
@@ -199,6 +211,8 @@ export default function NewDeploymentPage(): React.ReactElement {
 
       {step === 2 && capturedPlan && (
         <section className="sf-fade-in">
+          <EscapeHatch plan={escapeFrom(run.repoContext)} />
+          <LaunchReadiness report={readinessFrom(run.repoContext)} />
           <PlanPanel
             plan={capturedPlan}
             runId={planRunId ?? undefined}
@@ -207,7 +221,13 @@ export default function NewDeploymentPage(): React.ReactElement {
             onPlanRevalidated={(p) => setCapturedPlan(p)}
             companions={companionsFrom(run.repoContext)}
           />
-          <ProviderRequirements plan={capturedPlan} connected={connected} onConnected={refreshProviders} allowUpdate />
+          <ProviderRequirements
+            plan={capturedPlan}
+            connected={connected}
+            onConnected={refreshProviders}
+            allowUpdate
+            oauthProviders={oauthProviders}
+          />
           <div style={{ display: "flex", gap: 10, marginTop: "1.25rem", flexWrap: "wrap" }}>
             <Button
               variant="success"

@@ -66,6 +66,14 @@ export const ServiceSignal = z.object({
   scripts: z.record(z.string()).default({}),
   entrypoints: z.array(z.string()).default([]),
   hasDockerfile: z.boolean().default(false),
+  /**
+   * Repo-relative Dockerfile that builds this service from outside its root
+   * (a root Dockerfile that COPY's a backend subfolder). Absent when the
+   * Dockerfile lives in rootDir.
+   */
+  dockerfilePath: z.string().optional(),
+  /** Repo-relative Docker build context for dockerfilePath. "" is the repo root. */
+  dockerContext: z.string().optional(),
   /** Migration tool the Dockerfile (or the entrypoint script it copies) runs before the server starts. */
   imageMigrates: z.enum(["django", "alembic"]).optional(),
   /** GET/POST routes found in entrypoints and nearby route files. */
@@ -197,6 +205,49 @@ export const SupabaseUsage = z.object({
 });
 export type SupabaseUsage = z.infer<typeof SupabaseUsage>;
 
+export const SecurityFinding = z.object({
+  code: z.string(),
+  severity: z.enum(["high", "medium", "low"]),
+  title: z.string(),
+  /** User-facing explanation. Never includes a secret value. */
+  detail: z.string(),
+  file: z.string().optional(),
+  fixable: z.boolean().default(false),
+});
+export type SecurityFinding = z.infer<typeof SecurityFinding>;
+
+/** Launch readiness from a static scan. Live databases are not probed. */
+export const EscapeMove = z.object({
+  id: z.enum(["code", "schema", "secrets", "rows", "auth", "storage"]),
+  title: z.string(),
+  /** True when this deploy already carries that part into the user's account. */
+  automatic: z.boolean(),
+  detail: z.string(),
+});
+export type EscapeMove = z.infer<typeof EscapeMove>;
+
+/**
+ * How to leave Lovable Cloud, Bolt, or Replit.
+ * Built from files in the repo. ShipFix does not connect to those hosts.
+ */
+export const EscapePlan = z.object({
+  source: z.enum(["lovable", "bolt", "replit"]),
+  platform: z.string(),
+  moves: z.array(EscapeMove).default([]),
+});
+export type EscapePlan = z.infer<typeof EscapePlan>;
+
+export const SecurityReport = z.object({
+  score: z.number().int().min(0).max(100),
+  findings: z.array(SecurityFinding).default([]),
+  /**
+   * True only when more than the deployed commit was searched.
+   * Clones are shallow, so this stays false and the UI says so.
+   */
+  historyScanned: z.boolean().default(false),
+});
+export type SecurityReport = z.infer<typeof SecurityReport>;
+
 export const RepoContext = z.object({
   repoFullName: z.string(),
   commitSha: z.string(),
@@ -209,6 +260,8 @@ export const RepoContext = z.object({
   publicEnv: z.array(PublicEnvValue).default([]),
   companions: z.array(Companion).default([]),
   supabase: SupabaseUsage.optional(),
+  security: SecurityReport.optional(),
+  escape: EscapePlan.optional(),
   monorepoTool: z
     .enum(["turbo", "nx", "pnpm_workspace", "none"])
     .default("none"),

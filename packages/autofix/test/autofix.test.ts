@@ -10,6 +10,7 @@ import {
   preflightFixes,
   requiredNodeMajor,
   unfrozenInstall,
+  withSecurityHeaders,
   type FixContext,
   type FixService,
   type RepoFiles,
@@ -197,7 +198,7 @@ describe("fixForDiagnosis", () => {
     const fix = await fixForDiagnosis(ctx({}, web), diagnosis("out_of_memory"));
     expect(fix!.plan).toEqual([{ serviceId: "web", env: { name: "NODE_OPTIONS", value: "--max-old-space-size=6144" } }]);
     expect(await fixForDiagnosis(ctx({}), diagnosis("out_of_memory"))).toBeNull();
-    expect(await fixForDiagnosis(ctx({}, web), diagnosis("out_of_memory", { phase: "runtime" }))).toBeNull();
+    expect(await fixForDiagnosis(ctx({}, web), diagnosis("out_of_memory", { phase: "start" }))).toBeNull();
   });
 
   it("leaves LLM and user-owned failures alone", async () => {
@@ -235,5 +236,85 @@ describe("helpers", () => {
     expect(next.services[0]!.install).toBe("npm install");
     expect(next.services[0]!.env).toEqual([{ name: "NODE_OPTIONS", source: "literal", value: "--max-old-space-size=6144" }]);
     expect(plan.services[0]!.install).toBe("npm ci");
+  });
+});
+
+describe("localhost API URLs", () => {
+  it("points a Vite frontend at the deployed API and drops the localhost fallback", async () => {
+    const files = {
+      "package.json": pkg({ dependencies: { react: "19", vite: "7" } }),
+      "src/api.ts": `const base = import.meta.env.VITE_API_URL || "http://localhost:3001";\nfetch("http://127.0.0.1:3001/items");\n`,
+      "vite.config.ts": `export default { server: { proxy: "http://localhost:3001" } };\n`,
+    };
+    const [fix] = await preflightFixes(ctx(files, web));
+    expect(fix?.id).toBe("localhost-api-url");
+    expect(fix?.files.find((f) => f.path === "src/api.ts")?.after).toBe(
+      "const base = import.meta.env.VITE_API_URL;\nfetch(`${import.meta.env.VITE_API_URL}/items`);\n",
+    );
+    expect(fix?.files.some((f) => f.path === "vite.config.ts")).toBe(false);
+  });
+
+  it("uses the Next public env name for a Next app", async () => {
+    const next = { ...web, type: "frontend_ssr" as const };
+    const files = {
+      "package.json": pkg({ dependencies: { next: "15" } }),
+      "app/page.tsx": `fetch("http://localhost:4000");\n`,
+    };
+    const fix = await fixForDiagnosis(ctx(files, next), diagnosis("localhost_url", { phase: "start" }));
+    expect(fix?.files[0]?.after).toBe("fetch(process.env.NEXT_PUBLIC_API_URL);\n");
+  });
+});
+
+describe("CORS origin", () => {
+  it("reads the frontend URL instead of a localhost allow-list", async () => {
+    const files = {
+      "src/index.js": `import cors from "cors";\napp.use(cors({ origin: "http://localhost:5173" }));\nfetch("http://localhost:5173");\n`,
+    };
+    const [fix] = await preflightFixes(ctx(files));
+    expect(fix?.id).toBe("cors-origin");
+    expect(fix?.files[0]?.after).toBe(
+      `import cors from "cors";\napp.use(cors({ origin: process.env.FRONTEND_URL }));\nfetch("http://localhost:5173");\n`,
+    );
+  });
+
+  it("uses os.environ in a Python API and adds the import", async () => {
+    const py = { ...api, type: "python_api" as const };
+    const files = { "main.py": `from fastapi.middleware.cors import CORSMiddleware\napp.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"])\n` };
+    const [fix] = await preflightFixes(ctx(files, py));
+    expect(fix?.files[0]?.after).toContain(`os.environ["FRONTEND_URL"]`);
+    expect(fix?.files[0]?.after.startsWith("import os\n")).toBe(true);
+  });
+});
+
+describe("SPA fallback", () => {
+  it("adds a rewrite that leaves asset files alone", async () => {
+    const files = {
+      "package.json": pkg({ dependencies: { react: "19", "react-router-dom": "7" } }),
+      "src/main.tsx": `export {}`,
+    };
+    const [fix] = await preflightFixes(ctx(files, web));
+    expect(fix?.id).toBe("spa-fallback");
+    expect(fix?.files[0]?.path).toBe("vercel.json");
+    expect(fix?.files[0]?.before).toBeNull();
+    expect(JSON.parse(fix!.files[0]!.after).rewrites[0].destination).toBe("/index.html");
+  });
+
+  it("leaves an existing vercel.json alone", async () => {
+    const files = {
+      "package.json": pkg({ dependencies: { "react-router-dom": "7" } }),
+      "vercel.json": "{}\n",
+    };
+    expect(await preflightFixes(ctx(files, web))).toEqual([]);
+  });
+});
+
+describe("security headers", () => {
+  it("adds a header block and leaves a file that already sets one", () => {
+    const added = withSecurityHeaders('{"rewrites":[]}\n');
+    expect(added?.changed).toBe(true);
+    expect(JSON.parse(added!.content).rewrites).toEqual([]);
+    expect(JSON.parse(added!.content).headers[0].headers.map((h: { key: string }) => h.key)).toContain("X-Frame-Options");
+    expect(withSecurityHeaders(added!.content)?.changed).toBe(false);
+    expect(withSecurityHeaders("not json")).toBeNull();
   });
 });

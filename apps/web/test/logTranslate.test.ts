@@ -236,3 +236,30 @@ describe("translateEvent - leakage and honesty", () => {
     expect(f.tone).toBe("error");
   });
 });
+
+describe("translateEvent - autofix", () => {
+  it("links the opened pull request", () => {
+    const f = translateEvent(ev({ event: "repair_pr_opened", number: 12, url: "https://github.com/o/r/pull/12", created: true }));
+    expect(f.title).toBe("Pull request #12 opened");
+    expect(f.url).toBe("https://github.com/o/r/pull/12");
+    expect(f.tone).toBe("success");
+  });
+
+  it("explains attempts by outcome", () => {
+    expect(translateEvent(ev({ event: "repair_attempt", source: "rule", outcome: "passed" })).title).toBe("Known fix passed the sandbox build");
+    expect(translateEvent(ev({ event: "repair_attempt", source: "llm", outcome: "failed" })).title).toBe("AI fix didn't work, trying again");
+  });
+
+  it("links the page where an answer comes from", () => {
+    const f = translateEvent(ev({ event: "question", help: "Stripe Dashboard → API keys.", helpUrl: "https://dashboard.stripe.com/apikeys" }, "Paste your Stripe key"));
+    expect(f.title).toBe("Answer needed to continue");
+    expect(f.detail).toContain("Paste your Stripe key");
+    expect(f.url).toBe("https://dashboard.stripe.com/apikeys");
+  });
+
+  it("gives a compare link when the PR couldn't be opened", () => {
+    const f = translateEvent(ev({ event: "repair_pr_unavailable", url: "https://github.com/o/r/compare/main...shipfix%2Ffix-1?expand=1" }));
+    expect(f.tone).toBe("warn");
+    expect(f.url).toContain("/compare/");
+  });
+});

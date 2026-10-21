@@ -118,6 +118,13 @@ export const PlanService = z.object({
   provider: PlanProvider,
   rootDir: z.string(),
   /**
+   * Repo-relative Dockerfile when it lives outside rootDir. The host then
+   * builds from dockerContext ("" is the repo root) so the subfolder is in
+   * the build context.
+   */
+  dockerfilePath: z.string().optional(),
+  dockerContext: z.string().optional(),
+  /**
    * Detected framework ("next", "tanstack-start", ...). Picks the Vercel preset
    * for frontend_ssr. Plans persisted before this field are Next.js.
    */
@@ -179,6 +186,10 @@ export const PlanQuestion = z.object({
   kind: z.enum(["secret", "choice", "confirm"]),
   options: z.array(z.string()).optional(),
   default: z.string().optional(),
+  /** Where the value comes from, in plain language. */
+  help: z.string().optional(),
+  /** Dashboard or docs page for that value. */
+  helpUrl: z.string().optional(),
   /** Service ids that cannot deploy until this is answered. */
   blocksServiceIds: z.array(z.string()).default([]),
 });

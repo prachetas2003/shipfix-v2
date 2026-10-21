@@ -46,3 +46,30 @@ describe("snapshotNeonDatabase", () => {
     if (!res.ok) expect(res.message).toContain("branches limit exceeded");
   });
 });
+
+describe("restoreNeonBranch", () => {
+  it("refuses a branch ShipFix did not create and does not call Neon", async () => {
+    const neon = fakeNeon([]);
+    const { restoreNeonBranch } = await import("../src/index");
+    const res = await restoreNeonBranch("k", "proj-1", "main", { fetchImpl: neon.fetchImpl, apiBase: "https://neon.test" });
+    expect(res.ok).toBe(false);
+    expect(neon.calls).toEqual([]);
+  });
+
+  it("restores the default branch from a backup and keeps the current data", async () => {
+    const { restoreNeonBranch, NEON_BACKUP_PREFIX } = await import("../src/index");
+    const neon = fakeNeon([
+      { id: "br-main", name: "main", created_at: "2026-01-01", default: true },
+      { id: "br-bak", name: `${NEON_BACKUP_PREFIX}20261018t000000z`, created_at: "2026-10-18" },
+    ]);
+    const res = await restoreNeonBranch("k", "proj-1", `${NEON_BACKUP_PREFIX}20261018t000000z`, {
+      fetchImpl: neon.fetchImpl,
+      apiBase: "https://neon.test",
+      now: at("2026-10-18T01:02:03.000Z"),
+    });
+    expect(res).toMatchObject({ ok: true, branchName: "shipfix-before-restore-20261018t010203z", branchId: "br-main" });
+    expect(neon.calls.at(-1)).toContain("POST /projects/proj-1/branches/br-main/restore");
+    expect(neon.calls.at(-1)).toContain("\"source_branch_id\":\"br-bak\"");
+    expect(neon.calls.at(-1)).toContain("shipfix-before-restore-20261018t010203z");
+  });
+});

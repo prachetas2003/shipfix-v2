@@ -39,6 +39,9 @@ export interface EvalReport {
   results: RepoEvalResult[];
 }
 
+/** Share of repos that should go live with no human help. Offline eval reports plan rate against this. */
+export const FIRST_TRY_TARGET = 0.5;
+
 const RANK: Record<PlanClassification | "none", number> = {
   deployable: 3,
   needs_setup: 2,
@@ -180,6 +183,8 @@ export function renderMarkdown(report: EvalReport, regressions: Regression[] = [
     `| Planned deterministically | ${pct(s.deterministicRate)} |`,
     `| Analyze p50 / p95 | ${s.timings.analyzeP50Ms} ms / ${s.timings.analyzeP95Ms} ms |`,
     `| Expectations met | ${s.expectations.met}/${s.expectations.checked} |`,
+    "",
+    `First-try plans are ${pct(s.deployableRate)} (${s.classifications.deployable} of ${s.analyzed} analyzed). The target is ${pct(FIRST_TRY_TARGET)} live and verified with no human help. This run measures plans, not live deploys.`,
     "",
   ];
   if (regressions.length) {

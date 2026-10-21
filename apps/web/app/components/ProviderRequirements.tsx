@@ -16,12 +16,15 @@ export function ProviderRequirements({
   connected,
   onConnected,
   allowUpdate = false,
+  oauthProviders = [],
 }: {
   plan: PlanView | null;
   connected: string[];
   onConnected: () => void;
   /** Let users refresh a single connected provider without touching the others. */
   allowUpdate?: boolean;
+  /** Providers this server can connect with a login. */
+  oauthProviders?: string[];
 }): React.ReactElement {
   const required = deriveRequiredProviders(plan);
   const missing = missingProviders(required, connected);
@@ -50,6 +53,7 @@ export function ProviderRequirements({
           connected={connected.includes(req.provider)}
           reason={req.reason}
           allowUpdate={allowUpdate}
+          oauthReady={oauthProviders.includes(req.provider)}
           onConnected={onConnected}
         />
       ))}

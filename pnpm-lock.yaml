@@ -32,6 +32,9 @@ importers:
       '@shipfix/adapter-core':
         specifier: workspace:*
         version: link:../../packages/adapters/core
+      '@shipfix/billing':
+        specifier: workspace:*
+        version: link:../../packages/billing
       '@shipfix/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -41,9 +44,15 @@ importers:
       '@shipfix/github':
         specifier: workspace:*
         version: link:../../packages/github
+      '@shipfix/guardian':
+        specifier: workspace:*
+        version: link:../../packages/guardian
       '@shipfix/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@shipfix/provisioner':
+        specifier: workspace:*
+        version: link:../../packages/provisioner
       '@shipfix/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets
@@ -222,6 +231,36 @@ importers:
       '@shipfix/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@shipfix/llm':
+        specifier: workspace:*
+        version: link:../llm
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.19
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(terser@5.48.0)
+
+  packages/billing:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.19
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(terser@5.48.0)
+
+  packages/cli:
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -311,6 +350,18 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.19)(terser@5.48.0)
 
+  packages/guardian:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.19
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(terser@5.48.0)
+
   packages/llm:
     dependencies:
       '@shipfix/secrets':
@@ -323,6 +374,25 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.19
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(terser@5.48.0)
+
+  packages/mcp:
+    dependencies:
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.19
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
@@ -473,6 +543,9 @@ importers:
       '@shipfix/analyzer':
         specifier: workspace:*
         version: link:../analyzer
+      '@shipfix/autofix':
+        specifier: workspace:*
+        version: link:../autofix
       '@shipfix/contracts':
         specifier: workspace:*
         version: link:../contracts

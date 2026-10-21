@@ -37,6 +37,10 @@ const BaseEnvSchema = z.object({
    * it and fails with a clear error when absent.
    */
   SHIPFIX_MASTER_KEY: z.string().optional(),
+  /** Stripe secret key. Checkout stays off until this, the webhook secret, and the Guardian price id are set. */
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_GUARDIAN_PRICE_ID: z.string().optional(),
   AUTH_MODE: z.enum(["clerk", "dev"]).default("clerk"),
   CLERK_SECRET_KEY: z.string().optional(),
   /** Required for /admin/* routes. If absent, admin routes are disabled. */

@@ -1,12 +1,12 @@
 "use client";
 
-import { ClerkLoaded, ClerkLoading, SignIn, SignInButton, SignUpButton, UserButton, useAuth, useClerk, useUser } from "@clerk/nextjs";
+import { ClerkLoaded, ClerkLoading, SignInButton, SignUpButton, UserButton, useAuth, useClerk, useUser } from "@clerk/nextjs";
+import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { AUTH_MODE, setAuthTokenProvider } from "../lib/api";
-import { colors } from "../lib/theme";
-import { BrandMark } from "./BrandMark";
+import { GithubSignIn } from "./GithubSignIn";
+import { Landing } from "./Landing";
 import { Button } from "./ui/Button";
-import { Panel } from "./ui/Panel";
 import { Skeleton } from "./ui/Skeleton";
 
 function AuthTokenBridge(): null {
@@ -24,38 +24,35 @@ function AuthTokenBridge(): null {
   return null;
 }
 
-function LoginScreen(): React.ReactElement {
+function SignedOutLanding(): React.ReactElement {
   return (
-    <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "2rem" }}>
-      <Panel className="sf-slide-up" style={{ width: "min(460px, 100%)", padding: "2rem", textAlign: "center" }}>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: "1.25rem" }}>
-          <BrandMark />
-        </div>
-        <h1 className="sf-display" style={{ margin: 0, fontSize: "1.85rem" }}>
-          Deploy with a verified trail
-        </h1>
-        <p style={{ color: colors.dim, margin: "0.75rem 0 1.5rem", lineHeight: 1.6, fontSize: "0.92rem" }}>
-          Sign in to analyze repos, connect providers, deploy services, and keep a record of what is live.
-        </p>
-        <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+    <Landing
+      actions={
+        <>
+          <GithubSignIn />
           <SignInButton mode="modal">
             <Button>Sign in</Button>
           </SignInButton>
           <SignUpButton mode="modal">
             <Button variant="ghost">Create account</Button>
           </SignUpButton>
-        </div>
-        <div style={{ display: "flex", justifyContent: "center", marginTop: "1.5rem" }}>
-          <SignIn routing="hash" />
-        </div>
-      </Panel>
-    </main>
+        </>
+      }
+    />
   );
 }
 
 export function AuthGate({ children }: { children: React.ReactNode }): React.ReactElement {
   if (AUTH_MODE === "dev") return <>{children}</>;
   const { isSignedIn } = useUser();
+  const path = usePathname();
+  if (path === "/sso-callback") {
+    return (
+      <ClerkLoaded>
+        {children}
+      </ClerkLoaded>
+    );
+  }
 
   return (
     <>
@@ -70,7 +67,11 @@ export function AuthGate({ children }: { children: React.ReactNode }): React.Rea
       </ClerkLoading>
       <ClerkLoaded>
         {!isSignedIn ? (
-          <LoginScreen />
+          path === "/welcome" || path === "/benchmark" || path === "/errors" || path.startsWith("/errors/") ? (
+            children
+          ) : (
+            <SignedOutLanding />
+          )
         ) : (
           <>
             <AuthTokenBridge />

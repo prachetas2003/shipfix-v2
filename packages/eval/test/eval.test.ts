@@ -211,6 +211,7 @@ describe("summaries and regressions", () => {
       [{ id: "a", before: "deployable", after: "needs_setup" }],
     );
     expect(md).toContain("Deployable first try | 33.3%");
+    expect(md).toContain("The target is 50.0%");
     expect(md).toContain("Regressions vs baseline");
     expect(md).toContain("fastapi(backend) [postgres]");
     expect(md).toContain("`d` clone_failed");

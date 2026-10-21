@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { PlanService } from "@shipfix/contracts";
 import { createRenderAdapter } from "../src/index";
-import { envSpecificDetails, renderRuntime } from "../src/render";
+import { envSpecificDetails, renderBuildRoot, renderRuntime } from "../src/render";
 
 const service: PlanService = {
   id: "api",
@@ -445,6 +445,37 @@ describe("createRenderAdapter", () => {
       const svc: PlanService = { ...service, type: "docker_service", install: null, build: null, start: null };
       expect(renderRuntime(svc)).toBe("docker");
       expect(envSpecificDetails(input(svc))).toEqual({ dockerfilePath: "./Dockerfile", dockerContext: "." });
+      expect(renderBuildRoot(input(svc))).toBe("apps/api");
+    });
+
+    it("builds a parent Dockerfile from the repo root so the subfolder stays in the context", () => {
+      const svc: PlanService = {
+        ...service,
+        type: "docker_service",
+        rootDir: "server",
+        dockerfilePath: "Dockerfile",
+        dockerContext: "",
+        install: null,
+        build: null,
+        start: null,
+      };
+      expect(envSpecificDetails(input(svc))).toEqual({ dockerfilePath: "./Dockerfile", dockerContext: "." });
+      expect(renderBuildRoot(input(svc))).toBeUndefined();
+    });
+
+    it("points Render at a Dockerfile that lives in a subfolder of the repo root", () => {
+      const svc: PlanService = {
+        ...service,
+        type: "docker_service",
+        rootDir: "",
+        dockerfilePath: "docker/Dockerfile",
+        dockerContext: "",
+        install: null,
+        build: null,
+        start: null,
+      };
+      expect(envSpecificDetails(input(svc))).toEqual({ dockerfilePath: "./docker/Dockerfile", dockerContext: "." });
+      expect(renderBuildRoot(input(svc))).toBeUndefined();
     });
 
     it("refuses a Python service with no start command", async () => {

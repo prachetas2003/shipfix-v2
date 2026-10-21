@@ -39,6 +39,8 @@ export function supabaseProjectQuestion(blocksServiceIds: string[]): PlanQuestio
     id: SUPABASE_PROJECT_QUESTION_ID,
     prompt:
       "Which Supabase project does this app use? Enter its project ref (the part before .supabase.co in the project URL).",
+    help: "Supabase → Project Settings → General → Reference ID.",
+    helpUrl: "https://supabase.com/dashboard/project/_/settings/general",
     kind: "choice",
     blocksServiceIds,
   };

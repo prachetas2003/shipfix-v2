@@ -20,6 +20,8 @@ export {
   type ProductionEnvValidation,
 } from "./productionEnv.js";
 
+export { INPUTS_SUBMITTED_SIGNAL } from "./signals";
+
 export const TASK_QUEUE = "shipfix";
 
 /**

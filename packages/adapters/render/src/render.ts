@@ -188,10 +188,30 @@ function isWorker(service: PlanService): boolean {
   return service.type === "worker";
 }
 
+/**
+ * Paths are relative to Render's rootDir. An in-folder Dockerfile uses the
+ * service root. A Dockerfile that lives above the service uses its build
+ * context (often the repo root) so COPY can see the subfolder.
+ */
+export function renderBuildRoot(input: DeployInput): string | undefined {
+  if (renderRuntime(input.service) === "docker" && input.service.dockerfilePath) {
+    return input.service.dockerContext || undefined;
+  }
+  return input.rootDir || undefined;
+}
+
 /** Paths are relative to the service rootDir, which Render uses as the build root. */
 export function envSpecificDetails(input: DeployInput): Record<string, string> {
   const runtime = renderRuntime(input.service);
-  if (runtime === "docker") return { dockerfilePath: "./Dockerfile", dockerContext: "." };
+  if (runtime === "docker") {
+    const file = input.service.dockerfilePath;
+    if (!file) return { dockerfilePath: "./Dockerfile", dockerContext: "." };
+    const context = input.service.dockerContext;
+    return {
+      dockerfilePath: file.startsWith("./") ? file : `./${file}`,
+      dockerContext: !context ? "." : context.startsWith("./") ? context : `./${context}`,
+    };
+  }
   if (runtime === "python") {
     const install = input.service.install?.trim() || "pip install -r requirements.txt";
     const build = input.service.build?.trim();
@@ -213,7 +233,7 @@ function buildCreateBody(input: DeployInput, ownerId: string, name: string): Rec
     ownerId,
     repo: `https://github.com/${input.repo.fullName}`,
     branch: input.repo.branch,
-    rootDir: input.rootDir || undefined,
+    rootDir: renderBuildRoot(input),
     // ShipFix owns deploys (pinned commits, verification after each one); a
     // provider-side push trigger would race it with unverified builds.
     autoDeploy: "no",
@@ -229,7 +249,7 @@ function buildCreateBody(input: DeployInput, ownerId: string, name: string): Rec
 
 function buildUpdateBody(input: DeployInput): Record<string, unknown> {
   return {
-    rootDir: input.rootDir || undefined,
+    rootDir: renderBuildRoot(input),
     autoDeploy: "no",
     branch: input.repo.branch,
     serviceDetails: {

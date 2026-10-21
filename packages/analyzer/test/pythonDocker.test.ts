@@ -217,4 +217,116 @@ describe("Dockerfile services", () => {
     expect(ctx.services[0].role).toBe("unknown");
     expect(synthesizeDeterministicPlan(ctx)).toBeNull();
   });
+
+  it("attaches a root Dockerfile that copies one backend subfolder to that service", async () => {
+    const ctx = await analyze({
+      ...viteWeb,
+      "server/requirements.txt": "fastapi==0.110\nuvicorn[standard]\n",
+      "server/app/main.py": "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef h():\n  return {'ok': True}\n",
+      "ai/model.py": "x = 1\n",
+      Dockerfile: "FROM python:3.12\nCOPY server /app\nCOPY ai /app/ai\nWORKDIR /app\nEXPOSE 8000\nCMD uvicorn app.main:app --host 0.0.0.0 --port 8000\n",
+    });
+    expect(ctx.services.map((s) => s.language)).not.toContain("docker");
+    const server = ctx.services.find((s) => s.rootDir === "server");
+    expect(server).toMatchObject({
+      language: "python",
+      role: "backend",
+      hasDockerfile: true,
+      dockerfilePath: "Dockerfile",
+      dockerContext: "",
+    });
+    const plan = synthesizeDeterministicPlan(ctx);
+    expect(plan?.services.find((s) => s.id === "api")).toMatchObject({
+      type: "docker_service",
+      rootDir: "server",
+      dockerfilePath: "Dockerfile",
+      dockerContext: "",
+      install: null,
+      start: null,
+    });
+    const res = validatePlan(plan!, ctx, caps);
+    expect(res.issues.filter((i) => i.severity === "fatal")).toEqual([]);
+    expect(res.plan.classification).toBe("deployable");
+  });
+
+  it("treats a compose file next to that Dockerfile as the local stack", async () => {
+    const ctx = await analyze({
+      ...viteWeb,
+      "docker-compose.yml": "services:\n  api:\n    build: .\n    ports: ['8000:8000']\n",
+      "server/requirements.txt": "fastapi\nuvicorn\n",
+      "server/main.py": "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef h():\n  return {'ok': True}\n",
+      Dockerfile: "FROM python:3.12\nCOPY server /app\nEXPOSE 8000\nCMD uvicorn main:app --host 0.0.0.0 --port 8000\n",
+    });
+    expect(ctx.services.some((s) => s.framework === "docker-compose")).toBe(false);
+    const plan = synthesizeDeterministicPlan(ctx);
+    expect(plan?.services.find((s) => s.id === "api")).toMatchObject({
+      type: "docker_service",
+      rootDir: "server",
+      dockerfilePath: "Dockerfile",
+    });
+    expect(validatePlan(plan!, ctx, caps).issues.filter((i) => i.severity === "fatal")).toEqual([]);
+  });
+
+  it("uses a Dockerfile in a subfolder when its build context is the repo root", async () => {
+    const ctx = await analyze({
+      "requirements.txt": "fastapi\nuvicorn\n",
+      "app/main.py": "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef h():\n  return {'ok': True}\n",
+      "docker/Dockerfile": "FROM python:3.12\nCOPY requirements.txt .\nCOPY . .\nEXPOSE 8000\nCMD uvicorn app.main:app --host 0.0.0.0 --port 8000\n",
+    });
+    expect(ctx.services.map((s) => s.language)).toEqual(["python"]);
+    expect(ctx.services[0]).toMatchObject({
+      rootDir: "",
+      dockerfilePath: "docker/Dockerfile",
+      dockerContext: "",
+    });
+    const plan = synthesizeDeterministicPlan(ctx);
+    expect(plan?.services[0]).toMatchObject({
+      type: "docker_service",
+      rootDir: "",
+      dockerfilePath: "docker/Dockerfile",
+      dockerContext: "",
+    });
+    expect(validatePlan(plan!, ctx, caps).issues.filter((i) => i.severity === "fatal")).toEqual([]);
+  });
+
+  it("keeps the frontend when a backend Dockerfile's context is the repo root", async () => {
+    const ctx = await analyze({
+      ...viteWeb,
+      "requirements.txt": "fastapi\nuvicorn\n",
+      "backend/main.py": "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef h():\n  return {'ok': True}\n",
+      "backend/Dockerfile": "FROM python:3.12\nCOPY requirements.txt .\nCOPY backend/ backend/\nEXPOSE 8000\nCMD uvicorn backend.main:app\n",
+    });
+    expect(ctx.services.some((s) => s.language === "docker")).toBe(false);
+    expect(ctx.services.find((s) => s.rootDir === "")).toMatchObject({
+      dockerfilePath: "backend/Dockerfile",
+      dockerContext: "",
+    });
+    const plan = synthesizeDeterministicPlan(ctx);
+    expect(plan?.services.find((s) => s.id === "api")).toMatchObject({ type: "docker_service", rootDir: "" });
+    expect(plan?.services.find((s) => s.id === "web")?.type).toBe("frontend_static");
+    expect(validatePlan(plan!, ctx, caps).issues.filter((i) => i.severity === "fatal")).toEqual([]);
+  });
+
+  it("does not let a port-less Dockerfile take over the backend it copies", async () => {
+    const ctx = await analyze({
+      "server/requirements.txt": "fastapi\nuvicorn\n",
+      "server/app.py": "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef h():\n  return 'ok'\n",
+      Dockerfile: "FROM python:3.12\nCOPY server /app\nCMD uvicorn app:app\n",
+    });
+    const server = ctx.services.find((s) => s.rootDir === "server");
+    expect(server?.dockerfilePath).toBeUndefined();
+    expect(server?.hasDockerfile).toBe(false);
+    expect(ctx.services.some((s) => s.language === "docker" && s.role === "unknown")).toBe(true);
+  });
+
+  it("keeps a separate image when the Dockerfile copies more than one service", async () => {
+    const ctx = await analyze({
+      ...viteWeb,
+      "server/requirements.txt": "fastapi\nuvicorn\n",
+      "server/app.py": "from fastapi import FastAPI\napp = FastAPI()\n",
+      Dockerfile: "FROM python:3.12\nCOPY server /app\nCOPY web /web\nEXPOSE 8000\nCMD uvicorn app:app\n",
+    });
+    expect(ctx.services.filter((s) => s.role === "backend").map((s) => s.rootDir).sort()).toEqual(["", "server"]);
+    expect(synthesizeDeterministicPlan(ctx)).toBeNull();
+  });
 });

@@ -11,7 +11,7 @@ import type {
   VerificationCheck,
   WiringEdge,
 } from "@shipfix/contracts";
-import { isVercelSsrFramework } from "@shipfix/contracts";
+import { isVercelSsrFramework, settingGuide } from "@shipfix/contracts";
 import { normalizeRoutePath, topHealthCandidate } from "@shipfix/validator";
 import { SUPABASE_INTEGRATION_ID, supabaseFieldFor, supabaseProjectQuestion } from "./supabaseEnv";
 
@@ -96,6 +96,8 @@ const HEALTH_PATH_RE = /health|healthz|ready|readyz|status|live|ping/i;
 const API_URL_RE = /^(VITE_|REACT_APP_|PUBLIC_)?\w*(API|BACKEND|SERVER)\w*_(URL|ORIGIN|BASE|BASE_URL|HOST|ENDPOINT)$/i;
 const STORAGE_ENV_RE = /^(AWS_|S3_|R2_|MINIO_)|_(S3|R2|BUCKET)(_|$)|BUCKET|STORAGE_(ENDPOINT|KEY|SECRET|REGION)/;
 const FRONTEND_ORIGIN_RE = /^\w*(CORS|FRONTEND|CLIENT|WEB|ALLOWED)\w*_(ORIGINS?|URLS?)$/i;
+const OAUTH_CLIENT_RE =
+  /^(GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET|GITHUB_CLIENT_ID|GITHUB_CLIENT_SECRET|DISCORD_CLIENT_ID|AUTH0_CLIENT_ID|AUTH0_SECRET|NEXTAUTH_SECRET|NEXTAUTH_URL|CLERK_SECRET_KEY|NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY)$/;
 
 function pmCommand(signal: ServiceSignal, kind: "install" | "build" | "start"): string {
   const pm = ["npm", "pnpm", "yarn", "bun"].includes(signal.packageManager)
@@ -111,6 +113,9 @@ function pmCommand(signal: ServiceSignal, kind: "install" | "build" | "start"): 
  * without a run command and Docker without a declared port stay out of slice.
  */
 function backendRuntime(s: ServiceSignal): "node_api" | "python_api" | "docker_service" | null {
+  // A Dockerfile above this folder is the recipe that copies it. A native pip
+  // or npm start would ship the subfolder without the rest of that image.
+  if (s.dockerfilePath && s.role === "backend") return "docker_service";
   if (s.language === "node") return "node_api";
   if (s.language === "python" && s.role === "backend") {
     if (s.inferredRun) return "python_api";
@@ -295,11 +300,14 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
 
   const askSecret = (name: string, serviceId: string, prompt: string): EnvVar => {
     needsSetup = true;
+    const guide = settingGuide(name);
     questions.push({
       id: `secret-${serviceId}-${name}`,
       prompt,
       kind: "secret",
       blocksServiceIds: [serviceId],
+      help: guide.help,
+      ...(guide.helpUrl ? { helpUrl: guide.helpUrl } : {}),
     });
     return { name, source: "user_secret" };
   };
@@ -425,6 +433,9 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
       type: runtime,
       provider: "render",
       rootDir: backend.rootDir,
+      ...(runtime === "docker_service" && backend.dockerfilePath
+        ? { dockerfilePath: backend.dockerfilePath, dockerContext: backend.dockerContext ?? "" }
+        : {}),
       ...(runtime === "node_api" ? {} : { framework: backend.framework }),
       ...commands,
       outputDir: null,
@@ -631,6 +642,19 @@ export function synthesizeDeterministicPlan(ctx: RepoContext): DeploymentPlan | 
       action: "Make sure your Render account has billing set up before deploying.",
       autoFixable: false,
       evidence: workerServices.flatMap((s) => s.evidence),
+    });
+  }
+
+  const oauth = ctx.envRefs.filter((r) => OAUTH_CLIENT_RE.test(r.name));
+  if (oauth.length > 0) {
+    blockers.push({
+      severity: "warning",
+      title: "Register the live site as an OAuth redirect",
+      explanation:
+        "This app signs users in with a provider that only accepts redirect URLs you register in advance. After the first deploy, add the live site URL (and its callback path) to that provider. A localhost redirect will reject sign-in on the deployed app.",
+      action: "Open the provider's dashboard and add the deployed URL once ShipFix shows it.",
+      autoFixable: false,
+      evidence: [...new Set(oauth.map((r) => r.name))].slice(0, 6),
     });
   }
 

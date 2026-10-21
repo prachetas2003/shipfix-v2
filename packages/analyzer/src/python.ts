@@ -1,7 +1,7 @@
 import type { RouteCandidate, ServiceSignal } from "@shipfix/contracts";
 import type { RepoSource } from "./source";
 import { scoreRoutePath } from "./routes";
-import { baseOf, isUnder, joinRoot, MAX_SCAN_BYTES } from "./util";
+import { baseOf, dirOf, isUnder, joinRoot, MAX_SCAN_BYTES } from "./util";
 
 export interface PythonRunInference {
   inferredRun?: ServiceSignal["inferredRun"];
@@ -62,7 +62,25 @@ function candidateFiles(rootDir: string, files: ReadonlySet<string>): string[] {
 }
 
 function hasRequirement(requirements: string, name: string): boolean {
-  return new RegExp(`^\\s*${name}\\b`, "im").test(requirements);
+  return new RegExp(`(?:^|[\\s'"\\[,])${name}\\b`, "im").test(requirements);
+}
+
+/**
+ * How to install this service's Python dependencies. requirements.txt stays on
+ * pip. A uv lock or a PEP 621 pyproject is exported to a requirements file
+ * first, because Render's Python runtime runs pip, not uv, and the start
+ * command needs the packages on its PATH. The local project is not installed:
+ * these are apps, not libraries.
+ */
+function pythonInstall(rootDir: string, files: ReadonlySet<string>, manifest: string, extraPackages: string[]): string | null {
+  const has = (name: string): boolean => files.has(joinRoot(rootDir, name));
+  const extras = extraPackages.length ? ` ${extraPackages.join(" ")}` : "";
+  if (has("requirements.txt")) return `pip install -r requirements.txt${extras}`;
+  const locked = has("uv.lock");
+  const projectDeps = /^\[project\]/m.test(manifest) && /^\s*dependencies\s*=/m.test(manifest);
+  if (!locked && !projectDeps) return null;
+  const frozen = locked ? " --frozen" : "";
+  return `pip install uv && uv export${frozen} --no-dev --no-emit-project -o requirements.txt && pip install -r requirements.txt${extras}`;
 }
 
 function lineOf(content: string, index: number): number {
@@ -212,7 +230,7 @@ async function releaseCommand(
 /**
  * Derive how a Python web service is installed and started from code evidence,
  * plus the routes it serves. Never guesses: no requirements.txt or no
- * recognizable entry point means no inferredRun.
+ * recognizable entry point, or no installable manifest, means no inferredRun.
  */
 export async function inferPythonRun(
   source: RepoSource,
@@ -221,7 +239,6 @@ export async function inferPythonRun(
   framework: string,
   requirements: string,
 ): Promise<PythonRunInference> {
-  const hasRequirements = files.has(joinRoot(rootDir, "requirements.txt"));
   const read = async (file: string): Promise<string> => ((await source.readFile(file)) ?? "").slice(0, MAX_SCAN_BYTES);
 
   let start: string | null = null;
@@ -317,8 +334,8 @@ export async function inferPythonRun(
     }
   }
 
-  if (!start || !hasRequirements) return { routeCandidates };
-  const install = ["pip install -r requirements.txt", ...extraPackages].join(" ");
+  const install = pythonInstall(rootDir, files, requirements, extraPackages);
+  if (!start || !install) return { routeCandidates };
   const release = await releaseCommand(files, rootDir, read, requirements, procfile, django);
   if (release) evidence.push(release.evidence);
   return { inferredRun: { install, start, ...(release ? { release: release.command } : {}), evidence }, routeCandidates };
@@ -349,4 +366,168 @@ export async function dockerfileMigrates(
 /** True when a Dockerfile declares the port its container listens on. */
 export function dockerfileExposes(content: string): string | null {
   return /^\s*EXPOSE\s+(\d+)/im.exec(content)?.[1] ?? null;
+}
+
+function resolveInRepo(baseDir: string, rel: string): string | null {
+  const combined = baseDir ? `${baseDir}/${rel}` : rel;
+  const out: string[] = [];
+  for (const seg of combined.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (out.length === 0) return null;
+      out.pop();
+    } else out.push(seg);
+  }
+  return out.join("/");
+}
+
+/** Whitespace-split a Docker instruction, keeping quoted arguments together. */
+function splitDockerArgs(rest: string): string[] | null {
+  const args: string[] = [];
+  let cur = "";
+  let quote: '"' | "'" | null = null;
+  for (const ch of rest) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else cur += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (cur) args.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  if (quote) return null;
+  if (cur) args.push(cur);
+  return args;
+}
+
+/**
+ * Build-context paths a Dockerfile COPY/ADD uses, relative to the Dockerfile's
+ * directory. Null when a source can't be resolved (variables, globs, absolute
+ * paths) so the caller refuses to guess which service the image builds.
+ * `--from` copies and remote ADD URLs are ignored.
+ */
+export function dockerfileCopySources(content: string): string[] | null {
+  const sources: string[] = [];
+  for (const raw of content.replace(/\\\r?\n/g, " ").split(/\r?\n/)) {
+    const line = raw.replace(/\s+#.*$/, "").trim();
+    const m = /^(COPY|ADD)\b(.*)$/i.exec(line);
+    if (!m) continue;
+    let rest = m[2]!.trim();
+    if (/^--from=/i.test(rest) || /^<</.test(rest)) continue;
+    while (rest.startsWith("--")) {
+      const flag = /^(--\S+)(?:\s+|$)/.exec(rest);
+      if (!flag) return null;
+      rest = rest.slice(flag[0].length).trim();
+    }
+    if (!rest) continue;
+    let args: string[];
+    if (rest.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(rest) as unknown;
+        if (!Array.isArray(parsed) || !parsed.every((x) => typeof x === "string")) return null;
+        args = parsed as string[];
+      } catch {
+        return null;
+      }
+    } else {
+      const split = splitDockerArgs(rest);
+      if (!split) return null;
+      args = split;
+    }
+    if (args.length < 2) return null;
+    for (const src of args.slice(0, -1)) {
+      if (/^(https?:|git:)/i.test(src)) continue;
+      if (src.includes("$") || src.includes("*") || src.startsWith("/")) return null;
+      sources.push(src);
+    }
+  }
+  return sources;
+}
+
+function pathExists(files: ReadonlySet<string>, abs: string): boolean {
+  if (abs === "" || files.has(abs)) return true;
+  const prefix = `${abs}/`;
+  for (const file of files) {
+    if (file.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+/**
+ * Directory the image is built from. Defaults to the Dockerfile's folder.
+ * A Dockerfile under `docker/` or `backend/` often copies the repo root
+ * (`COPY requirements.txt`, `COPY . .`) while being built with `-f` from the
+ * parent. Use the nearest directory where every copied path exists.
+ */
+function dockerfileBuildContext(
+  dockerfile: string,
+  sources: readonly string[],
+  files: ReadonlySet<string>,
+): string | null {
+  const candidates: string[] = [];
+  let dir = dirOf(dockerfile);
+  for (;;) {
+    candidates.push(dir);
+    if (dir === "") break;
+    dir = dirOf(dir);
+  }
+  for (const context of candidates) {
+    const ok = sources.every((src) => {
+      if (src === "." || src === "./") return true;
+      const abs = resolveInRepo(context, src);
+      return abs !== null && pathExists(files, abs);
+    });
+    if (ok) return context;
+  }
+  return null;
+}
+
+function sourceTouchesService(abs: string, root: string, serviceRoots: readonly string[]): boolean {
+  if (root === "") {
+    return !serviceRoots.some(
+      (other) => other !== "" && (abs === other || abs.startsWith(`${other}/`)),
+    );
+  }
+  return abs === root || abs.startsWith(`${root}/`) || root.startsWith(`${abs}/`);
+}
+
+/**
+ * The single service a Dockerfile builds when its COPY paths belong to one
+ * service and the Dockerfile is not that service's own file. Returns null
+ * when the image copies nothing, several services, or a path we can't resolve.
+ */
+export function dockerfileSubdirTarget(
+  dockerfile: string,
+  content: string,
+  serviceRoots: readonly string[],
+  files: ReadonlySet<string>,
+): { serviceRoot: string; context: string } | null {
+  const sources = dockerfileCopySources(content);
+  if (!sources || sources.length === 0) return null;
+  const context = dockerfileBuildContext(dockerfile, sources, files);
+  if (context === null) return null;
+  const touched = new Set<string>();
+  for (const src of sources) {
+    const abs = resolveInRepo(context, src);
+    if (abs === null) return null;
+    const coversAll = abs === context;
+    for (const root of serviceRoots) {
+      const inContext = context === "" || root === context || root.startsWith(`${context}/`);
+      if (!inContext) continue;
+      if (coversAll || sourceTouchesService(abs, root, serviceRoots)) touched.add(root);
+    }
+  }
+  if (touched.size !== 1) return null;
+  const serviceRoot = [...touched][0]!;
+  // The service's own Dockerfile is handled by the normal docker/python paths.
+  if (dirOf(dockerfile) === serviceRoot) return null;
+  return { serviceRoot, context };
 }

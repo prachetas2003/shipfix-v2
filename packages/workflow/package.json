@@ -20,6 +20,7 @@
     "@shipfix/adapter-render": "workspace:*",
     "@shipfix/adapter-vercel": "workspace:*",
     "@shipfix/analyzer": "workspace:*",
+    "@shipfix/autofix": "workspace:*",
     "@shipfix/contracts": "workspace:*",
     "@shipfix/db": "workspace:*",
     "@shipfix/github": "workspace:*",

@@ -87,6 +87,42 @@ describe("Django", () => {
     expect(codes).not.toContain("migration_required");
   });
 
+  it("installs a uv-locked Django app that has no requirements.txt", async () => {
+    const nested = Object.fromEntries(
+      Object.entries(djangoRepo(ENV_SETTINGS))
+        .filter(([f]) => f !== "requirements.txt")
+        .map(([f, v]) => [`artifacts/valo-pay/${f}`, v]),
+    );
+    const ctx = await analyze({
+      "pyproject.toml": '[project]\nname = "repl-nix-workspace"\ndependencies = [\n  "django>=5.2",\n  "gunicorn>=23",\n  "dj-database-url>=3",\n]\n',
+      "uv.lock": "version = 1\n",
+      ...nested,
+    });
+    const svc = ctx.services.find((s) => s.framework === "django");
+    expect(svc?.packageManager).toBe("uv");
+    expect(svc?.inferredRun?.install).toBe(
+      "pip install uv && uv export --frozen --no-dev --no-emit-project -o requirements.txt && pip install -r requirements.txt",
+    );
+    expect(svc?.inferredRun?.start).toBe(
+      "gunicorn --chdir artifacts/valo-pay mysite.wsgi:application --bind 0.0.0.0:$PORT",
+    );
+    const plan = synthesizeDeterministicPlan(ctx);
+    expect(plan?.services.find((s) => s.id === "api")?.type).toBe("python_api");
+    expect(validatePlan(plan!, ctx, caps).issues.filter((i) => i.severity === "fatal")).toEqual([]);
+  });
+
+  it("exports an unlocked pyproject with uv before pip install", async () => {
+    const ctx = await analyze({
+      "pyproject.toml": '[project]\nname = "api"\ndependencies = ["fastapi", "uvicorn"]\n',
+      "app/main.py": "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef h():\n  return {'ok': True}\n",
+    });
+    expect(ctx.services[0]?.packageManager).toBe("uv");
+    expect(ctx.services[0]?.inferredRun?.install).toBe(
+      "pip install uv && uv export --no-dev --no-emit-project -o requirements.txt && pip install -r requirements.txt",
+    );
+    expect(synthesizeDeterministicPlan(ctx)?.services[0]?.type).toBe("python_api");
+  });
+
   it("finds a Django project nested below the root requirements (Replit layout)", async () => {
     const nested = Object.fromEntries(
       Object.entries(djangoRepo(ENV_SETTINGS))
@@ -198,7 +234,10 @@ describe("Alembic", () => {
     });
     expect(ctx.services.find((s) => s.rootDir === "api")?.imageMigrates).toBe("alembic");
     const plan = DeploymentPlan.parse(synthesizeDeterministicPlan(ctx));
-    expect(plan.services.find((s) => s.rootDir === "api")?.type).toBe("docker_service");
+    const api = plan.services.find((s) => s.rootDir === "api");
+    expect(api?.type).toBe("python_api");
+    expect(api?.start).toContain("alembic upgrade head");
+    expect(api?.install).toContain("uv export --no-dev");
     expect(plan.managed.find((m) => m.kind === "postgres")?.migration).toBe("alembic");
     expect(validatePlan(plan, ctx, caps).issues.map((i) => i.code)).not.toContain("migration_required");
   });

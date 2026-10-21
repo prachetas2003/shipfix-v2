@@ -1,0 +1,699 @@
+{
+  "generatedAt": "2026-10-18T05:48:34.288Z",
+  "mode": "offline",
+  "summary": {
+    "total": 16,
+    "cloned": 16,
+    "analyzed": 16,
+    "deployableRate": 0.688,
+    "actionableRate": 0.875,
+    "diagnoseRate": 0,
+    "unplannedRate": 0.125,
+    "deterministicRate": 0.875,
+    "classifications": {
+      "deployable": 11,
+      "needs_setup": 3,
+      "diagnose_only": 0,
+      "none": 2
+    },
+    "statuses": {
+      "ok": 16
+    },
+    "topIssueCodes": [
+      {
+        "key": "question_needs_secret",
+        "count": 2
+      },
+      {
+        "key": "user_secret_required",
+        "count": 2
+      }
+    ],
+    "topSecretNames": [
+      {
+        "key": "NEXT_PUBLIC_API_URL",
+        "count": 1
+      },
+      {
+        "key": "VITE_API_URL",
+        "count": 1
+      }
+    ],
+    "medianSecretsPerSetupPlan": 1,
+    "topUncoveredShapes": [
+      {
+        "key": "docker-compose(unknown)",
+        "count": 1
+      },
+      {
+        "key": "docker(unknown)",
+        "count": 1
+      }
+    ],
+    "byCategory": [
+      {
+        "category": "fixture",
+        "total": 16,
+        "deployable": 11,
+        "actionable": 14
+      }
+    ],
+    "expectations": {
+      "checked": 5,
+      "met": 5
+    },
+    "timings": {
+      "analyzeP50Ms": 5,
+      "analyzeP95Ms": 32,
+      "totalP50Ms": 5,
+      "totalP95Ms": 33
+    }
+  },
+  "results": [
+    {
+      "id": "local:golden-fullstack",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "deployable",
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expect": "deployable",
+      "expectationMet": true,
+      "timings": {
+        "cloneMs": 1,
+        "analyzeMs": 24,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 25
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "apps/api",
+            "language": "node",
+            "framework": "express",
+            "role": "backend"
+          },
+          {
+            "rootDir": "apps/web",
+            "language": "node",
+            "framework": "vite",
+            "role": "frontend"
+          }
+        ],
+        "dataNeeds": [
+          "postgres"
+        ],
+        "monorepoTool": "pnpm_workspace",
+        "envRefCount": 3,
+        "hardcodedUrlCount": 0,
+        "fileCount": 8
+      }
+    },
+    {
+      "id": "local:golden-next",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "deployable",
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expect": "deployable",
+      "expectationMet": true,
+      "timings": {
+        "cloneMs": 1,
+        "analyzeMs": 19,
+        "planMs": 1,
+        "validateMs": 2,
+        "totalMs": 23
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "",
+            "language": "node",
+            "framework": "next",
+            "role": "fullstack"
+          }
+        ],
+        "dataNeeds": [
+          "postgres"
+        ],
+        "monorepoTool": "none",
+        "envRefCount": 1,
+        "hardcodedUrlCount": 0,
+        "fileCount": 4
+      }
+    },
+    {
+      "id": "local:golden-next-api",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "deployable",
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expect": "deployable",
+      "expectationMet": true,
+      "timings": {
+        "cloneMs": 1,
+        "analyzeMs": 25,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 26
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "apps/api",
+            "language": "node",
+            "framework": "express",
+            "role": "backend"
+          },
+          {
+            "rootDir": "apps/web",
+            "language": "node",
+            "framework": "next",
+            "role": "fullstack"
+          }
+        ],
+        "dataNeeds": [
+          "postgres"
+        ],
+        "monorepoTool": "pnpm_workspace",
+        "envRefCount": 3,
+        "hardcodedUrlCount": 0,
+        "fileCount": 7
+      }
+    },
+    {
+      "id": "local:replit-pnpm-workspace",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "deployable",
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expect": "deployable",
+      "expectationMet": true,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 32,
+        "planMs": 0,
+        "validateMs": 1,
+        "totalMs": 33
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "artifacts/api-server",
+            "language": "node",
+            "framework": "express",
+            "role": "backend"
+          },
+          {
+            "rootDir": "artifacts/shop",
+            "language": "node",
+            "framework": "vite",
+            "role": "frontend"
+          }
+        ],
+        "dataNeeds": [
+          "postgres"
+        ],
+        "monorepoTool": "pnpm_workspace",
+        "envRefCount": 5,
+        "hardcodedUrlCount": 0,
+        "fileCount": 17
+      }
+    },
+    {
+      "id": "local:lovable-supabase",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "deployable",
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expect": "deployable",
+      "expectationMet": true,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 6,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 6
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "",
+            "language": "node",
+            "framework": "vite",
+            "role": "frontend"
+          }
+        ],
+        "dataNeeds": [],
+        "monorepoTool": "none",
+        "envRefCount": 2,
+        "hardcodedUrlCount": 0,
+        "fileCount": 6
+      }
+    },
+    {
+      "id": "local:vite-frontend",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "needs_setup",
+      "issueCodes": [
+        "question_needs_secret",
+        "user_secret_required"
+      ],
+      "blockerTitles": [
+        "A secret value is required",
+        "Setup answer required"
+      ],
+      "questionCount": 1,
+      "secretNames": [
+        "VITE_API_URL"
+      ],
+      "expectationMet": null,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 5,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 5
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "",
+            "language": "node",
+            "framework": "vite",
+            "role": "frontend"
+          }
+        ],
+        "dataNeeds": [],
+        "monorepoTool": "none",
+        "envRefCount": 1,
+        "hardcodedUrlCount": 0,
+        "fileCount": 5
+      }
+    },
+    {
+      "id": "local:next-app",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "needs_setup",
+      "issueCodes": [
+        "question_needs_secret",
+        "user_secret_required"
+      ],
+      "blockerTitles": [
+        "A secret value is required",
+        "Setup answer required"
+      ],
+      "questionCount": 1,
+      "secretNames": [
+        "NEXT_PUBLIC_API_URL"
+      ],
+      "expectationMet": null,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 5,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 5
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "",
+            "language": "node",
+            "framework": "next",
+            "role": "fullstack"
+          }
+        ],
+        "dataNeeds": [],
+        "monorepoTool": "none",
+        "envRefCount": 1,
+        "hardcodedUrlCount": 0,
+        "fileCount": 4
+      }
+    },
+    {
+      "id": "local:express-backend",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "deployable",
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expectationMet": null,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 4,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 4
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "",
+            "language": "node",
+            "framework": "express",
+            "role": "backend"
+          }
+        ],
+        "dataNeeds": [],
+        "monorepoTool": "none",
+        "envRefCount": 1,
+        "hardcodedUrlCount": 0,
+        "fileCount": 3
+      }
+    },
+    {
+      "id": "local:vite-express-split",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "needs_setup",
+      "issueCodes": [],
+      "blockerTitles": [
+        "Frontend hardcodes a local URL"
+      ],
+      "questionCount": 0,
+      "secretNames": [],
+      "expectationMet": null,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 8,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 8
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "server",
+            "language": "node",
+            "framework": "express",
+            "role": "backend"
+          },
+          {
+            "rootDir": "web",
+            "language": "node",
+            "framework": "vite",
+            "role": "frontend"
+          }
+        ],
+        "dataNeeds": [],
+        "monorepoTool": "none",
+        "envRefCount": 2,
+        "hardcodedUrlCount": 1,
+        "fileCount": 7
+      }
+    },
+    {
+      "id": "local:prisma-postgres",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "deployable",
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expectationMet": null,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 4,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 4
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "",
+            "language": "node",
+            "framework": "express",
+            "role": "backend"
+          }
+        ],
+        "dataNeeds": [
+          "postgres"
+        ],
+        "monorepoTool": "none",
+        "envRefCount": 2,
+        "hardcodedUrlCount": 0,
+        "fileCount": 4
+      }
+    },
+    {
+      "id": "local:drizzle-postgres",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "deployable",
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expectationMet": null,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 3,
+        "planMs": 1,
+        "validateMs": 0,
+        "totalMs": 4
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "",
+            "language": "node",
+            "framework": "express",
+            "role": "backend"
+          }
+        ],
+        "dataNeeds": [
+          "postgres"
+        ],
+        "monorepoTool": "none",
+        "envRefCount": 1,
+        "hardcodedUrlCount": 0,
+        "fileCount": 4
+      }
+    },
+    {
+      "id": "local:pnpm-workspace",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "deployable",
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expectationMet": null,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 8,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 8
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "packages/api",
+            "language": "node",
+            "framework": "fastify",
+            "role": "backend"
+          },
+          {
+            "rootDir": "packages/web",
+            "language": "node",
+            "framework": "vite",
+            "role": "frontend"
+          }
+        ],
+        "dataNeeds": [],
+        "monorepoTool": "pnpm_workspace",
+        "envRefCount": 2,
+        "hardcodedUrlCount": 0,
+        "fileCount": 7
+      }
+    },
+    {
+      "id": "local:hardcoded-localhost",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "deployable",
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expectationMet": null,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 5,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 5
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "",
+            "language": "node",
+            "framework": "express",
+            "role": "backend"
+          }
+        ],
+        "dataNeeds": [],
+        "monorepoTool": "none",
+        "envRefCount": 1,
+        "hardcodedUrlCount": 3,
+        "fileCount": 4
+      }
+    },
+    {
+      "id": "local:fastapi-app",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "deterministic",
+      "classification": "deployable",
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expectationMet": null,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 4,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 4
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "",
+            "language": "python",
+            "framework": "fastapi",
+            "role": "backend"
+          }
+        ],
+        "dataNeeds": [],
+        "monorepoTool": "none",
+        "envRefCount": 0,
+        "hardcodedUrlCount": 0,
+        "fileCount": 2
+      }
+    },
+    {
+      "id": "local:docker-only",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "none",
+      "classification": null,
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expectationMet": null,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 3,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 3
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "",
+            "language": "docker",
+            "framework": "docker",
+            "role": "unknown"
+          }
+        ],
+        "dataNeeds": [],
+        "monorepoTool": "none",
+        "envRefCount": 0,
+        "hardcodedUrlCount": 0,
+        "fileCount": 1
+      }
+    },
+    {
+      "id": "local:docker-compose-only",
+      "category": "fixture",
+      "status": "ok",
+      "planSource": "none",
+      "classification": null,
+      "issueCodes": [],
+      "blockerTitles": [],
+      "questionCount": 0,
+      "secretNames": [],
+      "expectationMet": null,
+      "timings": {
+        "cloneMs": 0,
+        "analyzeMs": 0,
+        "planMs": 0,
+        "validateMs": 0,
+        "totalMs": 0
+      },
+      "commitSha": "0000000000000000000000000000000000000000",
+      "shape": {
+        "services": [
+          {
+            "rootDir": "",
+            "language": "docker",
+            "framework": "docker-compose",
+            "role": "unknown"
+          }
+        ],
+        "dataNeeds": [],
+        "monorepoTool": "none",
+        "envRefCount": 0,
+        "hardcodedUrlCount": 0,
+        "fileCount": 1
+      }
+    }
+  ]
+}

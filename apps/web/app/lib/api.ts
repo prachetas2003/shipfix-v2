@@ -1,7 +1,12 @@
 /** Typed client for the ShipFix control-plane API. */
 
+import { DEMO, installPublicDemo } from "./demo/publicDemo";
+
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 export const AUTH_MODE = process.env.NEXT_PUBLIC_AUTH_MODE ?? "clerk";
+export { DEMO };
+
+installPublicDemo();
 
 type TokenProvider = () => Promise<string | null>;
 let tokenProvider: TokenProvider = async () => null;
@@ -14,6 +19,20 @@ async function authHeaders(): Promise<Record<string, string>> {
   if (AUTH_MODE === "dev") return {};
   const token = await tokenProvider();
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function guardianPost(projectId: string, action: string, payload: Record<string, unknown>): Promise<{ ok: boolean; lines: string[] }> {
+  const res = await fetch(`${API_BASE}/apps/${projectId}/guardian/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 401 && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+  }
+  if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+  return { ok: body.ok !== false, lines: Array.isArray(body.lines) ? body.lines.map(String) : [] };
 }
 
 /**
@@ -186,7 +205,15 @@ export interface PlanService {
 }
 export interface PlanManaged { id: string; kind: string; mode: string; provider?: string; exposesEnv: string; migration: string }
 export interface PlanWiring { fromServiceId: string; fromField: string; toServiceId: string; toEnvName: string }
-export interface PlanQuestion { id: string; prompt: string; kind: string; options?: string[]; default?: string }
+export interface PlanQuestion {
+  id: string;
+  prompt: string;
+  kind: string;
+  options?: string[];
+  default?: string;
+  help?: string;
+  helpUrl?: string;
+}
 export interface PlanBlocker { severity: string; title: string; explanation: string; action: string }
 export interface PlanVerification {
   serviceId: string;
@@ -266,6 +293,94 @@ export const api = {
     }
     if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
     return body.runId as string;
+  },
+
+  async guardianCheck(projectId: string): Promise<{
+    ok: boolean;
+    lines: string[];
+    alertSent: boolean;
+  }> {
+    const res = await fetch(`${API_BASE}/apps/${projectId}/guardian/check`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return { ok: Boolean(body.ok), lines: Array.isArray(body.lines) ? body.lines.map(String) : [], alertSent: Boolean(body.alertSent) };
+  },
+
+  async guardianCap(projectId: string, capCents: number | null): Promise<{ capCents: number | null }> {
+    const res = await fetch(`${API_BASE}/apps/${projectId}/guardian/cap`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ capCents }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return { capCents: body.capCents == null ? null : Number(body.capCents) };
+  },
+
+  async guardianBills(projectId: string): Promise<{
+    lines: string[];
+    spike: boolean;
+    over: boolean;
+    alertSent: boolean;
+    capCents: number | null;
+  }> {
+    const res = await fetch(`${API_BASE}/apps/${projectId}/guardian/bills`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return {
+      lines: Array.isArray(body.lines) ? body.lines.map(String) : [],
+      spike: Boolean(body.spike),
+      over: Boolean(body.over),
+      alertSent: Boolean(body.alertSent),
+      capCents: body.capCents == null ? null : Number(body.capCents),
+    };
+  },
+
+  async guardianBackup(projectId: string): Promise<{ ok: boolean; lines: string[] }> {
+    return guardianPost(projectId, "backup", {});
+  },
+
+  async guardianRestore(projectId: string, confirm: string, branchName: string): Promise<{ ok: boolean; lines: string[] }> {
+    return guardianPost(projectId, "restore", { confirm, branchName });
+  },
+
+  async guardianDomain(projectId: string, hostname: string): Promise<{ ok: boolean; lines: string[] }> {
+    return guardianPost(projectId, "domain", { hostname });
+  },
+
+  async guardianTeardown(projectId: string, confirm: string): Promise<{ ok: boolean; lines: string[] }> {
+    return guardianPost(projectId, "teardown", { confirm });
+  },
+
+  async guardianRollback(projectId: string): Promise<{ runId: string; commitSha: string }> {
+    const res = await fetch(`${API_BASE}/apps/${projectId}/guardian/rollback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return { runId: body.runId as string, commitSha: body.commitSha as string };
   },
 
   async redeployLatest(projectId: string): Promise<{ runId: string; commitSha: string; branch: string }> {
@@ -373,6 +488,62 @@ export const api = {
 
   async deleteProjectEnv(projectId: string, name: string): Promise<void> {
     const res = await fetch(`${API_BASE}/apps/${projectId}/env/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+      headers: { ...(await authHeaders()) },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+  },
+
+  listGithubRepos: () =>
+    getJson<{
+      configured: boolean;
+      repos: Array<{ fullName: string; private: boolean; defaultBranch: string }>;
+    }>("/github/repos"),
+
+  listOauthProviders: () => getJson<{ providers: string[] }>("/providers/oauth"),
+
+  async startProviderOauth(
+    provider: string,
+    redirectUri: string,
+  ): Promise<{ authorizeUrl: string; state: string; verifier?: string }> {
+    const res = await fetch(`${API_BASE}/providers/${encodeURIComponent(provider)}/oauth/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ redirectUri }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return body as { authorizeUrl: string; state: string; verifier?: string };
+  },
+
+  async finishProviderOauth(input: {
+    code: string;
+    state: string;
+    redirectUri: string;
+    verifier?: string;
+  }): Promise<{ provider: string }> {
+    const res = await fetch(`${API_BASE}/providers/oauth/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify(input),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shipfix-auth-required"));
+    }
+    if (!res.ok) throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    return body as { provider: string };
+  },
+
+  async disconnectProvider(provider: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/provider-accounts/${encodeURIComponent(provider)}`, {
       method: "DELETE",
       headers: { ...(await authHeaders()) },
     });

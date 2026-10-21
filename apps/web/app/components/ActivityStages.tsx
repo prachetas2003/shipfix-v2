@@ -22,6 +22,7 @@ function stageIndex(status: string): number {
     analyzing: 1,
     planning: 2,
     validating: 2,
+    awaiting_input: 2,
     provisioning: 3,
     deploying: 4,
     verifying: 5,

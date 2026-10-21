@@ -49,7 +49,7 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
       return {
         title: "Usage limit reached",
         detail: str(d.message) ??
-          "You've reached the alpha usage limit. Try again later, or raise the local alpha limits while testing.",
+          "This account has reached its usage limit. Try again later.",
         tone: "warn",
       };
     case "llm_unavailable":
@@ -341,6 +341,70 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
         tone: "warn",
       };
     }
+    case "question":
+      return {
+        title: "Answer needed to continue",
+        detail: [ev.message, str(d.help)].filter(Boolean).join(" "),
+        tone: "warn",
+        url: str(d.helpUrl),
+      };
+    case "input_wait_expired":
+      return {
+        title: "Deploy stopped waiting",
+        detail: "No answer arrived in 7 days. Answer the questions, then start a new deploy.",
+        tone: "warn",
+      };
+    case "repair_started":
+      return {
+        title: `Fixing the ${role === "service" ? "service" : role}`,
+        detail: "ShipFix is reading the failure and testing a fix in a sandbox before anything changes in your repo.",
+        tone: "progress",
+      };
+    case "repair_attempt": {
+      const outcome = str(d.outcome);
+      const source = str(d.source) === "rule" ? "Known fix" : "AI fix";
+      if (outcome === "passed") return { title: `${source} passed the sandbox build`, detail: str(d.detail) ?? ev.message, tone: "success" };
+      if (outcome === "progress") return { title: `${source} got further`, detail: str(d.detail) ?? ev.message, tone: "info" };
+      return { title: `${source} didn't work, trying again`, detail: str(d.detail) ?? ev.message, tone: "info" };
+    }
+    case "repair_verified":
+      return {
+        title: str(d.title) ?? "Found a tested fix",
+        detail: str(d.explanation) ?? ev.message,
+        tone: "success",
+      };
+    case "repair_pushed":
+      return {
+        title: "Fix pushed to a ShipFix branch",
+        detail: `Redeploying from "${str(d.branch) ?? "the fix branch"}". Your main branch is untouched.`,
+        tone: "progress",
+        url: str(d.url),
+      };
+    case "repair_pr_opened":
+      return {
+        title: `Pull request #${str(d.number) ?? ""} ${d.created === false ? "updated" : "opened"}`,
+        detail: "Review and merge it to keep the fix. Close it to undo; the next deploy goes back to your main branch.",
+        tone: "success",
+        url: str(d.url),
+      };
+    case "repair_pr_unavailable":
+      return {
+        title: "Open the pull request to keep the fix",
+        detail: "The fix is on a ShipFix branch, but ShipFix couldn't open the pull request. Use the link to open it in one click.",
+        tone: "warn",
+        url: str(d.url),
+      };
+    case "repair_push_unavailable":
+      return {
+        title: "Tested fix ready to apply",
+        detail: "ShipFix can't push to this repo, so the tested change is shown below for you to apply.",
+        tone: "warn",
+      };
+    case "repair_needs_user":
+      return { title: "ShipFix needs something from you", detail: str(d.message) ?? ev.message, tone: "warn" };
+    case "repair_gave_up":
+    case "repair_failed":
+      return { title: "Couldn't fix this automatically", detail: humanizeRawMessage(ev.message), tone: "warn" };
     case "deploy_skipped":
       return { title: "Step skipped", detail: humanizeRawMessage(ev.message), tone: "info" };
     case "deploy_failed": {

@@ -103,6 +103,14 @@ export const projects = pgTable(
     githubInstallationId: text("github_installation_id"),
     /** Denormalized snapshot of the last good deployment graph (for dashboard). */
     liveGraph: jsonb("live_graph"),
+    /** Spend cap in cents. Null means no cap. Covers measured costs only. */
+    spendCapCents: integer("spend_cap_cents"),
+    /** free or guardian. Agency is not stored. */
+    plan: text("plan").notNull().default("free"),
+    stripeCustomerId: text("stripe_customer_id"),
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    /** active, trialing, past_due, canceled, or null before any checkout. */
+    subscriptionStatus: text("subscription_status"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -117,6 +125,9 @@ export const runs = pgTable("runs", {
     .notNull()
     .references(() => projects.id, { onDelete: "cascade" }),
   commitSha: text("commit_sha").notNull(),
+  /** Set when ShipFix pushed a verified fix: providers deploy this branch/commit instead. */
+  deployBranch: text("deploy_branch"),
+  deploySha: text("deploy_sha"),
   trigger: text("trigger").notNull(), // 'manual' | 'push' | 'retry'
   mode: text("mode").notNull(), // 'analyze_only' | 'deploy'
   status: text("status").notNull(), // mirrors RunStage in @shipfix/contracts

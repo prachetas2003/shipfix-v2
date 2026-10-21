@@ -14,7 +14,9 @@
   },
   "dependencies": {
     "@shipfix/adapter-core": "workspace:*",
-    "@shipfix/contracts": "workspace:*"
+    "@shipfix/contracts": "workspace:*",
+    "@shipfix/llm": "workspace:*",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

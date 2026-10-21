@@ -19,13 +19,30 @@ import {
   ownedGithubInstallationIds,
 } from "@shipfix/db";
 import { createSafePostgresSink, createRunLogger } from "@shipfix/observability";
-import { reconcileStuckRuns, revalidatePlanForRun, type WorkflowLiveness } from "@shipfix/workflow";
-import { preflightProviderCredentials } from "@shipfix/adapter-core";
+import { checkoutForm, guardianEntitled, PLAN_OFFERS, subscriptionFromEvent, verifyStripeSignature, type SubscriptionUpdate } from "@shipfix/billing";
+import { incidentText, notifySlack, probeHealth, rollbackCommit, runCostCents, summarizeCheck, ONE_ENVIRONMENT_NOTE, attachHostname, backupTarget, deleteProviderResource, domainTarget, planTeardown, validHostname, type OwnedResource, type ProbeTarget } from "@shipfix/guardian";
+import { NEON_BACKUP_PREFIX, createSupabaseRestorePoint, restoreNeonBranch, snapshotNeonDatabase } from "@shipfix/provisioner";
+import { readGuardianBills } from "./guardianBills";
+import { INPUTS_SUBMITTED_SIGNAL, reconcileStuckRuns, revalidatePlanForRun, type WorkflowLiveness } from "@shipfix/workflow";
+import {
+  allowedOauthRedirect,
+  authorizeUrl,
+  createPkce,
+  exchangeOauthCode,
+  loadOauthApp,
+  loadOauthApps,
+  peekOauthProvider,
+  preflightProviderCredentials,
+  signOauthState,
+  verifyOauthState,
+} from "@shipfix/adapter-core";
 import { createSecretVaultFromEnv } from "@shipfix/secrets";
 import {
+  createInstallationAccessToken,
   exchangeGithubUserCode,
   githubAppInstallUrl,
   listGithubUserInstallations,
+  listInstallationRepositories,
   loadGithubAppConfigFromEnv,
   resolveCloneToken,
   resolveGithubBranchSha,
@@ -179,6 +196,33 @@ await app.register(async (githubHooks) => {
 });
 
 
+await app.register(async (stripeHooks) => {
+  stripeHooks.removeContentTypeParser("application/json");
+  stripeHooks.addContentTypeParser("application/json", { parseAs: "buffer" }, (_req, body, done) => {
+    done(null, body);
+  });
+
+  stripeHooks.post("/webhooks/stripe", async (request, reply) => {
+    const secret = env.STRIPE_WEBHOOK_SECRET?.trim();
+    if (!secret) return reply.status(503).send({ error: "webhook_unconfigured" });
+    const raw = request.body as Buffer;
+    const header = request.headers["stripe-signature"];
+    const signature = Array.isArray(header) ? header[0] : header;
+    if (!verifyStripeSignature(raw.toString("utf8"), signature, secret)) {
+      return reply.status(401).send({ error: "invalid_signature" });
+    }
+    let event: unknown;
+    try {
+      event = JSON.parse(raw.toString("utf8")) as unknown;
+    } catch {
+      return reply.status(400).send({ error: "invalid_body" });
+    }
+    const update = subscriptionFromEvent(event);
+    if (update) await applySubscription(update);
+    return { ok: true };
+  });
+});
+
 app.setErrorHandler((err, _request, reply) => {
   if ((err as { code?: string }).code === "FST_ERR_CTP_EMPTY_JSON_BODY") {
     void reply.status(400).send({
@@ -195,6 +239,23 @@ await app.register(cors, { origin: env.WEB_ORIGIN });
 
 // ── Temporal client (lazy, cached) ───────────────────────────────────────────
 let _client: Client | undefined;
+/** Resume a deploy that is paused on a question. A finished or missing workflow is not an error. */
+async function signalInputWait(runId: string): Promise<void> {
+  const [run] = await db
+    .select({ status: runs.status, temporalId: runs.temporalId })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .limit(1);
+  if (run?.status !== "awaiting_input" || !run.temporalId) return;
+  try {
+    const client = await temporal();
+    await client.workflow.getHandle(run.temporalId).signal(INPUTS_SUBMITTED_SIGNAL);
+  } catch (err) {
+    if (err instanceof WorkflowNotFoundError) return;
+    throw err;
+  }
+}
+
 async function temporal(): Promise<Client> {
   if (!_client) {
     const connection = await Connection.connect({ address: env.TEMPORAL_ADDRESS });
@@ -1076,6 +1137,506 @@ app.post("/apps/:projectId/redeploy", async (request, reply) => {
   }
 });
 
+async function guardianLive(userId: string, projectId: string) {
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.userId, userId)))
+    .limit(1);
+  if (!project) return null;
+  const history = await db
+    .select({
+      id: runs.id,
+      status: runs.status,
+      commitSha: runs.commitSha,
+      startedAt: runs.startedAt,
+    })
+    .from(runs)
+    .where(eq(runs.projectId, projectId))
+    .orderBy(desc(runs.startedAt));
+  let live: { runId: string; commitSha: string; resources: Awaited<ReturnType<typeof buildResourceSnapshotForRun>>["resources"] } | null = null;
+  for (const candidate of history) {
+    const snapshot = await buildResourceSnapshotForRun(candidate.id);
+    const httpLive = snapshot.resources.some((resource) => resource.url && /^https?:\/\//i.test(resource.url));
+    if (candidate.status === "succeeded" || httpLive) {
+      live = { runId: candidate.id, commitSha: candidate.commitSha, resources: snapshot.resources };
+      break;
+    }
+  }
+  const plan = live ? await loadPlanDoc(live.runId) : null;
+  return { project, history, live, plan };
+}
+
+/** Probe the live URLs. A Slack webhook in GUARDIAN_SLACK_WEBHOOK is notified when something is down. */
+app.post("/apps/:projectId/guardian/check", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) {
+    return reply.status(400).send({ error: "invalid_project_id" });
+  }
+  const found = await guardianLive(user.id, projectId);
+  if (!found) return reply.status(404).send({ error: "project_not_found" });
+  const healthByService = new Map((found.plan?.services ?? []).map((service) => [service.id, service.healthCheckPath ?? null]));
+  const targets: ProbeTarget[] = (found.live?.resources ?? [])
+    .filter((resource) => resource.url && /^https?:\/\//i.test(resource.url) && resource.kind === "service")
+    .map((resource) => ({
+      serviceId: resource.serviceId,
+      url: resource.url as string,
+      healthPath: healthByService.get(resource.serviceId) ?? null,
+    }));
+  const results = await probeHealth(targets, fetch);
+  const check = summarizeCheck(results);
+  if (found.live) {
+    const logger = createRunLogger(found.live.runId, createSafePostgresSink(db));
+    await logger.log(check.lines.join("\n"), { event: check.ok ? "guardian_up" : "guardian_incident", results: check.results });
+  }
+  const webhook = process.env.GUARDIAN_SLACK_WEBHOOK?.trim();
+  let alertSent = false;
+  if (webhook && !check.ok) {
+    alertSent = await notifySlack(webhook, incidentText(found.project.repoFullName, check), fetch);
+  }
+  return { ok: check.ok, lines: check.lines, results: check.results, alertSent };
+});
+
+/** Deploy the previous succeeded commit. The current live commit stays in history. */
+app.post("/apps/:projectId/guardian/rollback", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) {
+    return reply.status(400).send({ error: "invalid_project_id" });
+  }
+  if (!checkIpRateLimit(request.ip)) {
+    return reply.status(429).send({ error: "ip_run_start_limit", message: "Too many deploys from this network. Try again shortly." });
+  }
+  const found = await guardianLive(user.id, projectId);
+  if (!found) return reply.status(404).send({ error: "project_not_found" });
+  const currentSha = found.live?.commitSha ?? "";
+  const sha = rollbackCommit(found.history, currentSha);
+  if (!sha) {
+    return reply.status(409).send({
+      error: "no_rollback_target",
+      message: "There is no earlier succeeded deploy to roll back to.",
+    });
+  }
+  try {
+    const result = await startRun("deploy", user, {
+      repoFullName: found.project.repoFullName,
+      branch: found.project.defaultBranch,
+      commitSha: sha,
+    });
+    if (!result.ok) {
+      const status = result.runId ? 503 : 429;
+      return reply.status(status).send({ runId: result.runId || undefined, error: result.code, message: result.message });
+    }
+    return reply.status(202).send({ runId: result.runId, commitSha: sha, branch: found.project.defaultBranch });
+  } catch (err) {
+    request.log.error(err);
+    return reply.status(500).send({
+      error: "internal",
+      message: "ShipFix hit an internal error starting this rollback. Try again in a minute.",
+    });
+  }
+});
+
+function startOfUtcMonth(now = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
+/** Opens a saved provider connection. The values are never logged. */
+async function openProviderValues(userId: string, provider: string): Promise<Record<string, string> | null> {
+  const [account] = await db
+    .select()
+    .from(providerAccounts)
+    .where(and(eq(providerAccounts.userId, userId), eq(providerAccounts.provider, provider)))
+    .limit(1);
+  if (!account) return null;
+  try {
+    const vault = createSecretVaultFromEnv();
+    const raw = await vault.open({ encDek: account.encDek, encBlob: account.encBlob, encIv: account.encIv });
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const values: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "string") values[key] = value;
+    }
+    return values;
+  } catch {
+    return null;
+  }
+}
+
+const SpendCapBody = z.object({
+  capCents: z.number().int().min(0).max(10_000_000).nullable(),
+});
+
+/** Saves the app's spend cap. Null clears it. */
+app.post("/apps/:projectId/guardian/cap", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) {
+    return reply.status(400).send({ error: "invalid_project_id" });
+  }
+  const parsed = SpendCapBody.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "invalid_body", message: "Enter a cap in cents, or clear it." });
+  }
+  const found = await guardianLive(user.id, projectId);
+  if (!found) return reply.status(404).send({ error: "project_not_found" });
+  const [project] = await db
+    .update(projects)
+    .set({ spendCapCents: parsed.data.capCents })
+    .where(and(eq(projects.id, projectId), eq(projects.userId, user.id)))
+    .returning({ spendCapCents: projects.spendCapCents });
+  if (!project) return reply.status(404).send({ error: "project_not_found" });
+  return { capCents: project.spendCapCents };
+});
+
+/**
+ * Reads this month's model cost, a Vercel account bill when the token can, and
+ * Render bandwidth for this app's services. Other hosts are named and not priced.
+ */
+app.post("/apps/:projectId/guardian/bills", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) {
+    return reply.status(400).send({ error: "invalid_project_id" });
+  }
+  const found = await guardianLive(user.id, projectId);
+  if (!found) return reply.status(404).send({ error: "project_not_found" });
+  const usage = await db
+    .select({
+      runId: llmUsage.runId,
+      total: sql<number>`coalesce(sum(${llmUsage.estimatedCostCents}), 0)`,
+    })
+    .from(llmUsage)
+    .where(eq(llmUsage.projectId, projectId))
+    .groupBy(llmUsage.runId);
+  for (const row of usage) {
+    if (!row.runId) continue;
+    await db.update(runs).set({ costCents: runCostCents([Number(row.total)]) }).where(eq(runs.id, row.runId));
+  }
+  const month = await db
+    .select({ costCents: runs.costCents })
+    .from(runs)
+    .where(and(eq(runs.projectId, projectId), gte(runs.startedAt, startOfUtcMonth())));
+  const shipfixCents = month.reduce((sum, row) => sum + (row.costCents ?? 0), 0);
+
+  const accounts = await db
+    .select({ provider: providerAccounts.provider })
+    .from(providerAccounts)
+    .where(eq(providerAccounts.userId, user.id));
+  const connected = accounts.map((account) => account.provider);
+  const vercelValues = connected.includes("vercel") ? await openProviderValues(user.id, "vercel") : null;
+  const renderValues = connected.includes("render") ? await openProviderValues(user.id, "render") : null;
+  const serviceIds = (found.live?.resources ?? [])
+    .filter((resource) => resource.provider === "render" && resource.externalId?.startsWith("srv-"))
+    .map((resource) => resource.externalId as string);
+
+  const report = await readGuardianBills({
+    shipfixCents,
+    capCents: found.project.spendCapCents ?? null,
+    connected,
+    vercel: vercelValues?.apiToken ? { token: vercelValues.apiToken, teamId: vercelValues.teamId || undefined } : null,
+    render: renderValues?.apiKey ? { token: renderValues.apiKey, serviceIds } : null,
+    vercelBlocked: connected.includes("vercel") && !vercelValues?.apiToken ? "Vercel is connected, but ShipFix could not open that credential." : null,
+    renderBlocked: connected.includes("render") && !renderValues?.apiKey ? "Render is connected, but ShipFix could not open that credential." : null,
+    services: (found.plan?.services ?? [])
+      .filter((service) => service.provider)
+      .map((service) => ({ id: service.id, type: service.type, provider: service.provider as string })),
+  });
+
+  let alertSent = false;
+  const webhook = process.env.GUARDIAN_SLACK_WEBHOOK?.trim();
+  if (webhook && (report.over || report.spike)) {
+    alertSent = await notifySlack(webhook, report.alertText(found.project.repoFullName), fetch);
+  }
+  return {
+    lines: report.lines,
+    spike: report.spike,
+    over: report.over,
+    capCents: report.capCents,
+    spentCents: report.spentCents,
+    remainingCents: report.remainingCents,
+    alertSent,
+  };
+});
+
+async function liveOwnedResources(projectId: string): Promise<Array<OwnedResource & { ids: string[] }>> {
+  const projectRuns = await db.select({ id: runs.id }).from(runs).where(eq(runs.projectId, projectId));
+  if (projectRuns.length === 0) return [];
+  const rows = await db
+    .select({
+      id: deployedResources.id,
+      provider: deployedResources.provider,
+      externalId: deployedResources.externalId,
+      kind: deployedResources.kind,
+      serviceId: deployedResources.serviceId,
+    })
+    .from(deployedResources)
+    .where(and(inArray(deployedResources.runId, projectRuns.map((run) => run.id)), eq(deployedResources.status, "live")));
+  const grouped = new Map<string, OwnedResource & { ids: string[] }>();
+  for (const row of rows) {
+    if (!row.externalId) continue;
+    const key = `${row.provider}:${row.externalId}`;
+    const existing = grouped.get(key);
+    if (existing) existing.ids.push(row.id);
+    else grouped.set(key, { provider: row.provider, externalId: row.externalId, kind: row.kind, serviceId: row.serviceId, ids: [row.id] });
+  }
+  return [...grouped.values()];
+}
+
+const ConfirmBody = z.object({ confirm: z.string().min(1).max(200) });
+const DomainBody = z.object({ hostname: z.string().min(1).max(253) });
+const RestoreBody = ConfirmBody.extend({ branchName: z.string().min(1).max(120) });
+
+app.post("/apps/:projectId/guardian/backup", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) return reply.status(400).send({ error: "invalid_project_id" });
+  const found = await guardianLive(user.id, projectId);
+  if (!found) return reply.status(404).send({ error: "project_not_found" });
+  const target = backupTarget(await liveOwnedResources(projectId));
+  if (!target) {
+    return { ok: false, lines: ["No Neon or Supabase database is recorded for this app, so no backup was created.", ONE_ENVIRONMENT_NOTE] };
+  }
+  if (target.provider === "neon") {
+    const values = await openProviderValues(user.id, "neon");
+    if (!values?.apiKey) return { ok: false, lines: ["Neon is recorded, but ShipFix could not open that credential."] };
+    const snap = await snapshotNeonDatabase(values.apiKey, target.externalId, { prefix: NEON_BACKUP_PREFIX, keep: 8 });
+    if (!snap.ok) return { ok: false, lines: [snap.message] };
+    return { ok: true, lines: [`Neon backup branch ${snap.branchName} was created. It is a copy of the default branch. Restore replaces the default branch with it and keeps the current data under a new name.`] };
+  }
+  const values = await openProviderValues(user.id, "supabase");
+  if (!values?.accessToken) return { ok: false, lines: ["Supabase is recorded, but ShipFix could not open that credential."] };
+  const name = `sf${Date.now().toString(36).slice(-8)}`;
+  const point = await createSupabaseRestorePoint(values.accessToken, target.externalId, name, { waitMs: 20_000, pollMs: 1_000 });
+  if (!point.ok) return { ok: false, lines: [point.message] };
+  return { ok: true, lines: [`Supabase restore point ${point.value} was created. Restore it from the Supabase dashboard. ShipFix does not overwrite that database.`] };
+});
+
+app.post("/apps/:projectId/guardian/restore", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) return reply.status(400).send({ error: "invalid_project_id" });
+  const parsed = RestoreBody.safeParse(request.body);
+  if (!parsed.success) return reply.status(400).send({ error: "invalid_body", message: "Name the backup branch and the repo." });
+  const found = await guardianLive(user.id, projectId);
+  if (!found) return reply.status(404).send({ error: "project_not_found" });
+  if (parsed.data.confirm !== found.project.repoFullName) {
+    return reply.status(400).send({ error: "confirm_mismatch", message: "Type the repo name to restore this database." });
+  }
+  const target = backupTarget(await liveOwnedResources(projectId));
+  if (!target || target.provider !== "neon") {
+    return reply.status(409).send({ error: "no_neon_backup", message: "A Neon backup restore needs a Neon database recorded for this app." });
+  }
+  const values = await openProviderValues(user.id, "neon");
+  if (!values?.apiKey) return reply.status(409).send({ error: "credential_unavailable", message: "ShipFix could not open the Neon credential." });
+  const restored = await restoreNeonBranch(values.apiKey, target.externalId, parsed.data.branchName);
+  if (!restored.ok) return reply.status(409).send({ error: "restore_failed", message: restored.message });
+  return { ok: true, lines: [`The default branch was replaced from ${parsed.data.branchName}. The previous data is kept as ${restored.branchName}.`] };
+});
+
+app.post("/apps/:projectId/guardian/domain", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) return reply.status(400).send({ error: "invalid_project_id" });
+  const parsed = DomainBody.safeParse(request.body);
+  if (!parsed.success) return reply.status(400).send({ error: "invalid_body", message: "Enter a hostname." });
+  const hostname = validHostname(parsed.data.hostname);
+  if (!hostname) return reply.status(400).send({ error: "invalid_hostname", message: "Enter a hostname such as app.example.com." });
+  const found = await guardianLive(user.id, projectId);
+  if (!found) return reply.status(404).send({ error: "project_not_found" });
+  const target = domainTarget(await liveOwnedResources(projectId));
+  if (!target) return { ok: false, lines: ["No Vercel project or Render service is recorded, so the domain was not attached."] };
+  const values = await openProviderValues(user.id, target.provider);
+  const result = await attachHostname(target, hostname, {
+    vercelToken: values?.apiToken,
+    vercelTeamId: values?.teamId,
+    renderKey: values?.apiKey,
+  }, fetch);
+  return result;
+});
+
+app.post("/apps/:projectId/guardian/teardown", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) return reply.status(400).send({ error: "invalid_project_id" });
+  const parsed = ConfirmBody.safeParse(request.body);
+  if (!parsed.success) return reply.status(400).send({ error: "invalid_body", message: "Type the repo name to tear the app down." });
+  const found = await guardianLive(user.id, projectId);
+  if (!found) return reply.status(404).send({ error: "project_not_found" });
+  if (parsed.data.confirm !== found.project.repoFullName) {
+    return reply.status(400).send({ error: "confirm_mismatch", message: "Type the repo name to tear the app down." });
+  }
+  const owned = await liveOwnedResources(projectId);
+  const steps = planTeardown(owned);
+  if (steps.length === 0) return { ok: true, lines: ["Nothing ShipFix created is still recorded for this app."] };
+  const creds = {
+    vercel: await openProviderValues(user.id, "vercel"),
+    render: await openProviderValues(user.id, "render"),
+    neon: await openProviderValues(user.id, "neon"),
+    upstash: await openProviderValues(user.id, "upstash"),
+  };
+  const lines: string[] = [];
+  let ok = true;
+  for (const step of steps) {
+    const result = await deleteProviderResource(step, {
+      vercelToken: creds.vercel?.apiToken,
+      vercelTeamId: creds.vercel?.teamId,
+      renderKey: creds.render?.apiKey,
+      neonKey: creds.neon?.apiKey,
+      upstashEmail: creds.upstash?.email,
+      upstashKey: creds.upstash?.apiKey,
+    }, fetch);
+    lines.push(result.line);
+    if (!result.ok) ok = false;
+    if (result.ok && step.action === "delete") {
+      const ids = owned.find((resource) => resource.provider === step.provider && resource.externalId === step.externalId)?.ids ?? [];
+      if (ids.length > 0) {
+        await db.update(deployedResources).set({ status: "removed" }).where(inArray(deployedResources.id, ids));
+      }
+    }
+  }
+  lines.push(ONE_ENVIRONMENT_NOTE);
+  return { ok, lines };
+});
+
+function stripeConfigured(): boolean {
+  return Boolean(env.STRIPE_SECRET_KEY?.trim() && env.STRIPE_WEBHOOK_SECRET?.trim() && env.STRIPE_GUARDIAN_PRICE_ID?.trim());
+}
+
+async function applySubscription(update: SubscriptionUpdate): Promise<void> {
+  if (!z.string().uuid().safeParse(update.projectId).success) return;
+  await db
+    .update(projects)
+    .set({
+      plan: update.plan,
+      stripeCustomerId: update.customerId,
+      stripeSubscriptionId: update.subscriptionId,
+      subscriptionStatus: update.status,
+    })
+    .where(eq(projects.id, update.projectId));
+}
+
+function publicAppOrigin(): string {
+  const origin = env.WEB_ORIGIN?.trim();
+  if (origin && origin !== "*") return origin.replace(/\/$/, "");
+  return "http://localhost:3000";
+}
+
+function stripeError(body: unknown): string {
+  const message = body && typeof body === "object" ? (body as { error?: { message?: unknown } }).error?.message : undefined;
+  const text = typeof message === "string" ? message.slice(0, 200) : "Stripe did not complete this request.";
+  const secret = env.STRIPE_SECRET_KEY?.trim();
+  return secret ? text.split(secret).join("a Stripe key") : text;
+}
+
+async function stripeRequest(path: string, init?: { method?: string; body?: URLSearchParams }): Promise<{ status: number; body: unknown }> {
+  const secret = env.STRIPE_SECRET_KEY?.trim() ?? "";
+  try {
+    const res = await fetch(`https://api.stripe.com/v1${path}`, {
+      method: init?.method ?? "GET",
+      headers: {
+        authorization: `Bearer ${secret}`,
+        ...(init?.body ? { "content-type": "application/x-www-form-urlencoded" } : {}),
+      },
+      body: init?.body,
+      signal: AbortSignal.timeout(8_000),
+    });
+    const text = await res.text();
+    let parsed: unknown = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = null;
+    }
+    return { status: res.status, body: parsed };
+  } catch {
+    return { status: 0, body: null };
+  }
+}
+
+app.get("/apps/:projectId/billing", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) return reply.status(400).send({ error: "invalid_project_id" });
+  const found = await guardianLive(user.id, projectId);
+  if (!found) return reply.status(404).send({ error: "project_not_found" });
+  const configured = stripeConfigured();
+  return {
+    configured,
+    plan: found.project.plan,
+    status: found.project.subscriptionStatus,
+    guardianOpen: configured ? guardianEntitled(found.project.plan, found.project.subscriptionStatus) : true,
+    offers: PLAN_OFFERS,
+  };
+});
+
+app.post("/apps/:projectId/billing/checkout", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) return reply.status(400).send({ error: "invalid_project_id" });
+  const found = await guardianLive(user.id, projectId);
+  if (!found) return reply.status(404).send({ error: "project_not_found" });
+  if (!stripeConfigured()) {
+    return reply.status(503).send({
+      error: "billing_unconfigured",
+      message: "Stripe is not connected on this server, so no card is charged. This app stays on Free.",
+    });
+  }
+  const origin = publicAppOrigin();
+  const created = await stripeRequest("/checkout/sessions", {
+    method: "POST",
+    body: checkoutForm({
+      priceId: env.STRIPE_GUARDIAN_PRICE_ID!.trim(),
+      projectId,
+      successUrl: `${origin}/apps/${projectId}?billing=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${origin}/apps/${projectId}?billing=cancel`,
+    }),
+  });
+  const url = created.body && typeof created.body === "object" ? (created.body as { url?: unknown }).url : undefined;
+  if (created.status < 200 || created.status >= 300 || typeof url !== "string") {
+    return reply.status(502).send({ error: "stripe_rejected", message: stripeError(created.body) });
+  }
+  return { url };
+});
+
+const ConfirmSessionBody = z.object({ sessionId: z.string().regex(/^cs_[A-Za-z0-9_]+$/) });
+
+app.post("/apps/:projectId/billing/confirm", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { projectId } = request.params as { projectId: string };
+  if (!z.string().uuid().safeParse(projectId).success) return reply.status(400).send({ error: "invalid_project_id" });
+  const parsed = ConfirmSessionBody.safeParse(request.body);
+  if (!parsed.success) return reply.status(400).send({ error: "invalid_body", message: "Missing the Stripe checkout session." });
+  const found = await guardianLive(user.id, projectId);
+  if (!found) return reply.status(404).send({ error: "project_not_found" });
+  if (!stripeConfigured()) {
+    return reply.status(503).send({ error: "billing_unconfigured", message: "Stripe is not connected on this server." });
+  }
+  const session = await stripeRequest(`/checkout/sessions/${encodeURIComponent(parsed.data.sessionId)}`);
+  if (session.status < 200 || session.status >= 300) {
+    return reply.status(502).send({ error: "stripe_rejected", message: stripeError(session.body) });
+  }
+  const update = subscriptionFromEvent({ type: "checkout.session.completed", data: { object: session.body } });
+  if (!update || update.projectId !== projectId) {
+    return reply.status(409).send({ error: "checkout_not_paid", message: "Stripe has not marked this checkout as paid." });
+  }
+  await applySubscription(update);
+  return { plan: update.plan, status: update.status };
+});
+
 // ── GitHub App installations ────────────────────────────────────────────────
 // Ownership is proven by a GitHub user OAuth code (the App's "request user
 // authorization during installation" setting): we only record installations that
@@ -1157,6 +1718,34 @@ app.post("/github/installations/claim", async (request, reply) => {
   return { ok: true, installations };
 });
 
+/** Repos from installations this user has claimed. Public paste still works when this is empty. */
+app.get("/github/repos", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const config = loadGithubAppConfigFromEnv();
+  if (!config) return { configured: false, repos: [] };
+  const installations = await db
+    .select({ installationId: githubInstallations.installationId })
+    .from(githubInstallations)
+    .where(eq(githubInstallations.userId, user.id));
+  const repos: Array<{ fullName: string; private: boolean; defaultBranch: string }> = [];
+  const seen = new Set<string>();
+  for (const inst of installations) {
+    try {
+      const token = await createInstallationAccessToken(config, inst.installationId);
+      for (const repo of await listInstallationRepositories(token)) {
+        if (seen.has(repo.fullName)) continue;
+        seen.add(repo.fullName);
+        repos.push(repo);
+      }
+    } catch (err) {
+      request.log.warn({ err, installationId: inst.installationId }, "GitHub repo list failed");
+    }
+  }
+  repos.sort((a, b) => a.fullName.localeCompare(b.fullName));
+  return { configured: true, repos };
+});
+
 app.delete("/github/installations/:installationId", async (request, reply) => {
   const user = await requireUser(request, reply, db, env);
   if (!user) return;
@@ -1174,6 +1763,38 @@ app.delete("/github/installations/:installationId", async (request, reply) => {
 // ── Provider credentials ───────────────────────────────────────────────────
 // The control plane is trusted and may receive a plaintext credential here; it
 // is sealed (envelope-encrypted) immediately and never logged or returned.
+async function saveProviderCredentials(
+  userId: string,
+  provider: string,
+  values: Record<string, string>,
+): Promise<{ id: string; created: boolean }> {
+  const vault = createSecretVaultFromEnv();
+  const sealed = await vault.seal(JSON.stringify(values));
+  const existing = await db
+    .select()
+    .from(providerAccounts)
+    .where(and(eq(providerAccounts.userId, userId), eq(providerAccounts.provider, provider)))
+    .limit(1);
+  if (existing[0]) {
+    await db
+      .update(providerAccounts)
+      .set({ encDek: sealed.encDek, encBlob: sealed.encBlob, encIv: sealed.encIv })
+      .where(eq(providerAccounts.id, existing[0].id));
+    return { id: existing[0].id, created: false };
+  }
+  const [created] = await db
+    .insert(providerAccounts)
+    .values({
+      userId,
+      provider,
+      encDek: sealed.encDek,
+      encBlob: sealed.encBlob,
+      encIv: sealed.encIv,
+    })
+    .returning();
+  if (!created) throw new Error("Provider account was not saved.");
+  return { id: created.id, created: true };
+}
 const ConnectBody = z.object({
   provider: z.string().min(1),
   values: z
@@ -1190,17 +1811,6 @@ app.post("/provider-accounts", async (request, reply) => {
     return reply.status(400).send({ error: "invalid_body", details: parsed.error.flatten() });
   }
 
-  let vault: ReturnType<typeof createSecretVaultFromEnv>;
-  try {
-    vault = createSecretVaultFromEnv();
-  } catch (e) {
-    request.log.error(e);
-    return reply.status(500).send({
-      error: "vault_unconfigured",
-      message: "ShipFix's secret storage is not configured on the server, so credentials cannot be saved yet.",
-    });
-  }
-
   // Prove the token is accepted by the provider BEFORE sealing it, so a bad
   // key fails here in seconds instead of mid-deploy. Provider outages do not
   // block (preflight only rejects on a definite 401/403).
@@ -1213,33 +1823,22 @@ app.post("/provider-accounts", async (request, reply) => {
   }
 
   try {
-    const sealed = await vault.seal(JSON.stringify(parsed.data.values));
+    createSecretVaultFromEnv();
+  } catch (e) {
+    request.log.error(e);
+    return reply.status(500).send({
+      error: "vault_unconfigured",
+      message: "ShipFix's secret storage is not configured on the server, so credentials cannot be saved yet.",
+    });
+  }
 
-    const existing = await db
-      .select()
-      .from(providerAccounts)
-      .where(and(eq(providerAccounts.userId, user.id), eq(providerAccounts.provider, parsed.data.provider)))
-      .limit(1);
-
-    if (existing[0]) {
-      await db
-        .update(providerAccounts)
-        .set({ encDek: sealed.encDek, encBlob: sealed.encBlob, encIv: sealed.encIv })
-        .where(eq(providerAccounts.id, existing[0].id));
-      return reply.status(200).send({ id: existing[0].id, provider: parsed.data.provider, updated: true });
-    }
-
-    const [created] = await db
-      .insert(providerAccounts)
-      .values({
-        userId: user.id,
-        provider: parsed.data.provider,
-        encDek: sealed.encDek,
-        encBlob: sealed.encBlob,
-        encIv: sealed.encIv,
-      })
-      .returning();
-    return reply.status(201).send({ id: created.id, provider: parsed.data.provider });
+  try {
+    const saved = await saveProviderCredentials(user.id, parsed.data.provider, parsed.data.values);
+    return reply.status(saved.created ? 201 : 200).send({
+      id: saved.id,
+      provider: parsed.data.provider,
+      ...(saved.created ? {} : { updated: true }),
+    });
   } catch (err) {
     request.log.error(err);
     return reply.status(500).send({
@@ -1264,6 +1863,127 @@ app.get("/providers", async (request, reply) => {
     deployable: DEPLOYABLE_PROVIDERS,
     deployableServiceTypes: DEPLOYABLE_SERVICE_TYPES,
   };
+});
+
+/** Which providers can be connected with a login instead of a pasted key. No secrets. */
+app.get("/providers/oauth", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  return { providers: loadOauthApps().map((app) => app.provider) };
+});
+
+const OauthStartBody = z.object({
+  redirectUri: z.string().url().max(300),
+});
+
+app.post("/providers/:provider/oauth/start", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { provider } = request.params as { provider: string };
+  const app = loadOauthApp(provider);
+  if (!app) {
+    return reply.status(404).send({
+      error: "oauth_unconfigured",
+      message: "This provider is not set up for login on this ShipFix server. Paste a key instead.",
+    });
+  }
+  const parsed = OauthStartBody.safeParse(request.body);
+  if (!parsed.success || !allowedOauthRedirect(parsed.data.redirectUri, env.WEB_ORIGIN)) {
+    return reply.status(400).send({
+      error: "invalid_redirect",
+      message: "The provider login has to return to this ShipFix app.",
+    });
+  }
+  const pkce = app.provider === "vercel" ? undefined : createPkce();
+  const state = signOauthState(app.clientSecret, {
+    userId: user.id,
+    provider: app.provider,
+    exp: Date.now() + 10 * 60 * 1000,
+  });
+  return {
+    authorizeUrl: authorizeUrl(app, {
+      redirectUri: parsed.data.redirectUri,
+      state,
+      challenge: pkce?.challenge,
+    }),
+    state,
+    ...(pkce ? { verifier: pkce.verifier } : {}),
+  };
+});
+
+const OauthCompleteBody = z.object({
+  code: z.string().min(1).max(2000),
+  state: z.string().min(1).max(2000),
+  redirectUri: z.string().url().max(300),
+  verifier: z.string().min(1).max(200).optional(),
+});
+
+app.post("/providers/oauth/complete", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const parsed = OauthCompleteBody.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "invalid_body", details: parsed.error.flatten() });
+  }
+  const provider = peekOauthProvider(parsed.data.state);
+  const app = provider ? loadOauthApp(provider) : null;
+  if (!app || !verifyOauthState(app.clientSecret, parsed.data.state, { userId: user.id, provider: app.provider })) {
+    return reply.status(400).send({
+      error: "oauth_state_invalid",
+      message: "This provider login expired. Start it again from ShipFix.",
+    });
+  }
+  if (!allowedOauthRedirect(parsed.data.redirectUri, env.WEB_ORIGIN)) {
+    return reply.status(400).send({
+      error: "invalid_redirect",
+      message: "ShipFix could not confirm where the provider should return.",
+    });
+  }
+  let values: Record<string, string>;
+  try {
+    values = await exchangeOauthCode(app, {
+      code: parsed.data.code,
+      redirectUri: parsed.data.redirectUri,
+      verifier: parsed.data.verifier,
+    });
+  } catch (err) {
+    request.log.warn({ err, provider: app.provider }, "Provider OAuth exchange failed");
+    return reply.status(400).send({
+      error: "oauth_exchange_failed",
+      message: "The provider did not accept this login. Start it again.",
+    });
+  }
+  const preflight = await preflightProviderCredentials(app.provider, values);
+  if (!preflight.ok) {
+    return reply.status(422).send({
+      error: "credential_rejected",
+      message: preflight.message ?? "The provider rejected this login.",
+    });
+  }
+  try {
+    createSecretVaultFromEnv();
+    await saveProviderCredentials(user.id, app.provider, values);
+  } catch (err) {
+    request.log.error(err);
+    return reply.status(500).send({
+      error: "internal",
+      message: "ShipFix hit an internal error saving this connection. Try again in a minute.",
+    });
+  }
+  return { ok: true, provider: app.provider };
+});
+
+app.delete("/provider-accounts/:provider", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+  const { provider } = request.params as { provider: string };
+  if (!/^[a-z0-9_-]{1,40}$/.test(provider)) {
+    return reply.status(400).send({ error: "invalid_provider" });
+  }
+  await db
+    .delete(providerAccounts)
+    .where(and(eq(providerAccounts.userId, user.id), eq(providerAccounts.provider, provider)));
+  return { ok: true };
 });
 
 app.get("/admin/llm-usage", async (request, reply) => {
@@ -1336,6 +2056,29 @@ app.post("/runs/:runId/events/ticket", async (request, reply) => {
     return reply.status(404).send({ error: "run_not_found" });
   }
   return issueStreamTicket(streamKey, { userId: user.id, runId });
+});
+
+/** Recent redacted log lines. Bearer auth, unlike the SSE stream which uses a ticket. */
+app.get("/runs/:runId/logs", async (request, reply) => {
+  const user = await requireUser(request, reply, db, env);
+  if (!user) return;
+
+  const { runId } = request.params as { runId: string };
+  if (!z.string().uuid().safeParse(runId).success) {
+    return reply.status(400).send({ error: "invalid_run_id" });
+  }
+  if (!(await userCanAccessRun(user.id, runId))) {
+    return reply.status(404).send({ error: "run_not_found" });
+  }
+  const raw = Number((request.query as { limit?: string } | undefined)?.limit ?? 80);
+  const limit = Number.isFinite(raw) ? Math.min(200, Math.max(1, Math.floor(raw))) : 80;
+  const rows = await db
+    .select({ seq: runEvents.seq, level: runEvents.level, message: runEvents.message })
+    .from(runEvents)
+    .where(and(eq(runEvents.runId, runId), eq(runEvents.type, "log")))
+    .orderBy(desc(runEvents.seq))
+    .limit(limit);
+  return { lines: rows.reverse() };
 });
 
 app.get("/runs/:runId/events", async (request, reply) => {
@@ -1783,6 +2526,12 @@ app.post("/runs/:runId/inputs", async (request, reply) => {
       error: "internal",
       message: "Could not save answers. Try again in a minute.",
     });
+  }
+
+  try {
+    await signalInputWait(runId);
+  } catch (err) {
+    request.log.warn({ err }, "Saved answers, but could not resume the waiting deploy.");
   }
 
   return { ok: true, answered };

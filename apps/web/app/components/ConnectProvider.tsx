@@ -20,6 +20,7 @@ export function ConnectProvider({
   onConnected,
   allowUpdate = false,
   initiallyEditing = false,
+  oauthReady = false,
 }: {
   providerId: ProviderId;
   connected: boolean;
@@ -29,6 +30,8 @@ export function ConnectProvider({
   allowUpdate?: boolean;
   /** Open the credential form immediately (used after a permission failure). */
   initiallyEditing?: boolean;
+  /** This ShipFix server has an OAuth app for the provider. */
+  oauthReady?: boolean;
 }): React.ReactElement | null {
   const guide = providerGuide(providerId);
   const [value, setValue] = useState("");
@@ -41,6 +44,36 @@ export function ConnectProvider({
   if (!guide) return null;
 
   const showForm = !connected || editing;
+
+  const connectWithLogin = async () => {
+    setSaving(true);
+    setMsg(null);
+    setErr(null);
+    try {
+      const redirectUri = `${window.location.origin}/providers/callback`;
+      const started = await api.startProviderOauth(guide.id, redirectUri);
+      if (started.verifier) sessionStorage.setItem(`shipfix-oauth:${started.state}`, started.verifier);
+      window.location.assign(started.authorizeUrl);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setSaving(false);
+    }
+  };
+
+  const disconnect = async () => {
+    setSaving(true);
+    setMsg(null);
+    setErr(null);
+    try {
+      await api.disconnectProvider(guide.id);
+      setMsg(`${guide.name} disconnected.`);
+      onConnected?.();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const connect = async () => {
     setSaving(true);
@@ -88,6 +121,11 @@ export function ConnectProvider({
               Update credentials
             </Button>
           )}
+          {connected && allowUpdate && !editing && (
+            <Button type="button" variant="ghost" disabled={saving} onClick={() => void disconnect()}>
+              Disconnect
+            </Button>
+          )}
           {connected && allowUpdate && editing && (
             <Button
               type="button"
@@ -107,6 +145,16 @@ export function ConnectProvider({
       {showForm && (
         <>
           <div style={{ marginTop: "0.8rem", borderTop: `1px solid ${colors.border}`, paddingTop: "0.8rem" }}>
+            {oauthReady && (
+              <div style={{ marginBottom: 12 }}>
+                <Button type="button" onClick={() => void connectWithLogin()} disabled={saving}>
+                  {saving ? "Opening…" : `Connect with ${guide.name}`}
+                </Button>
+                <p style={{ margin: "0.45rem 0 0", fontSize: "0.8rem", color: colors.dim }}>
+                  Or paste a key below.
+                </p>
+              </div>
+            )}
             <p style={{ margin: 0, fontSize: "0.85rem", color: colors.muted, lineHeight: 1.6 }}>
               {connected ? "Paste a new " : "Create an account-level "}
               {guide.credentialLabel.toLowerCase()} at{" "}

@@ -47,15 +47,17 @@ export function OutcomeBanner({
             ? "Deploy needs attention"
             : terminal
               ? "Deploy finished without full verification"
-              : hasAnyLiveResource
-                ? "Part of the stack is live"
-                : "Deployment in progress";
+              : runStatus === "awaiting_input"
+        ? "Waiting for your answer"
+        : hasAnyLiveResource
+          ? "Part of the stack is live"
+          : "Deployment in progress";
 
   const badgeTone = allLive
     ? "success"
     : runStatus === "failed"
       ? "error"
-      : runStatus === "diagnosed" || (!allLive && terminal)
+      : runStatus === "awaiting_input" || runStatus === "diagnosed" || (!allLive && terminal)
         ? "warn"
         : "info";
 
@@ -67,6 +69,8 @@ export function OutcomeBanner({
         ? "Needs attention"
         : terminal
           ? "Partial"
+          : runStatus === "awaiting_input"
+          ? "Needs you"
           : "In progress";
 
   const nextAction =
@@ -158,6 +162,7 @@ const IN_PROGRESS_STATUSES = new Set([
   "provisioning",
   "deploying",
   "verifying",
+  "awaiting_input",
 ]);
 
 function computeNextAction(
@@ -165,6 +170,7 @@ function computeNextAction(
   status: string,
 ): string | null {
   if (display.fullStack.live) return null;
+  if (status === "awaiting_input") return "Answer the questions above. This deploy continues when you save them.";
   if (IN_PROGRESS_STATUSES.has(status)) {
     return status === "queued"
       ? "Queued — waiting for the worker."

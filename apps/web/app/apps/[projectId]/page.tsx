@@ -9,6 +9,9 @@ import { deriveRequiredProviders, missingProviders } from "../../lib/planRequire
 import { runModeLabel, runStatusLabel } from "../../lib/runLabels";
 import { colors, mono } from "../../lib/theme";
 import { CurrentState } from "../../components/CurrentState";
+import { BillPanel } from "../../components/BillPanel";
+import { ExtrasPanel } from "../../components/ExtrasPanel";
+import { GuardianPanel } from "../../components/GuardianPanel";
 import { ProviderRequirements } from "../../components/ProviderRequirements";
 import { VerificationChecklist } from "../../components/VerificationChecklist";
 import { ProjectEnvPanel } from "../../components/ProjectEnvPanel";
@@ -34,6 +37,7 @@ export default function AppDetailPage({
   const [showConnect, setShowConnect] = useState(false);
   const [starting, setStarting] = useState(false);
   const [redeploying, setRedeploying] = useState(false);
+  const [rollingBack, setRollingBack] = useState(false);
   const [savingAutoDeploy, setSavingAutoDeploy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState("overview");
@@ -115,6 +119,19 @@ export default function AppDetailPage({
     }
   };
 
+  const rollBack = async () => {
+    setErr(null);
+    setRollingBack(true);
+    try {
+      const { runId } = await api.guardianRollback(projectId);
+      router.push(`/runs/${runId}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRollingBack(false);
+    }
+  };
+
   const toggleAutoDeploy = async () => {
     if (!detail) return;
     setErr(null);
@@ -181,6 +198,7 @@ export default function AppDetailPage({
           <Tabs
             tabs={[
               { id: "overview", label: "Overview" },
+              { id: "operations", label: "Operations" },
               { id: "environment", label: "Environment" },
               { id: "deployments", label: "Deployments" },
               { id: "settings", label: "Settings" },
@@ -259,6 +277,20 @@ export default function AppDetailPage({
                   <p style={{ margin: 0, color: colors.dim }}>No deployment resources yet. Start a deploy from a plan or redeploy latest.</p>
                 </Panel>
               )}
+            </div>
+          )}
+
+          {tab === "operations" && (
+            <div className="sf-fade-in">
+              <GuardianPanel
+                projectId={projectId}
+                onFix={() => void redeployLatest()}
+                onRollback={() => void rollBack()}
+                fixing={redeploying}
+                rollingBack={rollingBack}
+              />
+              <BillPanel projectId={projectId} />
+              <ExtrasPanel projectId={projectId} repoFullName={detail?.project.repoFullName ?? ""} />
             </div>
           )}
 

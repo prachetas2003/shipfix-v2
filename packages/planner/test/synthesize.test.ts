@@ -131,6 +131,16 @@ describe("synthesizeDeterministicPlan", () => {
     expect(plan?.questions.some((q) => q.prompt.includes("STRIPE_SECRET_KEY"))).toBe(true);
   });
 
+  it("reminds the user to register the live OAuth redirect without blocking the deploy", () => {
+    const ctx = makeCtx({
+      envRefs: [...makeCtx().envRefs, { name: "GOOGLE_CLIENT_ID", service: "web", required: false }],
+    });
+    const plan = synthesizeDeterministicPlan(ctx);
+    const reminder = plan?.blockers.find((b) => b.title.includes("OAuth"));
+    expect(reminder?.severity).toBe("warning");
+    expect(plan?.classification).toBe("deployable");
+  });
+
   it("wires backend CORS/frontend-origin refs from web.origin (deferred until frontend is live)", () => {
     const ctx = makeCtx({
       envRefs: [...makeCtx().envRefs, { name: "CORS_ORIGIN", service: "server", required: true }],

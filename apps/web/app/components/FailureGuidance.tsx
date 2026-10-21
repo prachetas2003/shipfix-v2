@@ -34,6 +34,24 @@ export function extractFailureGuidance(events: RunEventRow[]): FailureGuidanceDa
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
     const d = (ev.data ?? {}) as Record<string, unknown>;
+    // A pushed fix supersedes earlier guidance; a newer failure would come after it.
+    if (d.event === "repair_pushed" || d.event === "question") return null;
+    if (d.event === "repair_push_unavailable" && typeof d.fixPrompt === "string") {
+      return {
+        action: "fix_repo_code",
+        title: "ShipFix found and tested a fix",
+        whatHappened: ev.message,
+        whatYouShouldDo: [
+          "Apply the change below (paste it into Cursor, or edit the files yourself).",
+          "Commit and push to your main branch.",
+          "Deploy again from ShipFix.",
+        ],
+        showCursorPrompt: true,
+        fixPrompt: d.fixPrompt,
+        provider: null,
+        serviceId: null,
+      };
+    }
     if (d.event === "deploy_failure_guidance") {
       const action = String(d.action ?? "inspect_error") as GuidanceAction;
       return {

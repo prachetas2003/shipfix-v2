@@ -41,5 +41,7 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Fixture plans must not drop below the committed baseline. The full
+      # corpus runs nightly and fails on the same kind of regression.
       - name: Eval (offline fixture corpus)
-        run: pnpm eval run -- --category fixture --fail-on-regression
+        run: pnpm eval run -- --category fixture --baseline eval/baselines/fixtures.json --fail-on-regression

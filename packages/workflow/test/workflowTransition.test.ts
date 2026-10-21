@@ -31,6 +31,10 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock("@temporalio/workflow", () => ({
+  defineSignal: (name: string) => name,
+  patched: () => false,
+  setHandler: () => {},
+  condition: async () => false,
   proxyActivities: () => ({
     analyzeRepo: async () => {
       h.calls.push("analyzeRepo");
