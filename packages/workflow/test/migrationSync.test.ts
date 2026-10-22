@@ -117,6 +117,28 @@ describe("prisma schema sync", () => {
       prismaPushCommand("prisma/schema.prisma", "npm"),
     ]);
     expect(calls[1].cmd).toContain("prisma db push --accept-data-loss --schema prisma/schema.prisma");
+    expect(calls[1].cwd).toBeUndefined();
+  });
+
+  it("runs the Prisma installed beside a nested schema, not a copy from the repo root", async () => {
+    const nested = [
+      "api/package.json",
+      "api/prisma/schema.prisma",
+      "api/prisma/migrations/20261022000000_init/migration.sql",
+      "web/package.json",
+    ];
+    const { sandbox, calls } = fakeSandbox(nested);
+    const r = await runPrismaMigrateDeploy({
+      sandbox,
+      schemaPath: "api/prisma/schema.prisma",
+      packageManager: "npm",
+      urls: URLS,
+      freshDatabase: true,
+    });
+    expect(r.ok).toBe(true);
+    expect(calls[0]).toMatchObject({ cmd: "npm install --no-audit --no-fund", cwd: "api" });
+    expect(calls[1].cmd).toBe("npx prisma migrate deploy --schema prisma/schema.prisma");
+    expect(calls[1].cwd).toBe("api");
   });
 
   it("skips a reused database without migrations and redacts failures", async () => {

@@ -5,7 +5,7 @@
 
 import { migrateConnectionUrl, type NeonConnectionUrls } from "@shipfix/provisioner";
 import type { Sandbox } from "@shipfix/sandbox";
-import { installForMigration } from "./migrationInstall";
+import { installForMigration, migrationInstallDir } from "./migrationInstall";
 
 export function findPrismaSchemaPath(files: string[], preferredRootDir?: string): string | null {
   const schemas = files.filter((f) => /(^|\/)schema\.prisma$/.test(f));
@@ -92,12 +92,17 @@ export async function runPrismaMigrateDeploy(input: {
   if (!install.ok) return { ok: false, skipped: false, detail: redactConnectionStrings(install.detail) };
 
   const direct = migrateConnectionUrl(input.urls);
+  // Run inside the package that owns the schema. From the repo root, npx does
+  // not see that package's Prisma and downloads whatever is current instead.
+  const cwd = migrationInstallDir(files, input.schemaPath);
+  const schemaFromPackage = schemaPathForCwd(input.schemaPath, cwd);
   const command = hasMigrations
-    ? prismaMigrateCommand(input.schemaPath, input.packageManager)
-    : prismaPushCommand(input.schemaPath, input.packageManager);
+    ? prismaMigrateCommand(schemaFromPackage, input.packageManager)
+    : prismaPushCommand(schemaFromPackage, input.packageManager);
   const verb = hasMigrations ? "prisma migrate deploy" : "prisma db push";
   const result = await input.sandbox.exec(command, {
     timeoutMs: input.timeoutMs ?? 300_000,
+    cwd: cwd || undefined,
     env: {
       // Migrate must use the direct (non-pooler) URL.
       DATABASE_URL: direct,
@@ -121,6 +126,12 @@ export async function runPrismaMigrateDeploy(input: {
     };
   }
   return { ok: true, skipped: false, exitCode: 0, detail: detail || `${verb} succeeded.` };
+}
+
+function schemaPathForCwd(schemaPath: string, cwd: string): string {
+  if (!cwd) return schemaPath;
+  const prefix = `${cwd}/`;
+  return schemaPath.startsWith(prefix) ? schemaPath.slice(prefix.length) : schemaPath;
 }
 
 function redactConnectionStrings(text: string): string {
