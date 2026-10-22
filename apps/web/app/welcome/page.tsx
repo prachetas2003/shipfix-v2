@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { SignInButton, SignUpButton } from "@clerk/nextjs";
 import { Landing } from "../components/Landing";
-import { GithubSignIn } from "../components/GithubSignIn";
 import { AUTH_MODE } from "../lib/api";
 import { Button } from "../components/ui/Button";
 
@@ -17,7 +16,6 @@ function WelcomeActions(): React.ReactElement {
   }
   return (
     <>
-      <GithubSignIn />
       <SignInButton mode="modal">
         <Button>Sign in</Button>
       </SignInButton>

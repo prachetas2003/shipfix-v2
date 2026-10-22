@@ -4,7 +4,6 @@ import { ClerkLoaded, ClerkLoading, SignInButton, SignUpButton, UserButton, useA
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { AUTH_MODE, setAuthTokenProvider } from "../lib/api";
-import { GithubSignIn } from "./GithubSignIn";
 import { Landing } from "./Landing";
 import { Button } from "./ui/Button";
 import { Skeleton } from "./ui/Skeleton";
@@ -29,7 +28,6 @@ function SignedOutLanding(): React.ReactElement {
     <Landing
       actions={
         <>
-          <GithubSignIn />
           <SignInButton mode="modal">
             <Button>Sign in</Button>
           </SignInButton>
