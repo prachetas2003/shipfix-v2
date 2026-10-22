@@ -100,7 +100,7 @@ export async function runPrismaMigrateDeploy(input: {
     ? prismaMigrateCommand(schemaFromPackage, input.packageManager)
     : prismaPushCommand(schemaFromPackage, input.packageManager);
   const verb = hasMigrations ? "prisma migrate deploy" : "prisma db push";
-  const result = await input.sandbox.exec(command, {
+  const execOptions = {
     timeoutMs: input.timeoutMs ?? 300_000,
     cwd: cwd || undefined,
     env: {
@@ -109,7 +109,27 @@ export async function runPrismaMigrateDeploy(input: {
       DIRECT_URL: direct,
       CI: "1",
     },
-  });
+  };
+  // A prisma.config.ts that selects the JavaScript schema engine ignores the
+  // schema URL and reports a failed migration as "External error id#0".
+  // The schema already has the URL, so set that config aside for this command.
+  const configFile = findPrismaConfigFile(files, cwd);
+  const parked = configFile ? `${configFile}.shipfix-bak` : null;
+  if (configFile && parked) {
+    const moved = await input.sandbox.exec(`mv ${configFile} ${parked}`, { cwd: cwd || undefined });
+    if (moved.exitCode !== 0) {
+      const detail = `${moved.stdout}\n${moved.stderr}`.trim();
+      return { ok: false, skipped: false, exitCode: moved.exitCode, detail: `Could not set aside ${configFile} before migrating. ${detail}` };
+    }
+  }
+  let result;
+  try {
+    result = await input.sandbox.exec(command, execOptions);
+  } finally {
+    if (configFile && parked) {
+      await input.sandbox.exec(`mv ${parked} ${configFile}`, { cwd: cwd || undefined });
+    }
+  }
 
   const combined = `${result.stdout}\n${result.stderr}`.trim();
   const detail = redactConnectionStrings(combined).slice(0, 2000);
@@ -126,6 +146,23 @@ export async function runPrismaMigrateDeploy(input: {
     };
   }
   return { ok: true, skipped: false, exitCode: 0, detail: detail || `${verb} succeeded.` };
+}
+
+const PRISMA_CONFIG_FILES = [
+  "prisma.config.ts",
+  "prisma.config.js",
+  "prisma.config.mjs",
+  "prisma.config.cjs",
+  "prisma.config.mts",
+  "prisma.config.cts",
+];
+
+function findPrismaConfigFile(files: readonly string[], cwd: string): string | null {
+  for (const name of PRISMA_CONFIG_FILES) {
+    const full = cwd ? `${cwd}/${name}` : name;
+    if (files.includes(full)) return name;
+  }
+  return null;
 }
 
 function schemaPathForCwd(schemaPath: string, cwd: string): string {

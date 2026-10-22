@@ -141,6 +141,31 @@ describe("prisma schema sync", () => {
     expect(calls[1].cwd).toBe("api");
   });
 
+  it("sets a JavaScript Prisma config aside so migrate uses the schema URL", async () => {
+    const nested = [
+      "api/package.json",
+      "api/prisma.config.ts",
+      "api/prisma/schema.prisma",
+      "api/prisma/migrations/20261022000000_init/migration.sql",
+    ];
+    const { sandbox, calls } = fakeSandbox(nested);
+    const r = await runPrismaMigrateDeploy({
+      sandbox,
+      schemaPath: "api/prisma/schema.prisma",
+      packageManager: "npm",
+      urls: URLS,
+      freshDatabase: true,
+    });
+    expect(r.ok).toBe(true);
+    expect(calls.map((c) => c.cmd)).toEqual([
+      "npm install --no-audit --no-fund",
+      "mv prisma.config.ts prisma.config.ts.shipfix-bak",
+      "npx prisma migrate deploy --schema prisma/schema.prisma",
+      "mv prisma.config.ts.shipfix-bak prisma.config.ts",
+    ]);
+    expect(calls[2].cwd).toBe("api");
+  });
+
   it("skips a reused database without migrations and redacts failures", async () => {
     const reused = fakeSandbox(files);
     const skipped = await runPrismaMigrateDeploy({
