@@ -116,7 +116,7 @@ export async function runPrismaMigrateDeploy(input: {
   const configFile = findPrismaConfigFile(files, cwd);
   const parked = configFile ? `${configFile}.shipfix-bak` : null;
   if (configFile && parked) {
-    const moved = await input.sandbox.exec(`mv ${configFile} ${parked}`, { cwd: cwd || undefined });
+    const moved = await input.sandbox.exec(`mv ${configFile} ${parked}`, { cwd: cwd || undefined, timeoutMs: 30_000 });
     if (moved.exitCode !== 0) {
       const detail = `${moved.stdout}\n${moved.stderr}`.trim();
       return { ok: false, skipped: false, exitCode: moved.exitCode, detail: `Could not set aside ${configFile} before migrating. ${detail}` };
@@ -127,7 +127,7 @@ export async function runPrismaMigrateDeploy(input: {
     result = await input.sandbox.exec(command, execOptions);
   } finally {
     if (configFile && parked) {
-      await input.sandbox.exec(`mv ${parked} ${configFile}`, { cwd: cwd || undefined });
+      await input.sandbox.exec(`mv ${parked} ${configFile}`, { cwd: cwd || undefined, timeoutMs: 30_000 });
     }
   }
 
