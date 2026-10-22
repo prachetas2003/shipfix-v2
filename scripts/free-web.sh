@@ -20,5 +20,20 @@ if [ "$ready" -ne 1 ]; then
   exit 1
 fi
 
-pnpm --filter @shipfix/worker start:prod &
+i=0
+while [ "$i" -lt 60 ]; do
+  if temporal operator namespace describe --namespace default --address 127.0.0.1:7233 >/dev/null 2>&1; then
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+
+# The worker exits for good if its first connection to the workflow engine
+# times out. Keep it running or accepted deploys sit with nobody to execute them.
+while true; do
+  pnpm --filter @shipfix/worker start:prod || echo "worker exited; starting it again" >&2
+  sleep 3
+done &
+
 exec pnpm --filter @shipfix/api start:prod
