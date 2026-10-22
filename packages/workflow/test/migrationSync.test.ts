@@ -14,6 +14,7 @@ function fakeSandbox(files: string[], exitCodes: Record<string, number> = {}) {
   const calls: { cmd: string; cwd?: string; env?: Record<string, string> }[] = [];
   const sandbox = {
     list: async () => files,
+    writeFile: async () => {},
     exec: async (cmd: string, opts: { cwd?: string; env?: Record<string, string> } = {}) => {
       calls.push({ cmd, cwd: opts.cwd, env: opts.env });
       const key = Object.keys(exitCodes).find((k) => cmd.includes(k));
@@ -185,7 +186,22 @@ describe("prisma schema sync", () => {
       urls: URLS,
       freshDatabase: false,
     });
-    expect(failed.ok).toBe(false);
+    expect(failed.ok).toBe(true);
+    expect(failing.calls.some((c) => c.cmd === "node .shipfix-apply-sql.mjs prisma/migrations")).toBe(true);
     expect(failed.detail).not.toContain("secretpw");
+
+    const both = fakeSandbox([...files, "prisma/migrations/1_init/migration.sql"], {
+      "migrate deploy": 1,
+      "shipfix-apply-sql": 1,
+    });
+    const stillFailed = await runPrismaMigrateDeploy({
+      sandbox: both.sandbox,
+      schemaPath: "prisma/schema.prisma",
+      packageManager: "npm",
+      urls: URLS,
+      freshDatabase: false,
+    });
+    expect(stillFailed.ok).toBe(false);
+    expect(stillFailed.detail).not.toContain("secretpw");
   });
 });

@@ -2,7 +2,12 @@
 # One free web server: workflow engine, worker, and API in the same machine.
 set -eu
 
-temporal server start-dev --headless --ip 127.0.0.1 --port 7233 --db-filename /tmp/temporal.db &
+# Restart the workflow engine if it exits. The website otherwise keeps
+# accepting runs that nobody can execute.
+while true; do
+  temporal server start-dev --headless --ip 127.0.0.1 --port 7233 --db-filename /tmp/temporal.db || echo "workflow engine exited; starting it again" >&2
+  sleep 2
+done &
 
 ready=0
 i=0

@@ -134,18 +134,162 @@ export async function runPrismaMigrateDeploy(input: {
   const combined = `${result.stdout}\n${result.stderr}`.trim();
   const detail = redactConnectionStrings(combined).slice(0, 2000);
 
-  if (result.timedOut) {
-    return { ok: false, skipped: false, exitCode: result.exitCode, detail: `${verb} timed out. ${detail}` };
+  if (result.exitCode === 0 && !result.timedOut) {
+    return { ok: true, skipped: false, exitCode: 0, detail: detail || `${verb} succeeded.` };
   }
-  if (result.exitCode !== 0) {
+
+  if (hasMigrations) {
+    const applied = await applyCommittedSql({
+      sandbox: input.sandbox,
+      cwd,
+      migrationsDir: migrationsDirForSchema(schemaFromPackage),
+      env: execOptions.env,
+    });
+    if (applied.ok) {
+      return {
+        ok: true,
+        skipped: false,
+        exitCode: 0,
+        detail: `Prisma migrate did not apply the SQL (${detail || verb}). ShipFix applied the committed migration files directly. ${applied.detail}`,
+      };
+    }
     return {
       ok: false,
       skipped: false,
       exitCode: result.exitCode,
-      detail: detail || `${verb} exited ${result.exitCode}`,
+      detail: `${detail || `${verb} exited ${result.exitCode}`}\n${applied.detail}`.slice(0, 2000),
     };
   }
-  return { ok: true, skipped: false, exitCode: 0, detail: detail || `${verb} succeeded.` };
+
+  if (result.timedOut) {
+    return { ok: false, skipped: false, exitCode: result.exitCode, detail: `${verb} timed out. ${detail}` };
+  }
+  return {
+    ok: false,
+    skipped: false,
+    exitCode: result.exitCode,
+    detail: detail || `${verb} exited ${result.exitCode}`,
+  };
+}
+
+const APPLY_SQL_SCRIPT = `
+import pg from "pg";
+import { readdir, readFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  console.error("DATABASE_URL is missing");
+  process.exit(1);
+}
+const migrationsDir = process.argv[2];
+if (!migrationsDir) {
+  console.error("migrations directory is missing");
+  process.exit(1);
+}
+
+function statements(sql) {
+  const out = [];
+  let current = "";
+  let quote = false;
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    if (ch === "'" && sql[i - 1] !== "\\\\") quote = !quote;
+    if (!quote && ch === ";") {
+      const stmt = current.trim();
+      if (stmt) out.push(stmt);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  const tail = current.trim();
+  if (tail) out.push(tail);
+  return out;
+}
+
+const client = new pg.Client({ connectionString: databaseUrl });
+await client.connect();
+try {
+  await client.query(\`CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
+    id VARCHAR(36) PRIMARY KEY,
+    checksum VARCHAR(64) NOT NULL,
+    finished_at TIMESTAMPTZ,
+    migration_name VARCHAR(255) NOT NULL,
+    logs TEXT,
+    rolled_back_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    applied_steps_count INTEGER NOT NULL DEFAULT 0
+  )\`);
+  const names = (await readdir(migrationsDir, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  for (const name of names) {
+    const sql = await readFile(migrationsDir + "/" + name + "/migration.sql", "utf8");
+    const checksum = createHash("sha256").update(sql).digest("hex");
+    const existing = await client.query(
+      'SELECT checksum FROM "_prisma_migrations" WHERE migration_name = $1',
+      [name],
+    );
+    if (existing.rowCount) continue;
+    await client.query("BEGIN");
+    try {
+      for (const stmt of statements(sql)) {
+        await client.query("SAVEPOINT stmt");
+        try {
+          await client.query(stmt);
+          await client.query("RELEASE SAVEPOINT stmt");
+        } catch (error) {
+          await client.query("ROLLBACK TO SAVEPOINT stmt");
+          if (!(error && error.code === "42P07")) throw error;
+        }
+      }
+      await client.query(
+        'INSERT INTO "_prisma_migrations" (id, checksum, migration_name, finished_at, applied_steps_count) VALUES ($1, $2, $3, now(), 1)',
+        [randomUUID(), checksum, name],
+      );
+      await client.query("COMMIT");
+      console.log("applied " + name);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  }
+} finally {
+  await client.end();
+}
+`;
+
+async function applyCommittedSql(input: {
+  sandbox: Sandbox;
+  cwd: string;
+  migrationsDir: string;
+  env: Record<string, string>;
+}): Promise<{ ok: boolean; detail: string }> {
+  const scriptName = ".shipfix-apply-sql.mjs";
+  const scriptPath = input.cwd ? `${input.cwd}/${scriptName}` : scriptName;
+  await input.sandbox.writeFile(scriptPath, APPLY_SQL_SCRIPT);
+  try {
+    const result = await input.sandbox.exec(`node ${scriptName} ${input.migrationsDir}`, {
+      cwd: input.cwd || undefined,
+      timeoutMs: 120_000,
+      env: input.env,
+    });
+    const detail = redactConnectionStrings(`${result.stdout}\n${result.stderr}`.trim()).slice(0, 1500);
+    if (result.timedOut) return { ok: false, detail: `Applying the committed SQL timed out. ${detail}` };
+    if (result.exitCode !== 0) return { ok: false, detail: detail || `Applying the committed SQL exited ${result.exitCode}` };
+    return { ok: true, detail: detail || "Committed SQL applied." };
+  } finally {
+    await input.sandbox.exec(`rm -f ${scriptName}`, { cwd: input.cwd || undefined, timeoutMs: 30_000 }).catch(() => undefined);
+  }
+}
+
+function migrationsDirForSchema(schemaFromPackage: string): string {
+  const slash = schemaFromPackage.lastIndexOf("/");
+  const dir = slash === -1 ? "" : schemaFromPackage.slice(0, slash);
+  return dir ? `${dir}/migrations` : "migrations";
 }
 
 const PRISMA_CONFIG_FILES = [
