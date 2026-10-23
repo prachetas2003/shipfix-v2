@@ -92,9 +92,15 @@ export async function runPrismaMigrateDeploy(input: {
   if (!install.ok) return { ok: false, skipped: false, detail: redactConnectionStrings(install.detail) };
 
   const direct = migrateConnectionUrl(input.urls);
+  const cwd = migrationInstallDir(files, input.schemaPath);
+  const awake = await wakeDatabase({
+    sandbox: input.sandbox,
+    cwd,
+    env: { DATABASE_URL: direct, DIRECT_URL: direct, CI: "1" },
+  });
+  if (!awake.ok) return { ok: false, skipped: false, detail: awake.detail };
   // Run inside the package that owns the schema. From the repo root, npx does
   // not see that package's Prisma and downloads whatever is current instead.
-  const cwd = migrationInstallDir(files, input.schemaPath);
   const schemaFromPackage = schemaPathForCwd(input.schemaPath, cwd);
   const command = hasMigrations
     ? prismaMigrateCommand(schemaFromPackage, input.packageManager)
@@ -125,6 +131,10 @@ export async function runPrismaMigrateDeploy(input: {
   let result;
   try {
     result = await input.sandbox.exec(command, execOptions);
+    if (connectionRefused(result) && !result.timedOut) {
+      const again = await wakeDatabase({ sandbox: input.sandbox, cwd, env: execOptions.env });
+      if (again.ok) result = await input.sandbox.exec(command, execOptions);
+    }
   } finally {
     if (configFile && parked) {
       await input.sandbox.exec(`mv ${parked} ${configFile}`, { cwd: cwd || undefined, timeoutMs: 30_000 });
@@ -208,8 +218,33 @@ function statements(sql) {
   return out;
 }
 
-const client = new pg.Client({ connectionString: databaseUrl });
-await client.connect();
+let client = null;
+let lastError = "database did not accept a connection";
+for (let attempt = 1; attempt <= 12; attempt++) {
+  const next = new pg.Client({ connectionString: databaseUrl, connectionTimeoutMillis: 10000 });
+  let failed = false;
+  const fail = (error) => {
+    failed = true;
+    lastError = error instanceof Error ? error.message : String(error);
+  };
+  next.on("error", fail);
+  try {
+    await next.connect();
+    if (!failed) await next.query("select 1");
+  } catch (error) {
+    fail(error);
+  }
+  if (!failed) {
+    client = next;
+    break;
+  }
+  await next.end().catch(() => undefined);
+  if (attempt < 12) await new Promise((resolve) => setTimeout(resolve, 5000));
+}
+if (!client) {
+  console.error(lastError);
+  process.exit(1);
+}
 try {
   await client.query(\`CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
     id VARCHAR(36) PRIMARY KEY,
@@ -261,6 +296,72 @@ try {
   await client.end();
 }
 `;
+
+const WAKE_DB_SCRIPT = `
+import pg from "pg";
+
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  console.error("DATABASE_URL is missing");
+  process.exit(1);
+}
+
+let lastError = "database did not accept a connection";
+for (let attempt = 1; attempt <= 12; attempt++) {
+  const client = new pg.Client({ connectionString: databaseUrl, connectionTimeoutMillis: 10000 });
+  let failed = false;
+  const fail = (error) => {
+    failed = true;
+    lastError = error instanceof Error ? error.message : String(error);
+  };
+  client.on("error", fail);
+  try {
+    await client.connect();
+    if (!failed) await client.query("select 1");
+  } catch (error) {
+    fail(error);
+  }
+  await client.end().catch(() => undefined);
+  if (!failed) {
+    console.log("database accepted a connection");
+    process.exit(0);
+  }
+  console.error("attempt " + attempt + " failed: " + lastError);
+  if (attempt < 12) await new Promise((resolve) => setTimeout(resolve, 5000));
+}
+process.exit(1);
+`;
+
+function connectionRefused(result: { stdout: string; stderr: string }): boolean {
+  const text = `${result.stdout}\n${result.stderr}`;
+  return /P1001|Can't reach database server|Connection terminated unexpectedly|ECONNREFUSED|timeout expired/i.test(text);
+}
+
+/** Free Neon databases sleep. The first connection is often dropped while the server wakes. */
+async function wakeDatabase(input: {
+  sandbox: Sandbox;
+  cwd: string;
+  env: Record<string, string>;
+}): Promise<{ ok: boolean; detail: string }> {
+  const scriptName = ".shipfix-wake-db.mjs";
+  const scriptPath = input.cwd ? `${input.cwd}/${scriptName}` : scriptName;
+  await input.sandbox.writeFile(scriptPath, WAKE_DB_SCRIPT);
+  try {
+    const result = await input.sandbox.exec(`node ${scriptName}`, {
+      cwd: input.cwd || undefined,
+      timeoutMs: 180_000,
+      env: input.env,
+    });
+    const detail = redactConnectionStrings(`${result.stdout}\n${result.stderr}`.trim()).slice(0, 1500);
+    if (result.timedOut) return { ok: false, detail: `The database did not wake up in time. ${detail}` };
+    if (result.exitCode !== 0) {
+      return { ok: false, detail: detail || "The database did not accept a connection." };
+    }
+    return { ok: true, detail };
+  } finally {
+    await input.sandbox.exec(`rm -f ${scriptName}`, { cwd: input.cwd || undefined, timeoutMs: 30_000 }).catch(() => undefined);
+  }
+}
 
 async function applyCommittedSql(input: {
   sandbox: Sandbox;

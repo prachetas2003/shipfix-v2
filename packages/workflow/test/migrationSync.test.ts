@@ -115,10 +115,12 @@ describe("prisma schema sync", () => {
     expect(r.ok).toBe(true);
     expect(calls.map((c) => c.cmd)).toEqual([
       "npm install --no-audit --no-fund",
+      "node .shipfix-wake-db.mjs",
+      "rm -f .shipfix-wake-db.mjs",
       prismaPushCommand("prisma/schema.prisma", "npm"),
     ]);
-    expect(calls[1].cmd).toContain("prisma db push --accept-data-loss --schema prisma/schema.prisma");
-    expect(calls[1].cwd).toBeUndefined();
+    expect(calls[3].cmd).toContain("prisma db push --accept-data-loss --schema prisma/schema.prisma");
+    expect(calls[3].cwd).toBeUndefined();
   });
 
   it("runs the Prisma installed beside a nested schema, not a copy from the repo root", async () => {
@@ -138,8 +140,8 @@ describe("prisma schema sync", () => {
     });
     expect(r.ok).toBe(true);
     expect(calls[0]).toMatchObject({ cmd: "npm install --no-audit --no-fund", cwd: "api" });
-    expect(calls[1].cmd).toBe("npx prisma migrate deploy --schema prisma/schema.prisma");
-    expect(calls[1].cwd).toBe("api");
+    expect(calls[3].cmd).toBe("npx prisma migrate deploy --schema prisma/schema.prisma");
+    expect(calls[3].cwd).toBe("api");
   });
 
   it("sets a JavaScript Prisma config aside so migrate uses the schema URL", async () => {
@@ -160,11 +162,13 @@ describe("prisma schema sync", () => {
     expect(r.ok).toBe(true);
     expect(calls.map((c) => c.cmd)).toEqual([
       "npm install --no-audit --no-fund",
+      "node .shipfix-wake-db.mjs",
+      "rm -f .shipfix-wake-db.mjs",
       "mv prisma.config.ts prisma.config.ts.shipfix-bak",
       "npx prisma migrate deploy --schema prisma/schema.prisma",
       "mv prisma.config.ts.shipfix-bak prisma.config.ts",
     ]);
-    expect(calls[2].cwd).toBe("api");
+    expect(calls[4].cwd).toBe("api");
   });
 
   it("skips a reused database without migrations and redacts failures", async () => {
@@ -203,5 +207,17 @@ describe("prisma schema sync", () => {
     });
     expect(stillFailed.ok).toBe(false);
     expect(stillFailed.detail).not.toContain("secretpw");
+
+    const asleep = fakeSandbox([...files, "prisma/migrations/1_init/migration.sql"], { "shipfix-wake-db": 1 });
+    const neverReached = await runPrismaMigrateDeploy({
+      sandbox: asleep.sandbox,
+      schemaPath: "prisma/schema.prisma",
+      packageManager: "npm",
+      urls: URLS,
+      freshDatabase: false,
+    });
+    expect(neverReached.ok).toBe(false);
+    expect(asleep.calls.some((c) => c.cmd.includes("prisma migrate"))).toBe(false);
+    expect(neverReached.detail).not.toContain("secretpw");
   });
 });
