@@ -4,9 +4,9 @@
 
 **Paste your repo link and get it live.**
 
-Your site on Vercel. Your API on Render. Your database on Neon.
+Your frontend on Vercel ,API on Render and database on Neon.
 
-ShipFix wires them, runs the migrations, and opens a pull request when the build breaks. The URL counts only after it answers.
+ShipFix deploys them to the appropriate hosts, wires them, runs the migrations, opens a pull request and fixes problems if the build breaks. The final URL counts only after it answers.
 
 Try it at [shipfix-web.onrender.com](https://shipfix-web.onrender.com).
 
