@@ -2,7 +2,7 @@
 
 <img width="575" height="491" alt="ShipFix deploying a full-stack app" src="https://github.com/user-attachments/assets/8bf3b74b-cf7c-4ddb-acf0-997736878152" />
 
-**Paste a repo. Get a live app.**
+**Paste your repo link and get it live.**
 
 Your site on Vercel. Your API on Render. Your database on Neon.
 
