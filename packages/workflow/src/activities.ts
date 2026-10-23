@@ -1921,7 +1921,7 @@ export async function deployBackendServices(runId: string): Promise<DeploySummar
     }
     if (deferred.length > 0) {
       await logger.log(
-        `Deferring ${deferred.join(", ")} for "${svc.id}" until the frontend is live.`,
+        `Using a temporary value for ${deferred.join(", ")} on "${svc.id}" until the frontend is live.`,
         { event: "env_deferred", serviceId: svc.id, deferred },
       );
     }

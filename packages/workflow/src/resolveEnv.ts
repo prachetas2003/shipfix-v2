@@ -269,6 +269,9 @@ export async function resolveServiceEnv(
       const parsed = parseRef(v.ref ?? "");
       if (parsed && isFrontendService(plan, parsed.id)) {
         deferred.push(v.name);
+        // The frontend URL does not exist yet. A temporary value lets the
+        // backend boot; wireDeferredBackendEnv replaces it once the site is live.
+        env[v.name] = /cors|origin/i.test(v.name) ? "*" : "https://pending.invalid";
         continue;
       }
     }

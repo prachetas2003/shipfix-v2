@@ -211,7 +211,7 @@ describe("resolveServiceEnv", () => {
     );
     expect(issues.some((i) => i.envName === "CORS_ORIGIN")).toBe(false);
     expect(deferred).toContain("CORS_ORIGIN");
-    expect(env.CORS_ORIGIN).toBeUndefined();
+    expect(env.CORS_ORIGIN).toBe("*");
   });
 
   it("resolves user_secret from run_inputs by question id", async () => {
