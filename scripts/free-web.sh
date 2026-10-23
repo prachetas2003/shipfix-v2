@@ -35,18 +35,20 @@ while [ "$i" -lt 60 ]; do
 done
 
 # A workflow engine that stops answering (without exiting) leaves a run
-# spinning on the next step forever. Restart it, and restart the worker so
-# the worker drops its dead connection.
+# spinning on the next step forever. Start this only after the first boot
+# has succeeded, and require two minutes of failed checks so a slow answer
+# during startup does not kill a healthy engine.
 (
   misses=0
+  sleep 90
   while true; do
     sleep 20
-    if timeout 5 temporal operator cluster health --address 127.0.0.1:7233 >/dev/null 2>&1; then
+    if timeout 8 temporal operator cluster health --address 127.0.0.1:7233 >/dev/null 2>&1; then
       misses=0
       continue
     fi
     misses=$((misses + 1))
-    if [ "$misses" -lt 3 ]; then
+    if [ "$misses" -lt 6 ]; then
       continue
     fi
     echo "workflow engine is not answering; restarting it" >&2
@@ -62,7 +64,7 @@ done
       esac
     done
     misses=0
-    sleep 5
+    sleep 90
   done
 ) &
 
