@@ -165,6 +165,10 @@ class LocalDevSandbox implements Sandbox {
     return acc;
   }
 
+  async allowResolvedAddresses(): Promise<number> {
+    return 0;
+  }
+
   async dispose(): Promise<void> {
     await fs.rm(this.workdir, { recursive: true, force: true });
   }

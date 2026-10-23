@@ -41,6 +41,7 @@ function fakeSandbox(results: Record<string, { exitCode: number; stdout?: string
     },
     writeFile: async (p, c) => void (files[p] = c),
     list: async () => Object.keys(files),
+    allowResolvedAddresses: async () => 0,
     dispose: async () => {},
   };
   return { sandbox, calls, files };

@@ -8,8 +8,12 @@
 import { CommandExitError, Sandbox as E2BSandbox, TimeoutError } from "e2b";
 import path from "node:path";
 import type { CloneSpec, ExecOptions, ExecResult, Sandbox, SandboxProvider } from "./index";
+import { parseResolvedAddresses, safeLookupHosts } from "./egress";
 import { buildSandboxEnv } from "./env";
 import { IGNORED_DIRS } from "./ignored";
+
+const LOOKUP_ADDRESSES =
+  'import dns from "node:dns/promises"; const hosts = (process.env.HOSTS ?? "").split(",").filter(Boolean); const out = []; for (const host of hosts) { try { for (const row of await dns.lookup(host, { all: true })) out.push(row.address); } catch {} } console.log(out.join(" "));';
 
 const WORKDIR = "/home/user/repo";
 
@@ -40,7 +44,10 @@ function toResult(res: { exitCode: number; stdout: string; stderr: string }, tim
 }
 
 class E2BRunSandbox implements Sandbox {
-  constructor(private readonly vm: E2BSandbox) {}
+  constructor(
+    private readonly vm: E2BSandbox,
+    private allowOut: string[],
+  ) {}
 
   private resolveInside(relPath: string): string {
     const abs = path.posix.resolve(WORKDIR, relPath);
@@ -123,6 +130,24 @@ class E2BRunSandbox implements Sandbox {
       .sort();
   }
 
+  async allowResolvedAddresses(hosts: string[]): Promise<number> {
+    const clean = safeLookupHosts(hosts);
+    if (clean.length === 0) return 0;
+    const looked = await this.run(`node --input-type=module -e ${JSON.stringify(LOOKUP_ADDRESSES)}`, {
+      cwd: "/home/user",
+      timeoutMs: 20_000,
+      env: { HOSTS: clean.join(",") },
+    });
+    const ips = parseResolvedAddresses(looked.stdout);
+    if (ips.length === 0) return 0;
+    this.allowOut = [...new Set([...this.allowOut, ...ips])];
+    await this.vm.updateNetwork({
+      allowOut: this.allowOut,
+      denyOut: ({ allTraffic }) => [allTraffic],
+    });
+    return ips.length;
+  }
+
   async dispose(): Promise<void> {
     await this.vm.kill().catch(() => undefined);
   }
@@ -141,7 +166,7 @@ export function createE2BSandboxProvider(config: E2BProviderConfig): SandboxProv
           denyOut: ({ allTraffic }) => [allTraffic],
         },
       });
-      return new E2BRunSandbox(vm);
+      return new E2BRunSandbox(vm, [...new Set(allow)]);
     },
   };
 }

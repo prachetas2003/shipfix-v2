@@ -1560,6 +1560,15 @@ export async function runManagedMigrations(runId: string): Promise<MigrationSumm
   const sandbox = await provider.create({ runId: `${runId}-migrate`, egressAllow: dbHosts });
 
   try {
+    const addresses = await sandbox.allowResolvedAddresses(dbHosts);
+    if (dbHosts.length > 0) {
+      await logger.log(
+        addresses > 0
+          ? "Database connection opened."
+          : "Could not open a network path to the database.",
+        { event: "db_egress_ready", addresses },
+      );
+    }
     const token = await resolveCloneToken({
       repoFullName,
       installationId: githubInstallationId,

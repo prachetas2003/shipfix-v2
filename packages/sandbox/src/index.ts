@@ -45,6 +45,13 @@ export interface Sandbox {
   writeFile(path: string, content: string): Promise<void>;
   /** List paths (pruned) for the analyzer's file-tree build. */
   list(globOrDir?: string): Promise<string[]>;
+  /**
+   * Allow the IP addresses these hosts resolve to. A domain allowlist does not
+   * cover Postgres: the firewall matches TLS server names, and Postgres sends
+   * its startup packet before the TLS name.
+   * Returns how many addresses were added.
+   */
+  allowResolvedAddresses(hosts: string[]): Promise<number>;
   /** Tear down the sandbox and release all resources. Always called. */
   dispose(): Promise<void>;
 }
