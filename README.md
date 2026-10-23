@@ -2,9 +2,11 @@
 
 <img width="575" height="491" alt="ShipFix deploying a full-stack app" src="https://github.com/user-attachments/assets/8bf3b74b-cf7c-4ddb-acf0-997736878152" />
 
-ShipFix takes a GitHub repository and stands the app up in **your** cloud accounts. The frontend lands on Vercel, the API on Render, Postgres on Neon. ShipFix wires the URLs and secrets, runs the database migrations, checks that the live URLs actually answer, and, when a build fails for a reason it can fix, opens a pull request.
+**Paste a repo. Get a live app.**
 
-It does not host the app. It operates the deploy.
+Your site on Vercel. Your API on Render. Your database on Neon.
+
+ShipFix wires them, runs the migrations, and opens a pull request when the build breaks. The URL counts only after it answers.
 
 Try it at [shipfix-web.onrender.com](https://shipfix-web.onrender.com).
 
@@ -46,10 +48,10 @@ flowchart LR
 flowchart TD
   paste["Paste owner/repo"] --> analyze["Clone in a sandbox and read the repo"]
   analyze --> plan["Build a deployment plan"]
-  plan --> class{"Classification"}
-  class -->|"Outside the slice"| diagnosis["Diagnose and stop"]
-  class -->|"A secret or choice is missing"| ask["Ask, then continue the same run"]
-  class -->|"Deployable"| connect["Use the signed-in user's Vercel, Render, and Neon"]
+  plan --> verdict{"Classification"}
+  verdict -->|"Outside the slice"| diagnosis["Diagnose and stop"]
+  verdict -->|"A secret or choice is missing"| ask["Ask, then continue the same run"]
+  verdict -->|"Deployable"| connect["Use the signed-in user's Vercel, Render, and Neon"]
   ask --> connect
   connect --> db["Create Postgres and run migrations"]
   db --> api["Deploy the API"]
