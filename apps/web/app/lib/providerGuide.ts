@@ -32,7 +32,8 @@ export interface ProviderGuide {
   scope: string;
   /** Provider behavior a beginner should know about. */
   lifecycle?: string;
-  /** Additional setup, for example Vercel GitHub access. */
+  /** Additional setup, for example Vercel GitHub access. Shown even after the token is saved. */
+  extraStepsTitle?: string;
   extraSteps?: ProviderExtraStep[];
 }
 
@@ -106,20 +107,25 @@ export const PROVIDER_GUIDES: Record<ProviderId, ProviderGuide> = {
     optionalFields: [
       { field: "teamId", label: "Team ID", placeholder: "team_xxx — required if projects live under a Vercel team" },
     ],
+    extraStepsTitle: "Vercel to GitHub",
     extraSteps: [
       {
-        title: "Connect GitHub to Vercel",
+        title: "Connect GitHub on Vercel",
         detail:
-          "Vercel deploys from GitHub, so your Vercel account must be connected to GitHub and allowed to access this repo.",
+          "Open Vercel login connections. Add GitHub on the same Vercel account as the token you pasted above.",
         url: "https://vercel.com/account/login-connections",
-        urlLabel: "Vercel login connections",
+        urlLabel: "Open Vercel login connections",
       },
       {
-        title: "Authorize the Vercel GitHub app",
+        title: "Let Vercel read this repository",
         detail:
-          "If Vercel cannot find the repo, install or authorize the Vercel GitHub app for the repository owner.",
-        url: "https://github.com/apps/vercel",
-        urlLabel: "Vercel GitHub app",
+          "Sign in to GitHub. Open GitHub installations. Click Vercel, then Configure. Include this repository and press Save. The button on that page is Configure. If the top of the page says Sign in, press Sign in first.",
+        url: "https://github.com/settings/installations",
+        urlLabel: "Open GitHub installations",
+      },
+      {
+        title: "Deploy again",
+        detail: "Come back to ShipFix and press Deploy. This page stays on the failed run until you start deploy again.",
       },
     ],
   },

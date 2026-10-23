@@ -54,7 +54,7 @@ export function extractFailureGuidance(events: RunEventRow[]): FailureGuidanceDa
     }
     if (d.event === "deploy_failure_guidance") {
       const action = String(d.action ?? "inspect_error") as GuidanceAction;
-      return {
+      return withVercelGithubSetup({
         action,
         title: typeof d.title === "string" ? d.title : "What to do next",
         whatHappened: typeof d.whatHappened === "string" ? d.whatHappened : ev.message,
@@ -63,7 +63,7 @@ export function extractFailureGuidance(events: RunEventRow[]): FailureGuidanceDa
         fixPrompt: typeof d.fixPrompt === "string" ? d.fixPrompt : null,
         provider: typeof d.provider === "string" ? d.provider : null,
         serviceId: typeof d.serviceId === "string" ? d.serviceId : null,
-      };
+      });
     }
   }
 
@@ -86,6 +86,40 @@ export function extractFailureGuidance(events: RunEventRow[]): FailureGuidanceDa
     };
   }
   return null;
+}
+
+const VERCEL_GITHUB_STEPS = [
+  "Open Vercel login connections and add GitHub on the same account as the token: https://vercel.com/account/login-connections",
+  "Sign in to GitHub. Open https://github.com/settings/installations. Click Vercel, then Configure. Include this repository and press Save. The button is Configure. If the page says Sign in, press Sign in first.",
+  "Come back to ShipFix and press Deploy again.",
+];
+
+function withVercelGithubSetup(guidance: FailureGuidanceData): FailureGuidanceData {
+  const blob = `${guidance.title} ${guidance.whatHappened} ${guidance.whatYouShouldDo.join(" ")}`;
+  if (!/install the GitHub integration|GitHub integration first|Login Connection|Vercel GitHub app required|Vercel GitHub connection required/i.test(blob)) {
+    return guidance;
+  }
+  return {
+    ...guidance,
+    action: "fix_account_setup",
+    title: "Connect Vercel to GitHub",
+    whatYouShouldDo: VERCEL_GITHUB_STEPS,
+    showCursorPrompt: false,
+    fixPrompt: null,
+  };
+}
+
+function linkify(text: string): React.ReactNode {
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+  return parts.map((part, index) => {
+    if (!part.startsWith("http")) return <span key={index}>{part}</span>;
+    const url = part.replace(/[.,)]$/, "");
+    return (
+      <a key={index} href={url} target="_blank" rel="noreferrer" style={{ color: colors.accentText, fontWeight: 600 }}>
+        {url}
+      </a>
+    );
+  });
 }
 
 function actionBadge(action: GuidanceAction): { label: string; color: string } {
@@ -120,13 +154,14 @@ export function FailureGuidance({
 }): React.ReactElement | null {
   const [copied, setCopied] = useState(false);
   const guidance = extractFailureGuidance(events);
-  if (!guidance) return null;
+  const shown = guidance ? withVercelGithubSetup(guidance) : null;
+  if (!shown) return null;
 
-  const badge = actionBadge(guidance.action);
+  const badge = actionBadge(shown.action);
   const copy = async () => {
-    if (!guidance.fixPrompt) return;
+    if (!shown.fixPrompt) return;
     try {
-      await navigator.clipboard.writeText(guidance.fixPrompt);
+      await navigator.clipboard.writeText(shown.fixPrompt);
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -137,36 +172,36 @@ export function FailureGuidance({
   return (
     <section className="sf-panel sf-slide-up" style={{ marginTop: "1.25rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-        <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 600, color: colors.warnText }}>{guidance.title}</h3>
-        <span className={`sf-badge sf-badge--${guidance.action === "fix_repo_code" ? "warn" : "info"}`}>
+        <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 600, color: colors.warnText }}>{shown.title}</h3>
+        <span className={`sf-badge sf-badge--${shown.action === "fix_repo_code" ? "warn" : "info"}`}>
           {badge.label}
         </span>
       </div>
 
       <p style={{ margin: "0 0 0.75rem", fontSize: "0.88rem", color: colors.warnText, lineHeight: 1.55 }}>
-        <strong>What happened:</strong> {guidance.whatHappened}
+        <strong>What happened:</strong> {shown.whatHappened}
       </p>
 
-      {guidance.whatYouShouldDo.length > 0 && (
+      {shown.whatYouShouldDo.length > 0 && (
         <>
           <p style={{ margin: "0 0 0.35rem", fontSize: "0.82rem", fontWeight: 700, color: colors.warnText }}>
             What you should do
           </p>
           <ol style={{ margin: "0 0 0.9rem", paddingLeft: "1.2rem", fontSize: "0.86rem", lineHeight: 1.6, color: colors.warnText }}>
-            {guidance.whatYouShouldDo.map((item, i) => (
-              <li key={i}>{item}</li>
+            {shown.whatYouShouldDo.map((item, i) => (
+              <li key={i}>{linkify(item)}</li>
             ))}
           </ol>
         </>
       )}
 
-      {guidance.action === "update_credentials" && onUpdateCredentials && (
+      {shown.action === "update_credentials" && onUpdateCredentials && (
         <Button onClick={onUpdateCredentials} style={{ marginBottom: 12 }}>
-          Update {guidance.provider ?? "provider"} credentials
+          Update {shown.provider ?? "provider"} credentials
         </Button>
       )}
 
-      {guidance.showCursorPrompt && guidance.fixPrompt && (
+      {shown.showCursorPrompt && shown.fixPrompt && (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
             <strong style={{ fontSize: "0.82rem", color: colors.warnText }}>
@@ -200,14 +235,14 @@ export function FailureGuidance({
               overflowX: "auto",
             }}
           >
-            {guidance.fixPrompt}
+            {shown.fixPrompt}
           </pre>
         </>
       )}
 
-      {!guidance.showCursorPrompt && (
+      {shown.action === "inspect_error" && (
         <p style={{ margin: "0.5rem 0 0", fontSize: "0.8rem", color: colors.warnText, opacity: 0.85 }}>
-          No Cursor/ChatGPT code prompt — this is not classified as a repository code bug.
+          Open the provider log before changing the repository.
         </p>
       )}
     </section>

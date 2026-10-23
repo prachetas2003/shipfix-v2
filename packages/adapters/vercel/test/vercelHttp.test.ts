@@ -36,6 +36,21 @@ describe("classifyVercelFailure", () => {
     expect(result.message).toContain("HTTP 500");
   });
 
+  it("treats a missing Vercel GitHub app as account setup", () => {
+    const body = JSON.stringify({
+      error: {
+        code: "bad_request",
+        message:
+          "To link a GitHub repository, you need to install the GitHub integration first. Make sure there aren't any typos and that you have access to the repository if it's private.",
+        link: "https://github.com/apps/vercel",
+      },
+    });
+    const result = classifyVercelFailure(400, "Bad Request", body);
+    expect(result.kind).toBe("setup_blocker");
+    expect(result.message).toContain("github.com/settings/installations");
+    expect(result.message).toContain("Configure");
+  });
+
   it("detects gitSource repoId setup blocker from API 400", () => {
     const body = JSON.stringify({
       error: {

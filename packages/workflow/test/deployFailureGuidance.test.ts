@@ -68,6 +68,21 @@ describe("buildDeployFailureGuidance", () => {
     expect(g.whatYouShouldDo.join(" ")).toMatch(/not a bug in your application code/i);
   });
 
+  it("tells the user to Configure the Vercel GitHub app when the integration is missing", () => {
+    const g = buildDeployFailureGuidance({
+      repoFullName: "acme/app",
+      service: web,
+      provider: "vercel",
+      failureKind: "deploy_failed",
+      errorSummary:
+        "Vercel API HTTP 400: To link a GitHub repository, you need to install the GitHub integration first.",
+    });
+    expect(g.action).toBe("fix_account_setup");
+    expect(g.showCursorPrompt).toBe(false);
+    expect(g.whatYouShouldDo.join(" ")).toContain("https://github.com/settings/installations");
+    expect(g.whatYouShouldDo.join(" ")).toContain("Configure");
+  });
+
   it("routes setup_blocker to credentials/account — no Cursor prompt", () => {
     const g = buildDeployFailureGuidance({
       repoFullName: "acme/app",

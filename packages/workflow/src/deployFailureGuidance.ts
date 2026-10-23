@@ -74,7 +74,7 @@ export function detectErrorSignals(errorSummary: string): ErrorSignals {
         e,
       ),
     githubLink:
-      /GitHub connection required|Login Connection|git repoId|gitSource.*repoId|requires a linked GitHub|connect.*GitHub/i.test(
+      /GitHub connection required|GitHub app required|Login Connection|install the GitHub integration|GitHub integration first|git repoId|gitSource.*repoId|requires a linked GitHub|connect.*GitHub/i.test(
         e,
       ),
     providerLimit:
@@ -219,14 +219,17 @@ export function buildDeployFailureGuidance(input: DeployFailureGuidanceInput): D
         stage,
         title: `${provider} account setup is incomplete`,
         whatHappened: `${provider} blocked "${serviceId}" because the account is missing a required link or setting. ${err}`,
-        whatYouShouldDo: [
-          `This is not a repository code bug.`,
+        whatYouShouldDo:
           input.provider === "vercel"
-            ? `Connect GitHub to your Vercel account (Login Connections) and authorize the Vercel GitHub app for this repo.`
-            : `Check ${provider} account access to the GitHub repo, then retry.`,
-          `If the token is for a team, update credentials with the correct team/owner id.`,
-          `Then retry deploy in ShipFix.`,
-        ],
+            ? [
+                "Open Vercel login connections and add GitHub on the same account as the token: https://vercel.com/account/login-connections",
+                "Sign in to GitHub. Open https://github.com/settings/installations. Click Vercel, then Configure. Include this repository and press Save. The button is Configure. If the page says Sign in, press Sign in first.",
+                "Come back to ShipFix and press Deploy again.",
+              ]
+            : [
+                `Check ${provider} account access to the GitHub repo, then retry.`,
+                `Then retry deploy in ShipFix.`,
+              ],
         showCursorPrompt: false,
         provider: input.provider,
         serviceId,

@@ -39,6 +39,23 @@ describe("providersNeedingCredentialFix", () => {
     ).toEqual(["vercel"]);
   });
 
+  it("treats the Vercel GitHub integration error as a Vercel account setup", () => {
+    expect(
+      providersNeedingCredentialFix([
+        ev(
+          {
+            event: "deploy_failure_guidance",
+            action: "inspect_error",
+            provider: "vercel",
+            whatHappened:
+              "ShipFix could not classify this as a clear code bug or a clear credentials problem. Provider error: To link a GitHub repository, you need to install the GitHub integration first.",
+          },
+          "Vercel could not finish deploying web",
+        ),
+      ]),
+    ).toEqual(["vercel"]);
+  });
+
   it("ignores ordinary build failures", () => {
     expect(
       providersNeedingCredentialFix([

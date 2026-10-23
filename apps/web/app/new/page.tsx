@@ -15,6 +15,7 @@ import { OutcomeBanner } from "../components/OutcomeBanner";
 import { EscapeHatch, escapeFrom } from "../components/EscapeHatch";
 import { LaunchReadiness, readinessFrom } from "../components/LaunchReadiness";
 import { companionsFrom, PlanPanel } from "../components/PlanPanel";
+import { ProviderCredentialFix } from "../components/ProviderCredentialFix";
 import { ProviderRequirements } from "../components/ProviderRequirements";
 import { Stepper } from "../components/Stepper";
 import { Timeline } from "../components/Timeline";
@@ -290,6 +291,14 @@ export default function NewDeploymentPage(): React.ReactElement {
       {step === 4 && (
         <section className="sf-fade-in">
           <OutcomeBanner status={run.status} snapshot={run.snapshot} />
+          <ProviderCredentialFix
+            events={run.events}
+            plan={capturedPlan}
+            connected={connected}
+            onUpdated={() => void refreshProviders()}
+            onRetryDeploy={() => void startDeploy()}
+            retrying={starting}
+          />
           <FixGuidance events={run.events} />
           <Timeline events={run.events} />
           <div style={{ display: "flex", gap: 10, marginTop: "1.25rem", flexWrap: "wrap" }}>

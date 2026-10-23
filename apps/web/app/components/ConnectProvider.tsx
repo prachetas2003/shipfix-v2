@@ -142,6 +142,39 @@ export function ConnectProvider({
         </div>
       </div>
 
+      {guide.extraSteps && guide.extraSteps.length > 0 && (
+        <div style={{ marginTop: "0.85rem" }}>
+          <strong style={{ fontSize: "0.9rem" }}>{guide.extraStepsTitle ?? "Account setup"}</strong>
+          <p style={{ margin: "0.35rem 0 0", fontSize: "0.82rem", color: colors.dim, lineHeight: 1.5 }}>
+            Saving the Vercel token leaves GitHub as its own step. Do these on the GitHub account that owns the repo, then deploy.
+          </p>
+          {guide.extraSteps.map((step, index) => (
+            <div
+              key={step.title}
+              style={{
+                marginTop: 10,
+                padding: "0.75rem",
+                background: colors.warnBg,
+                border: `1px solid ${colors.warnBorder}`,
+                borderRadius: 8,
+              }}
+            >
+              <strong style={{ fontSize: "0.85rem", color: colors.warnText }}>
+                {index + 1}. {step.title}
+              </strong>
+              <p style={{ margin: "0.3rem 0 0", fontSize: "0.82rem", color: colors.warnText, opacity: 0.92, lineHeight: 1.5 }}>
+                {step.detail}
+              </p>
+              {step.url && (
+                <a href={step.url} target="_blank" rel="noreferrer" style={{ color: colors.accentText, fontSize: "0.82rem", fontWeight: 600 }}>
+                  {step.urlLabel ?? step.url}
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {showForm && (
         <>
           <div style={{ marginTop: "0.8rem", borderTop: `1px solid ${colors.border}`, paddingTop: "0.8rem" }}>
@@ -164,29 +197,6 @@ export function ConnectProvider({
               . {guide.scope}
             </p>
           </div>
-
-          {guide.extraSteps?.map((step) => (
-            <div
-              key={step.title}
-              style={{
-                marginTop: 10,
-                padding: "0.75rem",
-                background: colors.warnBg,
-                border: `1px solid ${colors.warnBorder}`,
-                borderRadius: 8,
-              }}
-            >
-              <strong style={{ fontSize: "0.85rem", color: colors.warnText }}>{step.title}</strong>
-              <p style={{ margin: "0.3rem 0 0", fontSize: "0.82rem", color: colors.warnText, opacity: 0.92, lineHeight: 1.5 }}>
-                {step.detail}
-              </p>
-              {step.url && (
-                <a href={step.url} target="_blank" rel="noreferrer" style={{ color: colors.accentText, fontSize: "0.82rem" }}>
-                  {step.urlLabel ?? step.url}
-                </a>
-              )}
-            </div>
-          ))}
 
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <input

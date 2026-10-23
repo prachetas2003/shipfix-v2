@@ -50,6 +50,15 @@ export function classifyVercelFailure(status: number, statusText: string, bodyTe
     }
     if (
       err?.code === "bad_request" &&
+      /install the github integration|github integration first/i.test(msg)
+    ) {
+      return {
+        kind: "setup_blocker",
+        message: `Vercel GitHub app required: ${msg}. Sign in to GitHub, open https://github.com/settings/installations, click Vercel, then Configure, include this repository, and press Save. Then rerun Deploy.${link}`,
+      };
+    }
+    if (
+      err?.code === "bad_request" &&
       /login connection|connect.*github|github account/i.test(msg)
     ) {
       return {

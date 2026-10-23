@@ -33,9 +33,13 @@ export function providersNeedingCredentialFix(events: RunEventRow[]): ProviderId
     const detail = `${typeof d.detail === "string" ? d.detail : ""} ${typeof d.whatHappened === "string" ? d.whatHappened : ""} ${ev.message}`;
     const isProviderIssue =
       PROVIDER_EVENTS.has(event) ||
-      (event === "deploy_failure_guidance" && CREDENTIAL_ACTIONS.has(action)) ||
+      (event === "deploy_failure_guidance" &&
+        (CREDENTIAL_ACTIONS.has(action) ||
+          /GitHub integration|Login Connection|install the GitHub/i.test(detail))) ||
       (event === "deploy_failed" &&
-        /permission|HTTP 401|HTTP 403|unauthorized|forbidden|token|teamId|GitHub connection/i.test(detail));
+        /permission|HTTP 401|HTTP 403|unauthorized|forbidden|token|teamId|GitHub connection|GitHub integration|login connection|Login Connection/i.test(
+          detail,
+        ));
     if (!isProviderIssue) continue;
     if (
       provider === "vercel" ||

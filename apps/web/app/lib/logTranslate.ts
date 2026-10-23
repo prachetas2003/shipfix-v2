@@ -409,6 +409,15 @@ export function translateEvent(ev: RawEvent): FriendlyEvent {
       return { title: "Step skipped", detail: humanizeRawMessage(ev.message), tone: "info" };
     case "deploy_failed": {
       const kind = str(d.failureKind);
+      const failedBlob = `${ev.message} ${str(d.detail) ?? ""} ${str(d.message) ?? ""}`;
+      if (/install the GitHub integration|GitHub integration first|Vercel GitHub app required/i.test(failedBlob)) {
+        return {
+          title: "Vercel needs access to this GitHub repo",
+          detail:
+            "Sign in to GitHub, open GitHub installations, click Vercel, then Configure. Include this repository and press Save. Also add GitHub under Vercel login connections. Then press Deploy again.",
+          tone: "warn",
+        };
+      }
       if (kind === "provider_limit") {
         return {
           title: "Vercel project limit reached for this repo",

@@ -17,6 +17,18 @@ describe("translateEvent - failure kinds", () => {
     expect(f.title.toLowerCase()).toContain("timed out");
   });
 
+  it("names the Vercel GitHub Configure step when the integration is missing", () => {
+    const f = translateEvent(
+      ev(
+        { event: "deploy_failed", serviceId: "web", provider: "vercel", failureKind: "deploy_failed" },
+        "Vercel API HTTP 400: To link a GitHub repository, you need to install the GitHub integration first.",
+      ),
+    );
+    expect(f.title).toBe("Vercel needs access to this GitHub repo");
+    expect(f.detail).toContain("Configure");
+    expect(f.tone).toBe("warn");
+  });
+
   it("falls back to a generic deploy failure", () => {
     const f = translateEvent(ev({ event: "deploy_failed", serviceId: "web", failureKind: "deploy_failed" }));
     expect(f.title.toLowerCase()).toContain("frontend");
